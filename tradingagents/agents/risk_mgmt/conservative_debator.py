@@ -5,6 +5,7 @@ import json
 # 导入统一日志系统
 from tradingagents.utils.logging_init import get_logger
 logger = get_logger("default")
+from tradingagents.utils.llm_content import coerce_llm_content_to_text
 
 
 def create_safe_debator(llm):
@@ -59,7 +60,7 @@ def create_safe_debator(llm):
         llm_elapsed = time.time() - llm_start_time
         logger.info(f"⏱️ [Safe Analyst] LLM调用完成，耗时: {llm_elapsed:.2f}秒")
 
-        argument = f"Safe Analyst: {response.content}"
+        argument = f"Safe Analyst: {coerce_llm_content_to_text(getattr(response, 'content', response))}"
 
         new_count = risk_debate_state["count"] + 1
         logger.info(f"🛡️ [保守风险分析师] 发言完成，计数: {risk_debate_state['count']} -> {new_count}")

@@ -6,6 +6,7 @@ from langchain_openai import ChatOpenAI
 # 导入统一日志系统
 from tradingagents.utils.logging_init import get_logger
 logger = get_logger("default")
+from tradingagents.utils.llm_content import coerce_llm_content_to_text
 
 
 class Reflector:
@@ -71,8 +72,8 @@ Adhere strictly to these instructions, and ensure your output is detailed, accur
             ),
         ]
 
-        result = self.quick_thinking_llm.invoke(messages).content
-        return result
+        raw = self.quick_thinking_llm.invoke(messages)
+        return coerce_llm_content_to_text(getattr(raw, "content", raw))
 
     def reflect_bull_researcher(self, current_state, returns_losses, bull_memory):
         """Reflect on bull researcher's analysis and update memory."""

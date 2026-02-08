@@ -17,6 +17,9 @@ from ..config.config_manager import token_tracker
 from tradingagents.utils.logging_manager import get_logger
 logger = get_logger('agents')
 
+# Gemini 可能返回 list(parts) 结构的 content，这里统一转为 str
+from tradingagents.utils.llm_content import coerce_llm_content_to_text
+
 
 class ChatGoogleOpenAI(ChatGoogleGenerativeAI):
     """
@@ -206,7 +209,11 @@ class ChatGoogleOpenAI(ChatGoogleGenerativeAI):
         
         if not isinstance(message, AIMessage) or not message.content:
             return
-        
+
+        # 关键：将 Gemini 的多段 parts 结构规范化为纯文本字符串
+        if not isinstance(message.content, str):
+            message.content = coerce_llm_content_to_text(message.content)
+
         content = message.content
         
         # 检查是否是工具调用返回的新闻内容

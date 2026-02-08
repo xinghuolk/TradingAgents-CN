@@ -5,6 +5,7 @@ from tradingagents.agents.utils.agent_states import AgentState
 # 导入统一日志系统
 from tradingagents.utils.logging_init import get_logger
 logger = get_logger("default")
+from tradingagents.utils.llm_content import safe_preview
 
 
 class ConditionalLogic:
@@ -161,7 +162,7 @@ class ConditionalLogic:
         logger.info(f"🤖 [条件判断] 最后一条消息详细内容:")
         logger.info(f"🤖 [条件判断] - 消息类型: {type(last_message).__name__}")
         if hasattr(last_message, 'content'):
-            content_preview = last_message.content[:300] + "..." if len(last_message.content) > 300 else last_message.content
+            content_preview = safe_preview(last_message.content, limit=300)
             logger.info(f"🤖 [条件判断] - 内容预览: {content_preview}")
         
         # 🔍 [调试日志] 打印tool_calls的详细信息
