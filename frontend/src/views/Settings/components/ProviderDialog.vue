@@ -233,6 +233,17 @@ const openRegisterUrl = () => {
 // 预设厂家数据
 const presetProviders = [
   {
+    name: 'ollama',
+    display_name: 'Ollama 本地模型',
+    description: '本地部署的 Ollama 大模型服务，支持 Llama、Qwen、DeepSeek 等开源模型',
+    website: 'https://ollama.ai',
+    api_doc_url: 'https://github.com/ollama/ollama/blob/main/docs/api.md',
+    default_base_url: 'http://localhost:11434/v1',
+    supported_features: ['chat', 'completion', 'streaming'],
+    register_url: 'https://ollama.ai/download',
+    register_guide: '请先安装 Ollama 并下载模型（如 ollama pull qwen2.5）：'
+  },
+  {
     name: 'dashscope',
     display_name: '阿里云百炼',
     description: '阿里云百炼大模型服务平台，提供通义千问等模型',

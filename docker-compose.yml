@@ -80,7 +80,7 @@ services:
     networks:
       - tradingagents-network
     healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost"]
+      test: ["CMD", "curl", "-f", "-s", "http://127.0.0.1:80/"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -98,7 +98,7 @@ services:
     container_name: tradingagents-mongodb
     restart: unless-stopped
     ports:
-      - "27017:27017"
+      - "37017:27017"
     environment:
       MONGO_INITDB_ROOT_USERNAME: admin
       MONGO_INITDB_ROOT_PASSWORD: tradingagents123
@@ -127,7 +127,7 @@ services:
     container_name: tradingagents-redis
     restart: unless-stopped
     ports:
-      - "6379:6379"
+      - "26379:6379"
     environment:
       TZ: "Asia/Shanghai"
     command: redis-server --appendonly yes --requirepass tradingagents123
