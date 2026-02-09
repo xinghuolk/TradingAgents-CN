@@ -906,6 +906,115 @@ class Toolkit:
                 # 原因：提示词是统一的，如果数据不完整会导致LLM基于不存在的数据进行分析（幻觉）
                 logger.info(f"🔍 [港股基本面] 统一策略：获取完整数据（忽略 data_depth 参数）")
 
+                def _get_report_collector_client():
+                    """按配置创建 report-collector 客户端（不可用则返回None）"""
+                    try:
+                        import os
+                        enabled = bool(Toolkit._config.get("report_collector_enabled", False))
+                        if not enabled:
+                            return None
+                        from tradingagents.services.report_collector_client import ReportCollectorClient
+                        base_url = Toolkit._config.get("report_collector_url") or os.getenv("REPORT_COLLECTOR_URL", "http://localhost")
+                        port = int(Toolkit._config.get("report_collector_port") or os.getenv("REPORT_COLLECTOR_PORT", "8001"))
+                        timeout = int(Toolkit._config.get("report_collector_timeout") or os.getenv("REPORT_COLLECTOR_TIMEOUT", "60"))
+                        client = ReportCollectorClient(base_url=base_url, port=port, timeout=timeout)
+                        return client if client.is_available() else None
+                    except Exception as _e:
+                        logger.debug(f"[report-collector] 客户端初始化失败（忽略）: {_e}")
+                        return None
+
+                def _build_pdf_fundamentals_summary(extracted: dict) -> str:
+                    """把 report-collector 提取结果拼成基本面补充段落"""
+                    if not extracted or not isinstance(extracted, dict):
+                        return ""
+                    data = extracted.get("data") if isinstance(extracted.get("data"), dict) else extracted
+                    meta = data.get("metadata", {}) if isinstance(data.get("metadata"), dict) else {}
+                    inc = data.get("income_statement", {}) if isinstance(data.get("income_statement"), dict) else {}
+                    bs = data.get("balance_sheet", {}) if isinstance(data.get("balance_sheet"), dict) else {}
+                    cf = data.get("cash_flow_statement", {}) if isinstance(data.get("cash_flow_statement"), dict) else {}
+                    met = data.get("financial_metrics", {}) if isinstance(data.get("financial_metrics"), dict) else {}
+                    pdf_info = data.get("_pdf_info", {}) if isinstance(data.get("_pdf_info"), dict) else {}
+
+                    lines = []
+                    file_name = pdf_info.get("file_name") or data.get("file_name")
+                    period = meta.get("report_period") or ""
+                    selection = data.get("_selection", {}) if isinstance(data.get("_selection"), dict) else {}
+                    selected_rt = selection.get("selected_report_type") or meta.get("report_type") or ""
+                    period_end = selection.get("report_period_end") or ""
+                    publish_time = selection.get("publish_time") or ""
+                    if file_name:
+                        lines.append(f"- 报告文件: {file_name}")
+                    if period:
+                        lines.append(f"- 报告期: {period}")
+                    if selected_rt:
+                        lines.append(f"- 报告类型: {selected_rt}")
+                    if period_end:
+                        lines.append(f"- 报告期截止日: {period_end}")
+                    if publish_time:
+                        lines.append(f"- 披露时间: {publish_time}")
+
+                    # 关键字段（尽量输出，不保证币种）
+                    for label, val in (
+                        ("营收", inc.get("revenue")),
+                        ("营业利润", inc.get("operating_profit")),
+                        ("净利润", inc.get("net_profit") or inc.get("net_profit_attributable_to_parent")),
+                        ("EPS", met.get("eps") or met.get("eps_diluted")),
+                        ("总资产", bs.get("total_assets")),
+                        ("总负债", bs.get("total_liabilities")),
+                        ("经营现金流", cf.get("operating_cash_flow")),
+                    ):
+                        if val is not None:
+                            lines.append(f"- {label}: {val}")
+
+                    if len(lines) <= 2:
+                        return ""
+                    return "## 披露易PDF财务数据补充（report-collector）\n" + "\n".join(lines)
+
+                def _try_pdf_supplement() -> str:
+                    client = _get_report_collector_client()
+                    if not client:
+                        return ""
+                    # report-collector 港股使用纯数字代码（保留前导0）
+                    stock_code = str(ticker).replace(".HK", "").replace(".hk", "").strip()
+                    if stock_code.isdigit() and len(stock_code) == 4:
+                        stock_code = "0" + stock_code
+                    if not stock_code.isdigit():
+                        return ""
+
+                    # 先跨类型收集候选，再按“报告期截止日”选最新（比固定优先级更稳健）
+                    try:
+                        extracted_latest = client.fetch_latest_financial_data(
+                            stock_code=stock_code,
+                            market="HK",
+                            report_types=("quarterly", "semi_annual", "annual"),
+                        )
+                        if extracted_latest:
+                            # 记录“选中哪份披露易报告”（结构化日志可直接检索）
+                            try:
+                                _data = (
+                                    extracted_latest.get("data")
+                                    if isinstance(extracted_latest.get("data"), dict)
+                                    else extracted_latest
+                                )
+                                _sel = _data.get("_selection", {}) if isinstance(_data, dict) else {}
+                                if isinstance(_sel, dict) and _sel:
+                                    logger.info(
+                                        "[report-collector] 基本面补齐选中报告: "
+                                        f"stock_code={stock_code} "
+                                        f"report_type={_sel.get('selected_report_type')} "
+                                        f"publish_time={_sel.get('publish_time')} "
+                                        f"title={_sel.get('title')} "
+                                        f"pdf_url={_sel.get('pdf_url')}"
+                                    )
+                            except Exception as _log_e:
+                                logger.debug(f"[report-collector] 记录选中报告日志失败（忽略）: {_log_e}")
+                            summary = _build_pdf_fundamentals_summary(extracted_latest)
+                            if summary:
+                                return summary
+                    except Exception as _e:
+                        logger.debug(f"[report-collector] {stock_code} 跨类型选择最新失败（忽略）: {_e}")
+                    return ""
+
                 # 主要数据源：AKShare
                 try:
                     from tradingagents.dataflows.interface import get_hk_stock_data_unified
@@ -925,6 +1034,15 @@ class Toolkit:
 
                 except Exception as e:
                     logger.error(f"❌ [基本面工具调试] 港股数据获取失败: {e}")
+
+                # 📌 无论 AKShare 是否成功，都尝试附加披露易PDF财务补充（若启用且可用）
+                try:
+                    pdf_supplement = _try_pdf_supplement()
+                    if pdf_supplement:
+                        result_data.append(pdf_supplement)
+                        logger.info("📊 [统一基本面工具] 已附加披露易PDF财务数据补充")
+                except Exception as _e:
+                    logger.debug(f"[report-collector] 基本面补齐失败（忽略）: {_e}")
 
                 # 备用方案：基础港股信息
                 if not hk_data_success:
@@ -1173,6 +1291,8 @@ class Toolkit:
         try:
             from tradingagents.utils.stock_utils import StockUtils
             from datetime import datetime, timedelta
+            import os
+            import re
 
             # 自动识别股票类型
             market_info = StockUtils.get_market_info(ticker)
@@ -1188,6 +1308,120 @@ class Toolkit:
             start_date_str = start_date.strftime('%Y-%m-%d')
 
             result_data = []
+
+            def _get_report_collector_client():
+                """按配置创建 report-collector 客户端（不可用则返回None）"""
+                try:
+                    enabled = bool(Toolkit._config.get("report_collector_enabled", False))
+                    if not enabled:
+                        return None
+                    from tradingagents.services.report_collector_client import ReportCollectorClient
+                    base_url = Toolkit._config.get("report_collector_url") or os.getenv("REPORT_COLLECTOR_URL", "http://localhost")
+                    port = int(Toolkit._config.get("report_collector_port") or os.getenv("REPORT_COLLECTOR_PORT", "8001"))
+                    timeout = int(Toolkit._config.get("report_collector_timeout") or os.getenv("REPORT_COLLECTOR_TIMEOUT", "60"))
+                    client = ReportCollectorClient(base_url=base_url, port=port, timeout=timeout)
+                    return client if client.is_available() else None
+                except Exception as _e:
+                    logger.debug(f"[report-collector] 客户端初始化失败（忽略）: {_e}")
+                    return None
+
+            def _normalize_hk_code(code: str) -> str:
+                """港股代码规范化为 5位数字（保留前导0）"""
+                digits = "".join(re.findall(r"\d+", str(code)))
+                if len(digits) == 4:
+                    return "0" + digits
+                return digits
+
+            def _build_pdf_news_summary(extracted: dict) -> str:
+                """把 report-collector 提取结果拼成新闻/公告摘要"""
+                if not extracted or not isinstance(extracted, dict):
+                    return ""
+                # 兼容 API 返回 data 包裹
+                data = extracted.get("data") if isinstance(extracted.get("data"), dict) else extracted
+                meta = data.get("metadata", {}) if isinstance(data.get("metadata"), dict) else {}
+                inc = data.get("income_statement", {}) if isinstance(data.get("income_statement"), dict) else {}
+                met = data.get("financial_metrics", {}) if isinstance(data.get("financial_metrics"), dict) else {}
+                pdf_info = data.get("_pdf_info", {}) if isinstance(data.get("_pdf_info"), dict) else {}
+                selection = data.get("_selection", {}) if isinstance(data.get("_selection"), dict) else {}
+
+                lines = []
+                period = meta.get("report_period") or meta.get("period") or ""
+                report_type = meta.get("report_type") or ""
+                file_name = pdf_info.get("file_name") or data.get("file_name") or ""
+                publish_time = selection.get("publish_time") or ""
+
+                if period or report_type or file_name:
+                    lines.append(f"- 报告: {file_name or 'N/A'}")
+                    if period:
+                        lines.append(f"- 报告期: {period}")
+                    if report_type:
+                        lines.append(f"- 类型: {report_type}")
+                    if publish_time:
+                        lines.append(f"- 披露时间: {publish_time}")
+
+                # 关键字段（如果能抽到就展示）
+                revenue = inc.get("revenue")
+                net_profit = inc.get("net_profit") or inc.get("net_profit_attributable_to_parent")
+                eps = met.get("eps") or met.get("eps_diluted")
+                op_profit = inc.get("operating_profit")
+
+                if revenue is not None:
+                    lines.append(f"- 营收: {revenue}")
+                if net_profit is not None:
+                    lines.append(f"- 净利润: {net_profit}")
+                if op_profit is not None:
+                    lines.append(f"- 营业利润: {op_profit}")
+                if eps is not None:
+                    lines.append(f"- EPS: {eps}")
+
+                if not lines:
+                    return ""
+                return "## 披露易PDF公告/财报补充（report-collector）\n" + "\n".join(lines)
+
+            def _try_pdf_news_fallback():
+                """当新闻源为空或不可用时，尝试用披露易PDF补齐（港股优先）"""
+                if not is_hk:
+                    return ""
+                client = _get_report_collector_client()
+                if not client:
+                    return ""
+                stock_code = _normalize_hk_code(ticker)
+                if not stock_code:
+                    return ""
+
+                # 先跨类型收集候选，再按“报告期截止日”选最新（避免固定优先级带来的误选）
+                try:
+                    extracted_latest = client.fetch_latest_financial_data(
+                        stock_code=stock_code,
+                        market="HK",
+                        report_types=("quarterly", "semi_annual", "annual"),
+                    )
+                    if extracted_latest:
+                        # 记录“选中哪份披露易报告”（结构化日志可直接检索）
+                        try:
+                            _data = (
+                                extracted_latest.get("data")
+                                if isinstance(extracted_latest.get("data"), dict)
+                                else extracted_latest
+                            )
+                            _sel = _data.get("_selection", {}) if isinstance(_data, dict) else {}
+                            if isinstance(_sel, dict) and _sel:
+                                logger.info(
+                                    "[report-collector] 新闻补齐选中报告: "
+                                    f"stock_code={stock_code} "
+                                    f"report_type={_sel.get('selected_report_type')} "
+                                    f"publish_time={_sel.get('publish_time')} "
+                                    f"title={_sel.get('title')} "
+                                    f"pdf_url={_sel.get('pdf_url')}"
+                                )
+                        except Exception as _log_e:
+                            logger.debug(f"[report-collector] 记录选中报告日志失败（忽略）: {_log_e}")
+                        summary = _build_pdf_news_summary(extracted_latest)
+                        if summary:
+                            return summary
+                except Exception as _e:
+                    logger.debug(f"[report-collector] {stock_code} 跨类型选择最新失败（忽略）: {_e}")
+                return ""
 
             if is_china or is_hk:
                 # 中国A股和港股：使用AKShare东方财富新闻和Google新闻（中文搜索）
@@ -1251,6 +1485,18 @@ class Toolkit:
                 except Exception as google_e:
                     logger.error(f"❌ [统一新闻工具] Google新闻获取失败: {google_e}")
                     result_data.append(f"## Google新闻\n获取失败: {google_e}")
+
+                # 3) 如果整体新闻质量较差（均为失败/为空），用披露易PDF补齐（港股）
+                try:
+                    joined = "\n".join(result_data)
+                    low_quality = (len(result_data) == 0) or ("获取失败" in joined and len(joined.strip()) < 500)
+                    if low_quality:
+                        pdf_summary = _try_pdf_news_fallback()
+                        if pdf_summary:
+                            result_data.append(pdf_summary)
+                            logger.info("📰 [统一新闻工具] 已使用披露易PDF补充新闻/公告信息")
+                except Exception as _e:
+                    logger.debug(f"[report-collector] 新闻补齐失败（忽略）: {_e}")
 
             else:
                 # 美股：使用Finnhub新闻
@@ -1376,4 +1622,37 @@ class Toolkit:
         except Exception as e:
             error_msg = f"统一情绪分析工具执行失败: {str(e)}"
             logger.error(f"❌ [统一情绪工具] {error_msg}")
+            return error_msg
+
+    @staticmethod
+    @tool
+    @log_tool_call(tool_name="get_value_investment_analysis", log_args=True)
+    def get_value_investment_analysis(
+        ticker: Annotated[str, "股票代码（支持A股、港股）"],
+        market: Annotated[str, "市场类型：A=A股, HK=港股"] = "A"
+    ) -> str:
+        """
+        获取股票的价值投资分析报告（穿透回报率模型）
+
+        基于「龟龟投资」穿透回报率模型，提供：
+        - 穿透回报率（分红收益率 + 回购收益率）
+        - 现金健康度评估（稳健/健康/警示/不健康）
+        - 5维健康评分（盈利、偿债、成长、运营、现金流）
+        - 健康标签（high_roe, stable_dividend, low_debt 等）
+
+        Args:
+            ticker: 股票代码（如：600519、00700）
+            market: 市场类型（A=A股, HK=港股）
+
+        Returns:
+            str: 价值投资分析报告
+        """
+        logger.info(f"📊 [价值投资工具] 分析股票: {ticker} ({market}股)")
+
+        try:
+            from tradingagents.tools.value_investment_tool import get_value_investment_analysis as _get_value_analysis
+            return _get_value_analysis.invoke({"ticker": ticker, "market": market})
+        except Exception as e:
+            error_msg = f"价值投资分析工具执行失败: {str(e)}"
+            logger.error(f"❌ [价值投资工具] {error_msg}")
             return error_msg

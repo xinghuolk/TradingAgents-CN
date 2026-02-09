@@ -19,8 +19,15 @@ DEFAULT_CONFIG = {
     "max_recur_limit": 100,
     # Tool settings - 从环境变量读取，提供默认值
     "online_tools": os.getenv("ONLINE_TOOLS_ENABLED", "false").lower() == "true",
-    "online_news": os.getenv("ONLINE_NEWS_ENABLED", "true").lower() == "true", 
+    "online_news": os.getenv("ONLINE_NEWS_ENABLED", "true").lower() == "true",
     "realtime_data": os.getenv("REALTIME_DATA_ENABLED", "false").lower() == "true",
+
+    # Report-Collector 财报收集服务
+    "report_collector_url": os.getenv("REPORT_COLLECTOR_URL", "http://localhost"),
+    "report_collector_port": int(os.getenv("REPORT_COLLECTOR_PORT", "8001")),
+    "report_collector_enabled": os.getenv("REPORT_COLLECTOR_ENABLED", "false").lower() == "true",
+    "report_collector_timeout": int(os.getenv("REPORT_COLLECTOR_TIMEOUT", "60")),
+    "report_collector_max_reports": int(os.getenv("REPORT_COLLECTOR_MAX_REPORTS", "5")),
 
     # Note: Database and cache configuration is now managed by .env file and config.database_manager
     # No database/cache settings in default config to avoid configuration conflicts
