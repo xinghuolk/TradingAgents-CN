@@ -46,6 +46,10 @@ dependencies = [
     "tushare>=1.4.21",
     "yfinance>=0.2.63",
     "stockstats>=0.6.5",
+    # Annual-report extraction (FinancialReportClient adapter consumer).
+    # Local editable install during development; replace with versioned dep
+    # when extractor is published.
+    "financial-report-llm-extractor",
 
     # AI和LLM
     "chainlit>=2.5.5",
@@ -93,6 +97,11 @@ qianfan = ["qianfan>=0.4.12.3,<0.5"]
 
 [project.scripts]
 tradingagents = "main:main"
+
+[tool.uv.sources]
+# Sibling checkout during development; replace with versioned dep when the
+# extractor is published. Path is relative to this pyproject.toml.
+financial-report-llm-extractor = { path = "../financial-report-llm-extractor", editable = true }
 
 [tool.setuptools.packages.find]
 include = ["tradingagents*"]

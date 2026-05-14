@@ -38,9 +38,10 @@ def test_reliable_fields_override_financial_data_and_compute_fcf():
         "net_profit": FakeField("net_profit", Decimal("100")),
         "operating_cash_flow": FakeField("operating_cash_flow", Decimal("130")),
         "capital_expenditures": FakeField("capital_expenditures", Decimal("30")),
-        "total_equity": FakeField("total_equity", Decimal("800")),
-        "current_assets": FakeField("current_assets", Decimal("500")),
-        "current_liabilities": FakeField("current_liabilities", Decimal("250")),
+        "equity_attributable_to_owners": FakeField("equity_attributable_to_owners", Decimal("700")),
+        "minority_int": FakeField("minority_int", Decimal("100")),
+        "total_cur_assets": FakeField("total_cur_assets", Decimal("500")),
+        "total_cur_liab": FakeField("total_cur_liab", Decimal("250")),
         "total_assets": FakeField("total_assets", Decimal("1000")),
         "total_liabilities": FakeField("total_liabilities", Decimal("400")),
     })
@@ -65,10 +66,13 @@ def test_reliable_fields_override_financial_data_and_compute_fcf():
     assert merged.financial_data["free_cash_flow"] == 100.0
     assert merged.financial_data["current_ratio"] == 2.0
     assert merged.financial_data["debt_ratio"] == 0.4
+    assert merged.financial_data["total_equity"] == 800.0
     assert merged.financial_data["_data_source"]["net_profits"] == "financial-report-client"
     assert merged.financial_data["_data_source"]["free_cash_flow"] == "financial-report-client:derived"
+    assert merged.financial_data["_data_source"]["total_equity"] == "financial-report-client:derived"
     assert merged.details["current_ratio"]["status"] == "derived"
     assert merged.details["debt_ratio"]["status"] == "derived"
+    assert merged.details["total_equity"]["status"] == "derived"
     assert merged.caveats == []
     assert base["net_profits"] == [1.0]
     assert base["financials_list"] == [{"net_profit": 1.0}]
@@ -198,8 +202,8 @@ def test_codex_llm_supplement_can_be_used_when_allowlisted():
         llm_provider="openai",
         llm_model="codex-subscription",
         fields={
-            "interest_bearing_debt": FakeField(
-                "interest_bearing_debt",
+            "st_borr": FakeField(
+                "st_borr",
                 Decimal("12"),
                 source="llm",
                 raw_bucket="llm_supplement_present",
@@ -207,7 +211,7 @@ def test_codex_llm_supplement_can_be_used_when_allowlisted():
             )
         },
     )
-    base = {"interest_bearing_debt": None}
+    base = {"st_borr": None}
 
     merged = merge_financial_report_data(
         financial_data=base,
@@ -215,8 +219,8 @@ def test_codex_llm_supplement_can_be_used_when_allowlisted():
         policy=FinancialReportPolicy(allow_llm_models=("codex",)),
     )
 
-    assert merged.financial_data["interest_bearing_debt"] == 12.0
-    assert merged.financial_data["_data_source"]["interest_bearing_debt"] == (
+    assert merged.financial_data["st_borr"] == 12.0
+    assert merged.financial_data["_data_source"]["st_borr"] == (
         "financial-report-client:llm:codex-subscription"
     )
     assert "allowed by policy" in merged.caveats[0]
