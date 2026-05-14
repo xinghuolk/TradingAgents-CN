@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import json
 import logging
+import platform
+import subprocess
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -83,4 +85,51 @@ def read_claude_code_from_file() -> Optional[SubscriptionCredential]:
         expires_at_ms=int(oauth.get("expiresAt") or 0),
         provider="claude_code",
         source="claude_code_file",
+    )
+
+
+def _platform_system() -> str:
+    """Wrapper around `platform.system()` so tests can override."""
+    return platform.system()
+
+
+def read_claude_code_from_keychain() -> Optional[SubscriptionCredential]:
+    """Read Claude Code OAuth credentials from the macOS Keychain.
+
+    Claude Code >=2.1.114 stores credentials under the generic-password entry
+    named "Claude Code-credentials". The password value is a JSON blob with the
+    same `claudeAiOauth` shape as the file fallback.
+
+    Returns None on any non-Darwin platform or any failure path.
+    """
+    if _platform_system() != "Darwin":
+        return None
+    try:
+        result = subprocess.run(
+            ["security", "find-generic-password", "-s", "Claude Code-credentials", "-w"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError) as exc:
+        logger.debug("Keychain lookup failed: %s", exc)
+        return None
+    if result.returncode != 0 or not result.stdout.strip():
+        return None
+    try:
+        data = json.loads(result.stdout.strip())
+    except json.JSONDecodeError:
+        return None
+    oauth = data.get("claudeAiOauth")
+    if not isinstance(oauth, dict):
+        return None
+    access_token = oauth.get("accessToken", "")
+    if not access_token:
+        return None
+    return SubscriptionCredential(
+        access_token=access_token,
+        refresh_token=oauth.get("refreshToken") or None,
+        expires_at_ms=int(oauth.get("expiresAt") or 0),
+        provider="claude_code",
+        source="macos_keychain",
     )
