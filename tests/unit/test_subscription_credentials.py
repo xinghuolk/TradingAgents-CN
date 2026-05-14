@@ -173,3 +173,51 @@ class TestReadClaudeCodeFromKeychain:
         with patch.object(sc, "_platform_system", return_value="Darwin"), \
              patch("subprocess.run", return_value=completed):
             assert sc.read_claude_code_from_keychain() is None
+
+
+class TestReadCodexFromFile:
+    def test_file_missing_returns_none(self, tmp_path):
+        with patch.object(sc, "_codex_credentials_path", return_value=tmp_path / "nope.json"):
+            assert sc.read_codex_from_file() is None
+
+    def test_valid_file_returns_credential(self, tmp_path):
+        # Codex CLI's auth.json shape (best-effort — confirmed against codex CLI 0.x).
+        # Structure may evolve; the loader must tolerate unknown fields.
+        from datetime import datetime, timezone
+        expires_iso = "2026-12-31T00:00:00Z"
+        expected_ms = int(datetime(2026, 12, 31, tzinfo=timezone.utc).timestamp() * 1000)
+
+        creds_path = tmp_path / "auth.json"
+        creds_path.write_text(json.dumps({
+            "OPENAI_API_KEY": None,
+            "tokens": {
+                "access_token": "at-cx",
+                "refresh_token": "rt-cx",
+                "expires_at": expires_iso,
+            },
+            "last_refresh": "2026-05-13T10:00:00Z",
+        }))
+        with patch.object(sc, "_codex_credentials_path", return_value=creds_path):
+            cred = sc.read_codex_from_file()
+        assert cred is not None
+        assert cred.access_token == "at-cx"
+        assert cred.refresh_token == "rt-cx"
+        assert cred.provider == "codex"
+        assert cred.source == "codex_file"
+        assert cred.expires_at_ms == expected_ms
+
+    def test_missing_tokens_section_returns_none(self, tmp_path):
+        creds_path = tmp_path / "auth.json"
+        creds_path.write_text(json.dumps({"OPENAI_API_KEY": "sk-..."}))
+        with patch.object(sc, "_codex_credentials_path", return_value=creds_path):
+            assert sc.read_codex_from_file() is None
+
+    def test_invalid_expires_at_falls_back_to_zero(self, tmp_path):
+        creds_path = tmp_path / "auth.json"
+        creds_path.write_text(json.dumps({
+            "tokens": {"access_token": "at", "refresh_token": "rt", "expires_at": "not-a-date"}
+        }))
+        with patch.object(sc, "_codex_credentials_path", return_value=creds_path):
+            cred = sc.read_codex_from_file()
+        assert cred is not None
+        assert cred.expires_at_ms == 0  # unparseable → treated as "no expiry tracked"

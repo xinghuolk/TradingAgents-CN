@@ -15,6 +15,7 @@ import platform
 import subprocess
 import time
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal, Optional
 
@@ -85,6 +86,56 @@ def read_claude_code_from_file() -> Optional[SubscriptionCredential]:
         expires_at_ms=int(oauth.get("expiresAt") or 0),
         provider="claude_code",
         source="claude_code_file",
+    )
+
+
+def _codex_credentials_path() -> Path:
+    """Where Codex CLI stores its OAuth tokens (overridden in tests)."""
+    return Path.home() / ".codex" / "auth.json"
+
+
+def _parse_codex_expires_at(value: object) -> int:
+    """Parse Codex's ISO-8601 `expires_at` into epoch ms. 0 on failure."""
+    if not isinstance(value, str) or not value:
+        return 0
+    # Python 3.10 datetime.fromisoformat doesn't accept trailing Z; normalize.
+    iso = value.replace("Z", "+00:00")
+    try:
+        dt = datetime.fromisoformat(iso)
+    except ValueError:
+        return 0
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return int(dt.timestamp() * 1000)
+
+
+def read_codex_from_file() -> Optional[SubscriptionCredential]:
+    """Read Codex (ChatGPT subscription) OAuth credentials from `~/.codex/auth.json`.
+
+    The Codex CLI is closed-source; this reader matches the observed schema as of
+    Codex CLI 0.x. Unknown / new fields are ignored; the loader must keep working
+    if the upstream adds keys.
+    """
+    path = _codex_credentials_path()
+    if not path.exists():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as exc:
+        logger.debug("Failed to parse %s: %s", path, exc)
+        return None
+    tokens = data.get("tokens")
+    if not isinstance(tokens, dict):
+        return None
+    access_token = tokens.get("access_token", "")
+    if not access_token:
+        return None
+    return SubscriptionCredential(
+        access_token=access_token,
+        refresh_token=tokens.get("refresh_token") or None,
+        expires_at_ms=_parse_codex_expires_at(tokens.get("expires_at")),
+        provider="codex",
+        source="codex_file",
     )
 
 
