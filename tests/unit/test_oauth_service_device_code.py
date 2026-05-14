@@ -73,3 +73,104 @@ class TestStartDeviceCodeFlow:
         assert url == "https://auth.openai.com/oauth/device/code"
         body = fake_http_with_device_response.post.call_args.kwargs.get("data", {})
         assert body.get("client_id") == "app_EMoamEEZ73f0CkXaXp7hrann"
+
+
+class TestPollDeviceCodeFlow:
+    async def test_no_device_code_in_redis_returns_expired(self, fake_redis):
+        fake_redis.get.return_value = None
+        fake_http = AsyncMock()
+        result = await svc.poll_device_code_flow(
+            redis_client=fake_redis,
+            collection=AsyncMock(),
+            user_id="u1",
+            http_client=fake_http,
+        )
+        assert result["status"] == "expired"
+
+    async def test_pending_returns_pending(self, fake_redis):
+        import json
+        fake_redis.get.return_value = json.dumps({
+            "device_code": "dev-x",
+            "interval": 5,
+            "expires_at": "2099-01-01T00:00:00+00:00",
+        })
+        # Mock upstream "authorization_pending"
+        resp = AsyncMock()
+        resp.status_code = 400
+        resp.json = lambda: {"error": "authorization_pending"}
+        http = AsyncMock()
+        http.post.return_value = resp
+        result = await svc.poll_device_code_flow(
+            redis_client=fake_redis,
+            collection=AsyncMock(),
+            user_id="u1",
+            http_client=http,
+        )
+        assert result["status"] == "pending"
+        assert result["increment_interval"] is False
+
+    async def test_slow_down_returns_increment(self, fake_redis):
+        import json
+        fake_redis.get.return_value = json.dumps({
+            "device_code": "dev-x", "interval": 5,
+            "expires_at": "2099-01-01T00:00:00+00:00",
+        })
+        resp = AsyncMock()
+        resp.status_code = 400
+        resp.json = lambda: {"error": "slow_down"}
+        http = AsyncMock()
+        http.post.return_value = resp
+        result = await svc.poll_device_code_flow(
+            redis_client=fake_redis,
+            collection=AsyncMock(),
+            user_id="u1",
+            http_client=http,
+        )
+        assert result["status"] == "pending"
+        assert result["increment_interval"] is True
+
+    async def test_expired_token_clears_redis(self, fake_redis):
+        import json
+        fake_redis.get.return_value = json.dumps({
+            "device_code": "dev-x", "interval": 5,
+            "expires_at": "2099-01-01T00:00:00+00:00",
+        })
+        resp = AsyncMock()
+        resp.status_code = 400
+        resp.json = lambda: {"error": "expired_token"}
+        http = AsyncMock()
+        http.post.return_value = resp
+        result = await svc.poll_device_code_flow(
+            redis_client=fake_redis,
+            collection=AsyncMock(),
+            user_id="u1",
+            http_client=http,
+        )
+        assert result["status"] == "expired"
+        fake_redis.delete.assert_called_once()
+
+    async def test_success_stores_credentials_and_returns_bound(self, fake_redis):
+        import json
+        fake_redis.get.return_value = json.dumps({
+            "device_code": "dev-x", "interval": 5,
+            "expires_at": "2099-01-01T00:00:00+00:00",
+        })
+        resp = AsyncMock()
+        resp.status_code = 200
+        resp.json = lambda: {
+            "access_token": "cx-at-final",
+            "refresh_token": "cx-rt-final",
+            "expires_in": 1800,
+        }
+        http = AsyncMock()
+        http.post.return_value = resp
+        fake_collection = AsyncMock()
+        result = await svc.poll_device_code_flow(
+            redis_client=fake_redis,
+            collection=fake_collection,
+            user_id="u1",
+            http_client=http,
+        )
+        assert result["status"] == "bound"
+        fake_collection.update_one.assert_called_once()
+        fake_redis.delete.assert_called_once()

@@ -300,3 +300,74 @@ async def start_device_code_flow(
         "expires_in": expires_in,
         "interval": interval,
     }
+
+
+async def poll_device_code_flow(
+    *,
+    redis_client,
+    collection: AsyncIOMotorCollection,
+    user_id: str,
+    http_client,
+) -> dict:
+    """Poll Codex for completion of the device authorization.
+
+    Returns a dict with `status` ∈ {pending, bound, expired, denied} and an
+    optional `increment_interval` hint.
+    """
+    redis_key = f"oauth:device:{user_id}:codex"
+    raw = await redis_client.get(redis_key)
+    if raw is None:
+        return {"status": "expired", "increment_interval": False}
+
+    state = json.loads(raw if isinstance(raw, str) else raw.decode())
+    device_code = state["device_code"]
+
+    resp = await http_client.post(
+        _CODEX_TOKEN_URL,
+        data={
+            "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
+            "device_code": device_code,
+            "client_id": _CODEX_CLIENT_ID,
+        },
+        headers={
+            "Content-Type": "application/x-www-form-urlencoded",
+            "User-Agent": "TradingAgents-CN/1.0 (oauth-device-poll)",
+        },
+    )
+
+    if resp.status_code == 200:
+        payload = resp.json()
+        access_token = payload.get("access_token") or ""
+        if not access_token:
+            return {"status": "denied", "increment_interval": False}
+        refresh_token = payload.get("refresh_token") or ""
+        expires_in = int(payload.get("expires_in") or 3600)
+        expires_at = datetime.now(timezone.utc) + timedelta(seconds=expires_in)
+        await store_credentials(
+            collection=collection,
+            user_id=user_id,
+            provider="codex",
+            access_token=access_token,
+            refresh_token=refresh_token,
+            expires_at=expires_at,
+        )
+        await redis_client.delete(redis_key)
+        return {"status": "bound", "increment_interval": False}
+
+    # Non-200 → check error code
+    try:
+        err_body = resp.json()
+    except Exception:
+        err_body = {}
+    err = err_body.get("error", "")
+    if err == "authorization_pending":
+        return {"status": "pending", "increment_interval": False}
+    if err == "slow_down":
+        return {"status": "pending", "increment_interval": True}
+    if err in ("expired_token", "access_denied"):
+        await redis_client.delete(redis_key)
+        return {"status": "expired" if err == "expired_token" else "denied",
+                "increment_interval": False}
+    # Unknown error — surface as denied so the UI stops polling
+    logger.warning("Unknown Codex poll error: %s (status %s)", err, resp.status_code)
+    return {"status": "denied", "increment_interval": False}
