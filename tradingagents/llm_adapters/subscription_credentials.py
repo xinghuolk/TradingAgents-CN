@@ -141,6 +141,10 @@ def read_codex_from_file() -> Optional[SubscriptionCredential]:
     )
 
 
+_CODEX_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
+_CODEX_TOKEN_ENDPOINT = "https://auth.openai.com/oauth/token"
+
+
 def _platform_system() -> str:
     """Wrapper around `platform.system()` so tests can override."""
     return platform.system()
@@ -249,3 +253,48 @@ def refresh_claude_code(refresh_token: str, *, timeout: float = 10.0) -> Tuple[s
     raise SubscriptionCredentialError(
         f"Claude Code token refresh failed against all endpoints: {last_exc}"
     )
+
+
+def refresh_codex(refresh_token: str, *, timeout: float = 10.0) -> Tuple[str, str, int]:
+    """Exchange a Codex refresh token for a new (access, refresh, expires_at_ms).
+
+    Codex (ChatGPT) refresh tokens are rotated on each use; the caller must
+    persist the returned refresh_token.
+    """
+    if not refresh_token:
+        raise SubscriptionCredentialError("refresh_token is required")
+    body = urllib.parse.urlencode({
+        "grant_type": "refresh_token",
+        "refresh_token": refresh_token,
+        "client_id": _CODEX_CLIENT_ID,
+    }).encode("utf-8")
+    req = urllib.request.Request(
+        _CODEX_TOKEN_ENDPOINT,
+        data=body,
+        headers={
+            "Content-Type": "application/x-www-form-urlencoded",
+            "User-Agent": "TradingAgents-CN/1.0 (codex-oauth)",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            payload = json.loads(resp.read().decode("utf-8"))
+    except Exception as exc:
+        raise SubscriptionCredentialError(f"Codex token refresh failed: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise SubscriptionCredentialError(
+            f"Codex refresh response is not a JSON object: {payload!r}"
+        )
+    new_access = payload.get("access_token") or ""
+    if not new_access:
+        raise SubscriptionCredentialError(
+            f"Codex refresh response missing access_token: {payload!r}"
+        )
+    new_refresh = payload.get("refresh_token") or refresh_token
+    try:
+        expires_in = int(payload.get("expires_in") or 3600)
+    except (TypeError, ValueError):
+        expires_in = 3600
+    expires_at_ms = int(time.time() * 1000) + expires_in * 1000
+    return new_access, new_refresh, expires_at_ms

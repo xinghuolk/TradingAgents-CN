@@ -327,3 +327,68 @@ class TestRefreshClaudeCode:
         _, _, exp_ms = sc.refresh_claude_code("any")
         # Should fall back to 3600s default
         assert before_ms + 3_600_000 <= exp_ms <= before_ms + 3_600_000 + 1000
+
+
+class TestRefreshCodex:
+    def test_empty_refresh_token_raises(self):
+        with pytest.raises(sc.SubscriptionCredentialError):
+            sc.refresh_codex("")
+
+    def test_success_returns_new_tokens(self, monkeypatch):
+        captured = {}
+        @contextmanager
+        def fake_urlopen(req, timeout=None):  # noqa: ARG001
+            captured["url"] = req.full_url
+            captured["data"] = req.data
+            resp = MagicMock()
+            resp.read.return_value = json.dumps({
+                "access_token": "cx-new",
+                "refresh_token": "cx-new-rt",
+                "expires_in": 1800,
+            }).encode()
+            yield resp
+        monkeypatch.setattr(sc.urllib.request, "urlopen", fake_urlopen)
+
+        new_at, new_rt, new_exp = sc.refresh_codex("cx-old-rt")
+        assert new_at == "cx-new"
+        assert new_rt == "cx-new-rt"
+        assert captured["url"] == "https://auth.openai.com/oauth/token"
+        assert b"grant_type=refresh_token" in captured["data"]
+        assert b"client_id=app_EMoamEEZ73f0CkXaXp7hrann" in captured["data"]
+
+    def test_failure_raises(self, monkeypatch):
+        @contextmanager
+        def fail(req, timeout=None):  # noqa: ARG001
+            raise urllib.error.URLError("offline")
+            yield
+        monkeypatch.setattr(sc.urllib.request, "urlopen", fail)
+        with pytest.raises(sc.SubscriptionCredentialError):
+            sc.refresh_codex("any")
+
+    def test_non_dict_response_raises_typed_error(self, monkeypatch):
+        """If server returns valid JSON that is not an object, raise SubscriptionCredentialError (not AttributeError)."""
+        @contextmanager
+        def fake_urlopen(req, timeout=None):  # noqa: ARG001
+            resp = MagicMock()
+            resp.read.return_value = json.dumps(["not", "a", "dict"]).encode()
+            yield resp
+        monkeypatch.setattr(sc.urllib.request, "urlopen", fake_urlopen)
+        with pytest.raises(sc.SubscriptionCredentialError):
+            sc.refresh_codex("any")
+
+    def test_non_numeric_expires_in_falls_back_to_default(self, monkeypatch):
+        """If server returns garbage for expires_in, default to 3600s instead of crashing."""
+        @contextmanager
+        def fake_urlopen(req, timeout=None):  # noqa: ARG001
+            resp = MagicMock()
+            resp.read.return_value = json.dumps({
+                "access_token": "cx-at",
+                "refresh_token": "cx-rt",
+                "expires_in": "forever",  # non-numeric
+            }).encode()
+            yield resp
+        monkeypatch.setattr(sc.urllib.request, "urlopen", fake_urlopen)
+        before_ms = int(time.time() * 1000)
+        _, _, exp_ms = sc.refresh_codex("any")
+        # Should fall back to 3600s default
+        assert before_ms + 3_600_000 <= exp_ms <= before_ms + 3_600_000 + 1000
