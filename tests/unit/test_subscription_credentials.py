@@ -446,16 +446,23 @@ class TestResolve:
             return ("fresh-at", "rt-2", int(time.time() * 1000) + 3600_000)
         monkeypatch.setattr(sc, "refresh_claude_code", fake_refresh)
         # Persist write target to a tmp file
-        monkeypatch.setattr(sc, "_claude_code_credentials_path", lambda: tmp_path / "creds.json")
+        creds_path = tmp_path / "creds.json"
+        monkeypatch.setattr(sc, "_claude_code_credentials_path", lambda: creds_path)
 
         result = sc.resolve("claude_code")
         assert result.access_token == "fresh-at"
         assert result.refresh_token == "rt-2"
+        assert result.source == "claude_code_file+refreshed"
         assert called["rt"] == "rt-1"
         # Verify write-back happened with the rotated tokens
-        written = json.loads((tmp_path / "creds.json").read_text())
+        written = json.loads(creds_path.read_text())
         assert written["claudeAiOauth"]["accessToken"] == "fresh-at"
         assert written["claudeAiOauth"]["refreshToken"] == "rt-2"
+        # Token file must be 0600 (user-only readable) — defends against
+        # default-umask exposure on first-write.
+        import stat
+        mode = stat.S_IMODE(creds_path.stat().st_mode)
+        assert mode == 0o600, f"expected 0o600, got {oct(mode)}"
 
     def test_no_refresh_token_and_expiring_raises(self, monkeypatch):
         expiring_no_rt = sc.SubscriptionCredential(
@@ -481,3 +488,31 @@ class TestResolve:
         monkeypatch.setattr(sc, "read_codex_from_file", lambda: fresh)
         result = sc.resolve("codex")
         assert result is fresh
+
+    def test_codex_no_credentials_raises(self, monkeypatch):
+        """Symmetry with the Claude Code no-creds path."""
+        monkeypatch.setattr(sc, "read_codex_from_file", lambda: None)
+        with pytest.raises(sc.SubscriptionCredentialError) as exc:
+            sc.resolve("codex")
+        assert "codex login" in str(exc.value).lower()
+
+    def test_codex_refreshes_when_expiring(self, monkeypatch):
+        """Codex branch's refresh path — analogous to test_refreshes_when_expiring."""
+        expiring = sc.SubscriptionCredential(
+            access_token="cx-stale", refresh_token="cx-rt-1",
+            expires_at_ms=int(time.time() * 1000) + 10_000,
+            provider="codex", source="codex_file",
+        )
+        monkeypatch.setattr(sc, "read_codex_from_file", lambda: expiring)
+
+        called = {}
+        def fake_refresh(rt, **_):
+            called["rt"] = rt
+            return ("cx-fresh", "cx-rt-2", int(time.time() * 1000) + 3600_000)
+        monkeypatch.setattr(sc, "refresh_codex", fake_refresh)
+
+        result = sc.resolve("codex")
+        assert result.access_token == "cx-fresh"
+        assert result.refresh_token == "cx-rt-2"
+        assert result.source == "codex_file+refreshed"
+        assert called["rt"] == "cx-rt-1"

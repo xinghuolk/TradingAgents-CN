@@ -327,6 +327,9 @@ def _write_claude_code_credentials(
     })
     existing["claudeAiOauth"] = oauth
     path.write_text(json.dumps(existing, indent=2), encoding="utf-8")
+    # Token files must be user-only readable; default umask (0644) would expose
+    # the access token to other local users. claude login itself uses 0600.
+    path.chmod(0o600)
 
 
 def resolve(provider: Literal["claude_code", "codex"]) -> SubscriptionCredential:
