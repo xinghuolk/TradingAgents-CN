@@ -77,3 +77,18 @@ class TestChatClaudeCodeOAuth:
         ):
             with pytest.raises(sc.SubscriptionCredentialError):
                 ChatClaudeCodeOAuth(model="claude-opus-4-7")
+
+    def test_explicit_access_token_skips_local_resolve(self):
+        """When access_token is passed in, do not call subscription_credentials.resolve."""
+        fake_sync = MagicMock(name="anthropic.Anthropic")
+        fake_async = MagicMock(name="anthropic.AsyncAnthropic")
+        with patch.object(sc, "resolve",
+                          side_effect=AssertionError("should not be called")), \
+             patch("anthropic.Anthropic", return_value=fake_sync) as sync_ctor, \
+             patch("anthropic.AsyncAnthropic", return_value=fake_async):
+            ChatClaudeCodeOAuth(
+                model="claude-opus-4-7",
+                access_token="explicit-token-from-web",
+            )
+        # The explicit token must reach the underlying client constructor
+        assert sync_ctor.call_args.kwargs["auth_token"] == "explicit-token-from-web"

@@ -12,7 +12,7 @@ Reference: hermes-agent/agent/anthropic_adapter.py:604-621
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, Optional
 
 import anthropic
 from langchain_anthropic import ChatAnthropic
@@ -78,8 +78,24 @@ class ChatClaudeCodeOAuth(ChatAnthropic):
       * Attaches Anthropic's OAuth-required beta headers + claude-cli identity
     """
 
-    def __init__(self, model: str, **kwargs: Any) -> None:
-        cred = sc.resolve("claude_code")
+    def __init__(
+        self,
+        model: str,
+        *,
+        access_token: Optional[str] = None,
+        **kwargs: Any,
+    ) -> None:
+        if access_token is None:
+            # CLI / local-dev path: resolve from local credentials
+            cred = sc.resolve("claude_code")
+            access_token = cred.access_token
+            source = cred.source
+            expires_at_ms = cred.expires_at_ms
+        else:
+            # Web path: caller (oauth_service.resolve) provided the token
+            source = "web_oauth"
+            expires_at_ms = None
+
         # ChatAnthropic's validator requires *some* api_key value to construct.
         # We pass a placeholder; the real auth happens on the client we install
         # immediately afterwards.
@@ -87,11 +103,11 @@ class ChatClaudeCodeOAuth(ChatAnthropic):
 
         default_headers = _oauth_default_headers()
         sync_client = anthropic.Anthropic(
-            auth_token=cred.access_token,
+            auth_token=access_token,
             default_headers=default_headers,
         )
         async_client = anthropic.AsyncAnthropic(
-            auth_token=cred.access_token,
+            auth_token=access_token,
             default_headers=default_headers,
         )
         # _client / _async_client are functools.cached_property descriptors on
@@ -102,5 +118,5 @@ class ChatClaudeCodeOAuth(ChatAnthropic):
         object.__setattr__(self, "_async_client", async_client)
         logger.info(
             "ChatClaudeCodeOAuth initialized: model=%s source=%s expires_at_ms=%s",
-            model, cred.source, cred.expires_at_ms,
+            model, source, expires_at_ms,
         )
