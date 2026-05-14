@@ -258,14 +258,19 @@ class TradingAgentsGraph:
         # Initialize memories (如果启用)
         memory_enabled = self.config.get("memory_enabled", True)
         if memory_enabled:
-            # 使用单例ChromaDB管理器，避免并发创建冲突
-            self.bull_memory = FinancialSituationMemory("bull_memory", self.config)
-            self.bear_memory = FinancialSituationMemory("bear_memory", self.config)
-            self.trader_memory = FinancialSituationMemory("trader_memory", self.config)
-            self.invest_judge_memory = FinancialSituationMemory("invest_judge_memory", self.config)
-            self.risk_manager_memory = FinancialSituationMemory("risk_manager_memory", self.config)
-        else:
-            # 创建空的内存对象
+            try:
+                from tradingagents.agents.utils.memory import (
+                    FinancialSituationMemory, UnsupportedEmbeddingError,
+                )
+                self.bull_memory = FinancialSituationMemory("bull_memory", self.config)
+                self.bear_memory = FinancialSituationMemory("bear_memory", self.config)
+                self.trader_memory = FinancialSituationMemory("trader_memory", self.config)
+                self.invest_judge_memory = FinancialSituationMemory("invest_judge_memory", self.config)
+                self.risk_manager_memory = FinancialSituationMemory("risk_manager_memory", self.config)
+            except UnsupportedEmbeddingError as exc:
+                logger.warning("Memory disabled (no embedding available): %s", exc)
+                memory_enabled = False
+        if not memory_enabled:
             self.bull_memory = None
             self.bear_memory = None
             self.trader_memory = None
