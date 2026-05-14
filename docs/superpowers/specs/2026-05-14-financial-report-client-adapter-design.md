@@ -50,7 +50,7 @@ from financial_report_llm_extractor.client import (
 
 ## 前置条件
 
-1. TradingAgents-CN 运行环境升级到 Python 3.11+。上游 extractor `requires-python >=3.11`，Phase 1b 采用 in-process import，不设计 subprocess fallback。
+1. TradingAgents-CN 运行环境升级到 Python 3.11。上游 extractor `requires-python >=3.11`，Phase 1b 采用 in-process import，不设计 subprocess fallback。当前仓库同时更新 `pyproject.toml`、`.python-version`、`uv.lock` 与 backend Docker base image，保持 `uv`/本地测试/Docker 构建解释器一致。`qianfan` optional extra 约束需保持在当前索引可解析范围内，否则 lock regeneration 会失败。
 2. `financial-report-llm-extractor` Phase 1a 已完成，`FinancialReportClient` 可安装并 import。
 3. report-collector 保留财报搜索/下载能力，但默认停止财务分析与补缺调用。
 

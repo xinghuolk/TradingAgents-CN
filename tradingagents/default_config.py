@@ -31,6 +31,16 @@ DEFAULT_CONFIG = {
     "report_collector_max_reports": int(os.getenv("REPORT_COLLECTOR_MAX_REPORTS", "5")),
     "report_collector_usd_hkd_rate": float(os.getenv("REPORT_COLLECTOR_USD_HKD_RATE", "7.8")),
 
+    # FinancialReportClient annual-report extractor integration
+    "financial_report_client_enabled": os.getenv("FINANCIAL_REPORT_CLIENT_ENABLED", "false").lower() == "true",
+    "financial_report_cache_only": os.getenv("FINANCIAL_REPORT_CACHE_ONLY", "true").lower() == "true",
+    "financial_report_force_refresh": os.getenv("FINANCIAL_REPORT_FORCE_REFRESH", "false").lower() == "true",
+    "financial_report_include_llm_supplement": os.getenv("FINANCIAL_REPORT_INCLUDE_LLM_SUPPLEMENT", "false").lower() == "true",
+    "financial_report_allow_llm_models": os.getenv("FINANCIAL_REPORT_ALLOW_LLM_MODELS", "gpt-5.5,codex"),
+    "financial_report_extractor_cache_root": os.getenv("FINANCIAL_REPORT_EXTRACTOR_CACHE_ROOT", ""),
+    "financial_report_llm_config_path": os.getenv("FINANCIAL_REPORT_LLM_CONFIG_PATH", ""),
+    "financial_report_pdf_root": os.getenv("FINANCIAL_REPORT_PDF_ROOT", ""),
+
     # Note: Database and cache configuration is now managed by .env file and config.database_manager
     # No database/cache settings in default config to avoid configuration conflicts
 }

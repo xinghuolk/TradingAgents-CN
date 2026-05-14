@@ -47,6 +47,12 @@ Modify:
 
 - `pyproject.toml`  
   Align runtime requirement to Python 3.11+ for in-process extractor import.
+- `.python-version`  
+  Pin local project interpreter to Python 3.11 so `uv` and local test commands agree with `pyproject.toml`.
+- `Dockerfile.backend`  
+  Align backend Docker base image with Python 3.11 runtime gate.
+- `uv.lock`  
+  Regenerate after the Python requirement and optional dependency changes.
 - `tradingagents/default_config.py`  
   Add `financial_report_*` defaults.
 - `tradingagents/tools/value_investment_tool.py`  
@@ -71,6 +77,9 @@ Test:
 
 **Files:**
 - Modify: `pyproject.toml`
+- Modify: `.python-version`
+- Modify: `Dockerfile.backend`
+- Modify: `uv.lock`
 - Modify: `tradingagents/default_config.py`
 - Create: `tradingagents/dataflows/financial_reports/__init__.py`
 - Create: `tradingagents/dataflows/financial_reports/config.py`
@@ -217,7 +226,26 @@ Modify `tradingagents/default_config.py` inside `DEFAULT_CONFIG`:
 Modify `pyproject.toml`:
 
 ```toml
-requires-python = ">=3.11"
+requires-python = ">=3.11,<3.12"
+qianfan = ["qianfan>=0.4.12.3,<0.5"]
+```
+
+Modify `.python-version`:
+
+```text
+3.11
+```
+
+Modify `Dockerfile.backend`:
+
+```dockerfile
+FROM python:3.11-slim-bookworm
+```
+
+Regenerate `uv.lock`:
+
+```bash
+uv lock
 ```
 
 - [ ] **Step 4: Run test to verify it passes**
@@ -233,7 +261,7 @@ Expected: PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add pyproject.toml tradingagents/default_config.py tradingagents/dataflows/financial_reports/__init__.py tradingagents/dataflows/financial_reports/config.py tests/unit/test_financial_report_config.py
+git add .python-version Dockerfile.backend pyproject.toml uv.lock tradingagents/default_config.py tradingagents/dataflows/__init__.py tradingagents/dataflows/financial_reports/__init__.py tradingagents/dataflows/financial_reports/config.py tests/unit/test_financial_report_config.py
 git commit -m "feat: add financial report client config"
 ```
 
