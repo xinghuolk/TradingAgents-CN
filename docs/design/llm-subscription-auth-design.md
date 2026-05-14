@@ -460,28 +460,134 @@ if config["llm_provider"] in ("claude_code", "codex"):
 
 按依赖关系拆三个 PR，每个能独立合并、独立验证：
 
-### PR-1：核心适配器与凭据模块（不动 UI 和数据库）
-- 新增 `tradingagents/llm_adapters/subscription_credentials.py`
-- 新增 `tradingagents/llm_adapters/{anthropic_oauth_adapter, codex_oauth_adapter}.py`
-- `create_llm_by_provider` 加 `claude_code` / `codex` 分支
-- 单测：mock 本机凭据文件 → 验证 token 刷新、过期判断、header 拼装
-- 端到端：通过 CLI（`python -m cli.main`）能跑通一次 Claude Code 订阅模式的分析
-- 工作量：~ 2 人日
+### PR-1：核心适配器与凭据模块 ✅ **已完成**
 
-### PR-2：后端 API + config_bridge
-- `app/models/config.py` 加 `AuthType` 枚举与字段
-- `app/services/config_service.py` 处理新字段
-- `app/core/config_bridge.py` 区分 OAuth provider
-- 新增 `app/routers/subscription_auth.py` 的 probe/refresh 端点
-- `tradingagents/agents/utils/memory.py` 在订阅模式禁用 / 切换 embedding
-- 单测 + Docker 模式的部署文档
-- 工作量：~ 2 人日
+**计划范围**：新增 `subscription_credentials.py` + `claude_code_adapter.py` + `codex_adapter.py`，`create_llm_by_provider` 加分支，CLI 端到端验证。
 
-### PR-3：前端 UI
-- 大模型厂家管理页新增「订阅模式」分组
-- 凭据检测/刷新组件
-- 第一次启用弹合规免责声明
-- 工作量：~ 2 人日
+**实际交付**：
+- `tradingagents/llm_adapters/subscription_credentials.py`：本机凭据加载（`~/.claude/.credentials.json` + macOS Keychain + `~/.codex/auth.json`）、token 过期判断、refresh（Claude Code + Codex）、`resolve()` 编排
+- `tradingagents/llm_adapters/claude_code_adapter.py`：`ChatClaudeCodeOAuth(ChatAnthropic)`，OAuth bearer token + `anthropic-beta` headers + `claude-cli/<dynamic>` user-agent + `x-app: cli`
+- `tradingagents/llm_adapters/codex_adapter.py`：`ChatCodexOAuth`（初版，PR-2.5 重写）
+- `tradingagents/graph/trading_graph.py`：`create_llm_by_provider` 增加 `claude_code` / `codex` 分支
+- `scripts/smoke_test_claude_code_oauth.py`：CLI 端到端 smoke
+
+**实际工作量**：~ 1.5 人日（包括最终评审 + 修复）
+
+**已知 caveats**：
+- macOS Keychain 来源的 Claude Code token 不自动刷新（C1 修复：拒绝刷新避免 stale-token 锁死）
+- Codex `~/.codex/auth.json` 写回 deferred — refresh 后新 token 只在内存，下次进程启动还读旧的；如需多次复用 CLI 路径需 `codex login` 重做
+
+---
+
+### PR-2：Web OAuth 后端 ✅ **已完成（实际范围扩张）**
+
+**计划范围**：AuthType 枚举、config_service、config_bridge、probe/refresh 路由、memory.py 回退、单测 + Docker 文档。
+
+**实际交付**（远超原计划，包含 OAuth flow 实现 + 多个 PR-1 follow-up）：
+
+**OAuth 基础设施**：
+- `app/services/oauth_crypto.py`：AES-256-GCM 加解密 + 启动校验
+- `app/services/oauth_service.py`：CRUD（store/resolve/delete）+ PKCE flow（Claude）+ device-code flow（Codex，端点改对：`/api/accounts/deviceauth/usercode`）
+- `app/models/oauth.py`：Pydantic 模型 + `OAuthCredentialError`
+- `app/routers/oauth.py`：7 个 REST 端点（status / authorize×2 / callback / poll / refresh / unbind）
+- `app/core/database.py`：`user_oauth_credentials` 集合 + 唯一索引 `(user_id, provider)`
+- `app/core/startup_validator.py`：启动期校验 `OAUTH_ENCRYPTION_KEY`
+- `.env.example`：OAUTH_ENCRYPTION_KEY 配置块
+- `pyproject.toml`：`cryptography>=42.0` 依赖
+
+**Graph 重构**（Phase 2 范围扩张项）：
+- `TradingAgentsGraph.__init__` 从 ~540 行 elif 链收紧到 ~36 行，统一走 `create_llm_by_provider`
+- `create_llm_by_provider` 砍掉 dashscope/qianfan/zhipu/custom_openai 专用分支，国产 provider 走通用 OpenAI 兼容 fallback
+- 保留原生分支：openai / anthropic / google / deepseek / openrouter / ollama / claude_code / codex
+
+**集成**：
+- `app/services/analysis_service.py`：OAuth provider 触发时调 `oauth_service.resolve(user_id, provider)` 注入 token 到 config
+- `app/core/config_bridge.py`：跳过 OAuth provider 的 API key 桥接（两处：MongoDB 路径 + JSON fallback 路径）
+- `tradingagents/agents/utils/memory.py`：`UnsupportedEmbeddingError` 让 OAuth 模式默认禁用 memory（除非用户设 `EMBEDDING_PROVIDER`）
+
+**PR-1 follow-ups bundled in PR-2**：
+- `subscription_credentials.resolve(force_refresh=False)` 参数
+- `tests/conftest.py` 加 session 级 `stub_optional_llm_deps` fixture
+- `tests/pytest.ini` 加 `asyncio_mode = auto`
+
+**最终评审修复 4 个 Critical bug**：
+1. `user["_id"]` → `user["id"]`（auth_db 返回 `id` 不是 `_id`）
+2. `get_database()` 用 `db_manager.mongo_db` 而非硬编码字符串（多用户多 DB 场景）
+3. `app/main.py` lifespan 加 `init_oauth_redis()`（Redis client 未在 FastAPI 进程初始化）
+4. `create_llm_by_provider` 通用 fallback 分支正确传递 `api_key`（之前会丢）
+
+**实际工作量**：~ 6 人日（远超原计划的 2 人日，因为：(a) 选择了 Web OAuth flow 而非纯本机凭据；(b) graph 重构纳入；(c) PR-1 follow-up 一起做；(d) 最终评审 4 个 Critical bug）
+
+**实测验证状态**：
+- ✅ Codex Web OAuth flow → MongoDB 加密存 → adapter → 真实 API 200 OK（`scripts/smoke_test_oauth_codex.py`）
+- ✅ Codex 完整多智能体分析跑通（`scripts/smoke_test_analysis.py SMOKE_PROVIDER=codex`）
+- ✅ DeepSeek 完整多智能体分析跑通（API-key 路径控制组，确认 PR-2 重构没拐错路）
+- ⚠️ Claude Code PKCE flow 单测覆盖，未实测（spec § 5.1 标注 "Implementation must verify"）
+- ⚠️ DashScope / Zhipu / Qianfan 经通用 fallback 路径，未实测（API 兼容性应该没问题，token 计费追踪可能丢失）
+- ⚠️ Token refresh under real Cloudflare：refresh 走 `/oauth/token`，等 ≥1h access_token 过期才能自然触发
+
+**已知 caveats / 留给后续**：
+- Codex CLI 路径 `~/.codex/auth.json` 写回仍未做（PR-1 deferred decision）
+- macOS Keychain writer 未做（PR-1 C1 deferred）
+- 加密 key 轮转工具未做
+- 多点部署 token 缓存（Redis L1）未做
+- 加密 key 走外部 KMS 未做
+
+---
+
+### PR-2.5：Codex Responses API 适配器重写 ✅ **已完成（计划外发现）**
+
+**触发**：PR-2 端到端验证时发现 `chatgpt.com/backend-api/codex` 用的是 OpenAI Responses API（不是 Chat Completions），消息格式、SSE 事件、tool call 格式、必需 headers 完全不同。原 PR-2 的 `ChatCodexOAuth(ChatOpenAI)` 薄子类调通必挂。
+
+**实际交付**：
+- `tradingagents/llm_adapters/codex_responses_adapter.py`：完整 port hermes-agent 的 `_CodexCompletionsAdapter` 模式 —— 把 `responses.stream(...)` 包装成 `chat.completions.create(**kwargs)` 兼容的 shim，让 ChatOpenAI 的现有 LangChain/LangGraph 基础设施继续工作。包含：
+  - JWT 解码抽 `chatgpt_account_id`（Cloudflare 必需 header）
+  - 消息格式转换（`input_text` / `output_text` shape，role-aware）
+  - Tool call 双向转换（`call_*` ↔ `fc_*` 前缀映射）
+  - SSE 事件解析（`response.output_text.delta` / `response.output_item.done`）
+  - 必需 headers（`originator: codex_cli_rs` + `ChatGPT-Account-ID` + `User-Agent: codex_cli_rs/...`）
+  - Sync + async 包装（async 用 `asyncio.to_thread` 转 sync）
+  - Reasoning effort 透传（`extra_body.reasoning`）
+- `tradingagents/llm_adapters/codex_adapter.py`：重写为通过 shim 接入 ChatOpenAI 的 `self.client` / `self.async_client`（不是 `self.root_client` — 经验证 `langchain_openai >=0.1` 的实际 attribute 形态）
+- 41 个新单测覆盖 JWT 解码、消息转换、ID 映射、SSE 解析
+
+**计划外的边角修复**：
+- Codex device-code flow 端点从 `/oauth/device/code`（标准 RFC 8628，被 Cloudflare 403）改为 `/api/accounts/deviceauth/usercode`（OpenAI 内部 API + PKCE 混合 3 步流程）
+- Verification URL 从合成的 `?user_code=...` 改为 hermes 实测的固定 URL `https://auth.openai.com/codex/device`（用户手动输 code）
+
+**实际工作量**：~ 1 人日
+
+**实测验证状态**：✅ 完整 OAuth flow + adapter + 真实 Codex API 调用 + 多智能体分析全跑通
+
+---
+
+### PR-3：前端 Web UI ⏸ **待开始**
+
+**计划范围**：
+- 大模型厂家管理页新增「订阅模式」分组（Claude Code / Codex 两张卡片）
+- OAuth 流程触发组件：
+  - Claude Code：「登录 Claude」按钮 → 弹窗调 `GET /api/oauth/authorize/claude_code` → 跳转 → 回调后 `postMessage` 关闭弹窗
+  - Codex：「登录 ChatGPT」按钮 → 调 `POST /api/oauth/authorize/codex` → 显示 user_code + 跳转链接 → 轮询 `POST /api/oauth/poll/codex` 直到 bound
+- 绑定状态卡片：调 `GET /api/oauth/status/{provider}` 显示有效期、上次刷新时间
+- 手动刷新按钮：调 `POST /api/oauth/refresh/{provider}`
+- 解绑按钮：调 `DELETE /api/oauth/unbind/{provider}`
+- 首次绑定弹合规免责声明（订阅条款 vs 程序化批量调用风险）
+- 大模型选择页让订阅 provider 像普通 provider 一样可选
+
+**已为 PR-3 准备好的后端 API**（PR-2 已稳定）：
+```
+GET    /api/oauth/status/{provider}           当前用户绑定状态
+GET    /api/oauth/authorize/claude_code       启动 PKCE，返回 authorize_url + state
+POST   /api/oauth/authorize/codex             启动 device-code，返回 user_code + verification_uri + interval
+GET    /api/oauth/callback/claude_code        PKCE 回调（无 JWT，state 即身份）
+POST   /api/oauth/poll/codex                  轮询 device-code 状态
+POST   /api/oauth/refresh/{provider}          手动刷新
+DELETE /api/oauth/unbind/{provider}           解绑
+```
+
+`{provider}` ∈ `claude_code` | `codex`
+
+**预估工作量**：~ 2 人日
 
 ## 7. 待定问题
 
