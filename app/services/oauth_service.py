@@ -33,8 +33,10 @@ _PKCE_TTL_SECONDS = 600
 
 # --- Codex / OpenAI device-code OAuth constants ---
 _CODEX_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
-_CODEX_DEVICE_CODE_URL = "https://auth.openai.com/oauth/device/code"
+_CODEX_DEVICE_USERCODE_URL = "https://auth.openai.com/api/accounts/deviceauth/usercode"
+_CODEX_DEVICE_POLL_URL = "https://auth.openai.com/api/accounts/deviceauth/token"
 _CODEX_TOKEN_URL = "https://auth.openai.com/oauth/token"
+_CODEX_REDIRECT_URI = "https://auth.openai.com/deviceauth/callback"
 
 
 def _b64url(data: bytes) -> str:
@@ -267,36 +269,54 @@ async def start_device_code_flow(
     user_id: str,
     http_client,
 ) -> dict:
-    """Begin Codex device-code flow. Returns user-facing code + URL."""
+    """Begin Codex device-code flow (OpenAI deviceauth API, not RFC 8628).
+
+    Calls /api/accounts/deviceauth/usercode and stores device_auth_id +
+    user_code in Redis for the poll step.
+    """
     resp = await http_client.post(
-        _CODEX_DEVICE_CODE_URL,
-        data={
-            "client_id": _CODEX_CLIENT_ID,
-            "scope": "openid profile email",
-        },
-        headers={
-            "Content-Type": "application/x-www-form-urlencoded",
-            "User-Agent": "TradingAgents-CN/1.0 (oauth-device)",
-        },
+        _CODEX_DEVICE_USERCODE_URL,
+        json={"client_id": _CODEX_CLIENT_ID},
+        headers={"Content-Type": "application/json"},
     )
     if resp.status_code != 200:
+        # Try to get the response body for diagnostics — might be a Cloudflare
+        # challenge page (HTML) or OAuth error JSON. Either way, log and raise.
+        try:
+            body = resp.text[:500]
+        except Exception:
+            body = "<unavailable>"
         raise OAuthCredentialError(
-            f"Codex device-code request failed: HTTP {resp.status_code}"
+            f"Codex device-code request failed: HTTP {resp.status_code}; "
+            f"body[:500]={body!r}"
         )
     payload = resp.json()
-    device_code = payload["device_code"]
-    expires_in = int(payload.get("expires_in") or 600)
-    interval = int(payload.get("interval") or 5)
+    device_auth_id = payload.get("device_auth_id")
+    user_code = payload.get("user_code")
+    if not device_auth_id or not user_code:
+        raise OAuthCredentialError(
+            f"Codex device-code response missing device_auth_id or user_code: "
+            f"{payload!r}"
+        )
+    interval = max(int(payload.get("interval", 5)), 3)  # hermes uses min 3
+    expires_in = int(payload.get("expires_in", 600))
+
     redis_key = f"oauth:device:{user_id}:codex"
     redis_value = json.dumps({
-        "device_code": device_code,
+        "device_auth_id": device_auth_id,
+        "user_code": user_code,
         "interval": interval,
         "expires_at": (datetime.now(timezone.utc) + timedelta(seconds=expires_in)).isoformat(),
     })
     await redis_client.setex(redis_key, expires_in, redis_value)
+
+    # Synthesize a verification URL the user can open. OpenAI's deviceauth
+    # endpoint accepts ?user_code=... query param.
+    verification_uri = f"https://auth.openai.com/deviceauth?user_code={user_code}"
+
     return {
-        "user_code": payload["user_code"],
-        "verification_uri": payload.get("verification_uri_complete") or payload.get("verification_uri"),
+        "user_code": user_code,
+        "verification_uri": verification_uri,
         "expires_in": expires_in,
         "interval": interval,
     }
@@ -309,10 +329,9 @@ async def poll_device_code_flow(
     user_id: str,
     http_client,
 ) -> dict:
-    """Poll Codex for completion of the device authorization.
+    """Poll Codex deviceauth/token + exchange the authorization_code if ready.
 
-    Returns a dict with `status` ∈ {pending, bound, expired, denied} and an
-    optional `increment_interval` hint.
+    Returns dict with `status` ∈ {pending, bound, expired, denied}.
     """
     redis_key = f"oauth:device:{user_id}:codex"
     raw = await redis_client.get(redis_key)
@@ -320,54 +339,91 @@ async def poll_device_code_flow(
         return {"status": "expired", "increment_interval": False}
 
     state = json.loads(raw if isinstance(raw, str) else raw.decode())
-    device_code = state["device_code"]
+    device_auth_id = state["device_auth_id"]
+    user_code = state["user_code"]
 
-    resp = await http_client.post(
-        _CODEX_TOKEN_URL,
-        data={
-            "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
-            "device_code": device_code,
-            "client_id": _CODEX_CLIENT_ID,
-        },
-        headers={
-            "Content-Type": "application/x-www-form-urlencoded",
-            "User-Agent": "TradingAgents-CN/1.0 (oauth-device-poll)",
-        },
+    # Step 3: poll OpenAI's internal deviceauth endpoint
+    poll_resp = await http_client.post(
+        _CODEX_DEVICE_POLL_URL,
+        json={"device_auth_id": device_auth_id, "user_code": user_code},
+        headers={"Content-Type": "application/json"},
     )
 
-    if resp.status_code == 200:
-        payload = resp.json()
-        access_token = payload.get("access_token") or ""
-        if not access_token:
-            return {"status": "denied", "increment_interval": False}
-        refresh_token = payload.get("refresh_token") or ""
-        expires_in = int(payload.get("expires_in") or 3600)
-        expires_at = datetime.now(timezone.utc) + timedelta(seconds=expires_in)
-        await store_credentials(
-            collection=collection,
-            user_id=user_id,
-            provider="codex",
-            access_token=access_token,
-            refresh_token=refresh_token,
-            expires_at=expires_at,
+    # 403/404 = user hasn't completed login yet (hermes treats both as pending)
+    if poll_resp.status_code in (403, 404):
+        return {"status": "pending", "increment_interval": False}
+
+    if poll_resp.status_code != 200:
+        # Unknown error — log and surface as denied
+        try:
+            body = poll_resp.text[:500]
+        except Exception:
+            body = "<unavailable>"
+        logger.warning(
+            "Codex deviceauth poll returned HTTP %s: %s",
+            poll_resp.status_code, body,
         )
         await redis_client.delete(redis_key)
-        return {"status": "bound", "increment_interval": False}
+        return {"status": "denied", "increment_interval": False}
 
-    # Non-200 → check error code
+    # Got 200 — extract authorization_code + code_verifier
     try:
-        err_body = resp.json()
-    except Exception:
-        err_body = {}
-    err = err_body.get("error", "")
-    if err == "authorization_pending":
-        return {"status": "pending", "increment_interval": False}
-    if err == "slow_down":
-        return {"status": "pending", "increment_interval": True}
-    if err in ("expired_token", "access_denied"):
+        code_payload = poll_resp.json()
+    except Exception as exc:
         await redis_client.delete(redis_key)
-        return {"status": "expired" if err == "expired_token" else "denied",
-                "increment_interval": False}
-    # Unknown error — surface as denied so the UI stops polling
-    logger.warning("Unknown Codex poll error: %s (status %s)", err, resp.status_code)
-    return {"status": "denied", "increment_interval": False}
+        raise OAuthCredentialError(
+            f"Codex poll response not JSON: {exc}"
+        ) from exc
+
+    authorization_code = code_payload.get("authorization_code")
+    code_verifier = code_payload.get("code_verifier")
+    if not authorization_code or not code_verifier:
+        await redis_client.delete(redis_key)
+        raise OAuthCredentialError(
+            f"Codex poll 200 response missing authorization_code or "
+            f"code_verifier: {code_payload!r}"
+        )
+
+    # Step 4: exchange authorization_code for tokens at /oauth/token (PKCE)
+    token_resp = await http_client.post(
+        _CODEX_TOKEN_URL,
+        data={
+            "grant_type": "authorization_code",
+            "code": authorization_code,
+            "redirect_uri": _CODEX_REDIRECT_URI,
+            "client_id": _CODEX_CLIENT_ID,
+            "code_verifier": code_verifier,
+        },
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
+    if token_resp.status_code != 200:
+        try:
+            body = token_resp.text[:500]
+        except Exception:
+            body = "<unavailable>"
+        await redis_client.delete(redis_key)
+        raise OAuthCredentialError(
+            f"Codex token exchange failed: HTTP {token_resp.status_code}; "
+            f"body[:500]={body!r}"
+        )
+
+    token_payload = token_resp.json()
+    access_token = token_payload.get("access_token") or ""
+    if not access_token:
+        await redis_client.delete(redis_key)
+        return {"status": "denied", "increment_interval": False}
+
+    refresh_token = token_payload.get("refresh_token") or ""
+    expires_in = int(token_payload.get("expires_in") or 3600)
+    expires_at = datetime.now(timezone.utc) + timedelta(seconds=expires_in)
+
+    await store_credentials(
+        collection=collection,
+        user_id=user_id,
+        provider="codex",
+        access_token=access_token,
+        refresh_token=refresh_token,
+        expires_at=expires_at,
+    )
+    await redis_client.delete(redis_key)
+    return {"status": "bound", "increment_interval": False}
