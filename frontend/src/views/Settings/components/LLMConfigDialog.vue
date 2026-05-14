@@ -438,6 +438,7 @@ const bindSubscription = () => {
 }
 
 const goManageSubscription = () => {
+  emit('update:visible', false)
   emit('navigate-subscription')
 }
 
@@ -552,6 +553,16 @@ const getModelInfo = (provider: string, modelName: string): ModelInfo | null => 
 
 // 处理供应商变更
 const handleProviderChange = async (provider: string) => {
+  // 订阅类 provider 没有 model 目录，跳过 catalog 检查
+  if (SUBSCRIPTION_PROVIDER_NAMES.has(provider)) {
+    modelOptions.value = []
+    formData.value.model_name = ''
+    formData.value.input_price_per_1k = 0
+    formData.value.output_price_per_1k = 0
+    formData.value.currency = 'CNY'
+    return
+  }
+
   // 先尝试从已加载的目录中获取
   modelOptions.value = getModelOptions(provider)
 
@@ -706,8 +717,10 @@ watch(
         }
         selectedModelKey.value = ''
       }
-      // 拉一次订阅状态，让状态卡反映最新绑定
-      oauthStore.fetchAllStatus()
+      // 拉一次订阅状态（仅当编辑/打开的是订阅类 provider 时）
+      if (SUBSCRIPTION_PROVIDER_NAMES.has(formData.value.provider)) {
+        oauthStore.fetchAllStatus()
+      }
     }
   }
 )
