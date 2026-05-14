@@ -306,6 +306,28 @@ class TestAdapterCreate:
         assert resp.usage.completion_tokens == 5
         assert resp.usage.total_tokens == 15
 
+    def test_response_supports_model_dump_for_langchain_openai(self):
+        final = SimpleNamespace(
+            id="resp_dump",
+            output=[
+                SimpleNamespace(
+                    type="message", role="assistant", status="completed",
+                    content=[SimpleNamespace(type="output_text", text="Hello dump")],
+                ),
+            ],
+            usage=SimpleNamespace(input_tokens=3, output_tokens=2, total_tokens=5),
+        )
+        client, _ = _make_responses_client(events=[], final=final)
+        adapter = _CodexCompletionsAdapter(client, "gpt-5")
+
+        resp = adapter.create(messages=[{"role": "user", "content": "hi"}])
+        dumped = resp.model_dump()
+
+        assert dumped["id"] == "resp_dump"
+        assert dumped["choices"][0]["message"]["role"] == "assistant"
+        assert dumped["choices"][0]["message"]["content"] == "Hello dump"
+        assert dumped["usage"]["prompt_tokens"] == 3
+
     def test_system_routed_to_instructions(self):
         final = SimpleNamespace(id="resp_x", output=[], usage=None)
         client, ctx = _make_responses_client(events=[], final=final)

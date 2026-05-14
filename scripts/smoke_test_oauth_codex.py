@@ -140,12 +140,14 @@ async def main() -> int:
 
     print("\nConstructing ChatCodexOAuth and calling .invoke()...")
     from tradingagents.llm_adapters.codex_adapter import ChatCodexOAuth
+    model = os.environ.get("CODEX_SMOKE_MODEL", "gpt-5.5")
     try:
-        chat = ChatCodexOAuth(model="gpt-5", access_token=access_token)
+        chat = ChatCodexOAuth(model=model, access_token=access_token)
     except Exception as exc:
         print(f"FAIL: ChatCodexOAuth construction raised: {exc}", file=sys.stderr)
         return 4
 
+    print(f"Using model: {model}")
     print("Sending prompt: 'Reply with exactly the phrase: SMOKE-TEST-OK'\n")
     try:
         resp = chat.invoke("Reply with exactly the phrase: SMOKE-TEST-OK")

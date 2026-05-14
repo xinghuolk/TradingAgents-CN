@@ -36,6 +36,25 @@ from typing import Any, Dict, List, Optional
 logger = logging.getLogger(__name__)
 
 
+def _model_dump_value(value: Any) -> Any:
+    if isinstance(value, SimpleNamespace):
+        return {key: _model_dump_value(val) for key, val in vars(value).items()}
+    if isinstance(value, list):
+        return [_model_dump_value(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_model_dump_value(item) for item in value)
+    if isinstance(value, dict):
+        return {key: _model_dump_value(val) for key, val in value.items()}
+    return value
+
+
+class _ChatCompletionResponse(SimpleNamespace):
+    """Simple chat.completions-shaped response with pydantic-like dumping."""
+
+    def model_dump(self, *args: Any, **kwargs: Any) -> Dict[str, Any]:
+        return _model_dump_value(self)
+
+
 # ---------------------------------------------------------------------------
 # Headers — JWT-decoded ChatGPT-Account-ID + Cloudflare allowlist UA/originator
 # ---------------------------------------------------------------------------
@@ -399,7 +418,7 @@ class _CodexCompletionsAdapter:
             usage = resp_usage
 
         finish_reason = "tool_calls" if tool_calls else "stop"
-        return SimpleNamespace(
+        return _ChatCompletionResponse(
             id=getattr(final, "id", "") or "",
             object="chat.completion",
             model=model,
