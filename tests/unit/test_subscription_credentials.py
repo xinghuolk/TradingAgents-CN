@@ -475,6 +475,34 @@ class TestResolve:
             sc.resolve("claude_code")
         assert "expired" in str(exc.value).lower() or "refresh" in str(exc.value).lower()
 
+    def test_keychain_expiring_token_raises_instead_of_refreshing(self, monkeypatch):
+        """PR-1 cannot safely refresh Keychain-backed tokens (no Keychain writer).
+
+        Otherwise the rotated refresh_token would be written only to the file,
+        and the next resolve() would read the stale token from the Keychain
+        again and fail with invalid_grant. So we raise an actionable error
+        instead of silently locking the user out.
+        """
+        expiring = sc.SubscriptionCredential(
+            access_token="kc-at",
+            refresh_token="kc-rt",
+            expires_at_ms=int(time.time() * 1000) + 10_000,  # within 60s skew
+            provider="claude_code",
+            source="macos_keychain",
+        )
+        monkeypatch.setattr(sc, "read_claude_code_from_keychain", lambda: expiring)
+        monkeypatch.setattr(sc, "read_claude_code_from_file", lambda: None)
+        # Refresh must NOT be called — that's the whole point.
+        def must_not_be_called(*_, **__):
+            raise AssertionError("refresh_claude_code should not be called for Keychain-sourced creds")
+        monkeypatch.setattr(sc, "refresh_claude_code", must_not_be_called)
+
+        with pytest.raises(sc.SubscriptionCredentialError) as exc:
+            sc.resolve("claude_code")
+        msg = str(exc.value).lower()
+        assert "keychain" in msg
+        assert "claude login" in msg
+
     def test_unknown_provider_raises(self):
         with pytest.raises(ValueError):
             sc.resolve("nonsense")  # type: ignore[arg-type]

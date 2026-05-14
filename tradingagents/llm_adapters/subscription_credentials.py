@@ -362,6 +362,20 @@ def resolve(provider: Literal["claude_code", "codex"]) -> SubscriptionCredential
                 "Claude Code access token has expired and no refresh_token is "
                 "available. Run `claude login` again."
             )
+        # PR-1 only writes back to the credentials file, not to the macOS
+        # Keychain. If we refreshed a Keychain-sourced token, the Keychain
+        # would still hold the (now-consumed) old refresh token — the next
+        # resolve() would read the Keychain again, try the stale token, and
+        # the user would be silently locked out. Defer to `claude login`
+        # in that case until PR-2 adds a Keychain writer.
+        if cred.source == "macos_keychain":
+            raise SubscriptionCredentialError(
+                "Claude Code token is expiring and was loaded from the macOS "
+                "Keychain. PR-1 cannot safely refresh Keychain-backed credentials "
+                "(rotated tokens would not be persisted back). Run `claude login` "
+                "to refresh, or set the file at "
+                f"{_claude_code_credentials_path()} as the source."
+            )
         new_at, new_rt, new_exp = refresh_claude_code(cred.refresh_token)
         _write_claude_code_credentials(new_at, new_rt, new_exp)
         return SubscriptionCredential(

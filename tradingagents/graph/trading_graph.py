@@ -289,6 +289,29 @@ class TradingAgentsGraph:
 
             logger.info(f"✅ [混合模式] LLM 实例创建成功")
 
+        elif self.config["llm_provider"].lower() in ("claude_code", "codex"):
+            # 订阅式鉴权（Claude Code / Codex）：委派给 create_llm_by_provider，
+            # 它会读取本机凭据并构造 OAuth 适配器。统一模式下 quick/deep 使用相同 provider。
+            provider_name = self.config["llm_provider"].lower()
+            logger.info(f"🔐 [订阅模式] provider={provider_name}（统一模式）")
+            self.quick_thinking_llm = create_llm_by_provider(
+                provider=provider_name,
+                model=self.config["quick_think_llm"],
+                backend_url=self.config.get("backend_url", ""),
+                temperature=quick_temperature,
+                max_tokens=quick_max_tokens,
+                timeout=quick_timeout,
+            )
+            self.deep_thinking_llm = create_llm_by_provider(
+                provider=provider_name,
+                model=self.config["deep_think_llm"],
+                backend_url=self.config.get("backend_url", ""),
+                temperature=deep_temperature,
+                max_tokens=deep_max_tokens,
+                timeout=deep_timeout,
+            )
+            logger.info(f"✅ [订阅模式] LLM 实例创建成功")
+
         elif self.config["llm_provider"].lower() == "openai":
             logger.info(f"🔧 [OpenAI-快速模型] max_tokens={quick_max_tokens}, temperature={quick_temperature}, timeout={quick_timeout}s")
             logger.info(f"🔧 [OpenAI-深度模型] max_tokens={deep_max_tokens}, temperature={deep_temperature}, timeout={deep_timeout}s")
