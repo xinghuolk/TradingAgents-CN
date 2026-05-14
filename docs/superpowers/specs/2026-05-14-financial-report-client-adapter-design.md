@@ -133,6 +133,7 @@ FINANCIAL_REPORT_CLIENT_ENABLED=true
 FINANCIAL_REPORT_ALLOW_LLM_MODELS=gpt-5.5,codex
 FINANCIAL_REPORT_CACHE_ONLY=true
 FINANCIAL_REPORT_FORCE_REFRESH=false
+FINANCIAL_REPORT_INCLUDE_LLM_SUPPLEMENT=false
 FINANCIAL_REPORT_EXTRACTOR_CACHE_ROOT=
 FINANCIAL_REPORT_LLM_CONFIG_PATH=
 ```
@@ -151,8 +152,8 @@ FINANCIAL_REPORT_LLM_CONFIG_PATH=
 | --- | --- |
 | `net_profits[0]` | `net_profit` |
 | `operating_cash_flow` | `operating_cash_flow` |
-| `capex` | `capex` |
-| `free_cash_flow` | `operating_cash_flow - capex`，仅当两者可用 |
+| `capex` | `capital_expenditures` |
+| `free_cash_flow` | `operating_cash_flow - capital_expenditures`，仅当两者可用 |
 | `total_equity` | `total_equity` |
 | `cash_and_equivalents` | `cash_and_equivalents` 或现金类字段 |
 | `interest_bearing_debt` | `interest_bearing_debt` |
@@ -236,6 +237,7 @@ FINANCIAL_REPORT_LLM_CONFIG_PATH=
 "financial_report_client_enabled": os.getenv("FINANCIAL_REPORT_CLIENT_ENABLED", "false").lower() == "true",
 "financial_report_cache_only": os.getenv("FINANCIAL_REPORT_CACHE_ONLY", "true").lower() == "true",
 "financial_report_force_refresh": os.getenv("FINANCIAL_REPORT_FORCE_REFRESH", "false").lower() == "true",
+"financial_report_include_llm_supplement": os.getenv("FINANCIAL_REPORT_INCLUDE_LLM_SUPPLEMENT", "false").lower() == "true",
 "financial_report_allow_llm_models": os.getenv("FINANCIAL_REPORT_ALLOW_LLM_MODELS", "gpt-5.5,codex"),
 "financial_report_extractor_cache_root": os.getenv("FINANCIAL_REPORT_EXTRACTOR_CACHE_ROOT", ""),
 "financial_report_llm_config_path": os.getenv("FINANCIAL_REPORT_LLM_CONFIG_PATH", ""),
@@ -308,8 +310,9 @@ extractor_llm_config.json:
 - report-collector 仍可用于财报下载/选择，但默认不再参与财务字段分析或补缺。
 - 现有 report-collector 未提交改动不被回滚或大规模重写。
 
-## Open Decisions
+## Resolved Decisions
 
-1. `period_end` 默认值：是否由 TradingAgents-CN 根据当前日期推最近年报期，还是要求调用方显式传入。
-2. PDF resolver：优先查本地下载目录，还是通过 report-collector 自动下载最新年报后返回路径。
-3. Stale 数据默认是否允许参与计算。建议默认不参与，只展示。
+1. `period_end` 允许调用方不传；TradingAgents-CN adapter 根据参考日期推断最近“可能已披露”的年报期。若参考日期月份 >= 5，使用上一年 `12-31`；否则使用前年 `12-31`。
+2. PDF resolver 优先查本地配置目录；本地未命中时，通过 report-collector 的 PDF 搜索/下载/选择能力获取最新年报 PDF。该路径不得调用 report-collector 内容抽取或财务分析。
+3. Stale 数据默认只展示，不覆盖计算输入。后续如需 stale 参与计算，必须新增显式配置并输出 caveat。
+4. LLM supplement 默认关闭。只有 `FINANCIAL_REPORT_INCLUDE_LLM_SUPPLEMENT=true` 且 `FINANCIAL_REPORT_LLM_CONFIG_PATH` 非空时，adapter 才向 extractor 请求 LLM supplement；否则只读取 source-first deterministic 字段。
