@@ -32,13 +32,38 @@ OAUTH_BETA_HEADERS = (
     "fine-grained-tool-streaming-2025-05-14",
 )
 
-_CLAUDE_CLI_VERSION = "1.0.0"  # Header value; real Claude Code CLIs use their own.
+_CLAUDE_CLI_VERSION_FALLBACK = "2.1.74"  # Used when `claude --version` is unavailable.
+
+
+def _detect_claude_code_version() -> str:
+    """Return the installed Claude Code version string, or a static fallback.
+
+    Anthropic's OAuth infrastructure validates the user-agent version and may
+    reject requests whose version is too far behind the current release.
+    Reference: hermes-agent/agent/anthropic_adapter.py:_detect_claude_code_version
+    """
+    import subprocess as _sp
+
+    for cmd in ("claude", "claude-code"):
+        try:
+            result = _sp.run(
+                [cmd, "--version"],
+                capture_output=True, text=True, timeout=5,
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                version = result.stdout.strip().split()[0]
+                if version and version[0].isdigit():
+                    return version
+        except Exception:
+            pass
+    return _CLAUDE_CLI_VERSION_FALLBACK
 
 
 def _oauth_default_headers() -> dict:
+    version = _detect_claude_code_version()
     return {
         "anthropic-beta": ",".join(OAUTH_BETA_HEADERS),
-        "user-agent": f"claude-cli/{_CLAUDE_CLI_VERSION} (TradingAgents-CN)",
+        "user-agent": f"claude-cli/{version} (TradingAgents-CN)",
         "x-app": "cli",
     }
 
