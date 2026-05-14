@@ -147,3 +147,31 @@ async def callback_claude_code(
     except OAuthCredentialError as exc:
         return HTMLResponse(_CALLBACK_HTML_ERROR % (str(exc), str(exc)))
     return HTMLResponse(_CALLBACK_HTML_SUCCESS)
+
+
+from app.models.oauth import AuthorizeCodexResponse, PollCodexResponse  # noqa: E402
+
+
+@router.post("/authorize/codex", response_model=AuthorizeCodexResponse)
+async def authorize_codex(user: dict = Depends(get_current_user)):
+    """Start the Codex device-code flow."""
+    from app.services import oauth_service
+    result = await oauth_service.start_device_code_flow(
+        redis_client=get_redis_client(),
+        user_id=user["_id"],
+        http_client=get_http_client(),
+    )
+    return AuthorizeCodexResponse(**result)
+
+
+@router.post("/poll/codex", response_model=PollCodexResponse)
+async def poll_codex(user: dict = Depends(get_current_user)):
+    """Poll Codex device-code flow for completion."""
+    from app.services import oauth_service
+    result = await oauth_service.poll_device_code_flow(
+        redis_client=get_redis_client(),
+        collection=get_credentials_collection(),
+        user_id=user["_id"],
+        http_client=get_http_client(),
+    )
+    return PollCodexResponse(**result)

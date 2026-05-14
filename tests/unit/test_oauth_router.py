@@ -132,3 +132,43 @@ class TestPkceCallbackEndpoint:
         )
         assert r.status_code == 200
         assert "access_denied" in r.text or "error" in r.text.lower()
+
+
+class TestCodexAuthorize:
+    def test_codex_authorize_returns_user_code(self, app_client, monkeypatch):
+        async def fake_start(*, redis_client, user_id, http_client):
+            return {"user_code": "ABCD-EFGH",
+                    "verification_uri": "https://chatgpt.com/device",
+                    "expires_in": 600, "interval": 5}
+        monkeypatch.setattr("app.services.oauth_service.start_device_code_flow", fake_start)
+        monkeypatch.setattr(oauth_router, "get_redis_client", lambda: AsyncMock())
+        monkeypatch.setattr(oauth_router, "get_http_client", lambda: AsyncMock())
+
+        r = app_client.post("/api/oauth/authorize/codex")
+        assert r.status_code == 200
+        assert r.json()["user_code"] == "ABCD-EFGH"
+
+
+class TestCodexPoll:
+    def test_poll_returns_pending(self, app_client, monkeypatch):
+        async def fake_poll(*, redis_client, collection, user_id, http_client):
+            return {"status": "pending", "increment_interval": False}
+        monkeypatch.setattr("app.services.oauth_service.poll_device_code_flow", fake_poll)
+        monkeypatch.setattr(oauth_router, "get_redis_client", lambda: AsyncMock())
+        monkeypatch.setattr(oauth_router, "get_credentials_collection", lambda: AsyncMock())
+        monkeypatch.setattr(oauth_router, "get_http_client", lambda: AsyncMock())
+
+        r = app_client.post("/api/oauth/poll/codex")
+        assert r.status_code == 200
+        assert r.json() == {"status": "pending", "increment_interval": False}
+
+    def test_poll_returns_bound(self, app_client, monkeypatch):
+        async def fake_poll(*, redis_client, collection, user_id, http_client):
+            return {"status": "bound", "increment_interval": False}
+        monkeypatch.setattr("app.services.oauth_service.poll_device_code_flow", fake_poll)
+        monkeypatch.setattr(oauth_router, "get_redis_client", lambda: AsyncMock())
+        monkeypatch.setattr(oauth_router, "get_credentials_collection", lambda: AsyncMock())
+        monkeypatch.setattr(oauth_router, "get_http_client", lambda: AsyncMock())
+
+        r = app_client.post("/api/oauth/poll/codex")
+        assert r.json()["status"] == "bound"
