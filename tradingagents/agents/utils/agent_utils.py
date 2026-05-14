@@ -901,6 +901,7 @@ class Toolkit:
                 logger.info(f"🇭🇰 [统一基本面工具] 处理港股数据，数据深度: {data_depth}...")
 
                 hk_data_success = False
+                hk_data = ""
 
                 # 🔥 统一策略：所有级别都获取完整数据
                 # 原因：提示词是统一的，如果数据不完整会导致LLM基于不存在的数据进行分析（幻觉）
@@ -911,7 +912,8 @@ class Toolkit:
                     try:
                         import os
                         enabled = bool(Toolkit._config.get("report_collector_enabled", False))
-                        if not enabled:
+                        analysis_enabled = bool(Toolkit._config.get("report_collector_analysis_enabled", False))
+                        if not enabled or not analysis_enabled:
                             return None
                         from tradingagents.services.report_collector_client import ReportCollectorClient
                         base_url = Toolkit._config.get("report_collector_url") or os.getenv("REPORT_COLLECTOR_URL", "http://localhost")
@@ -923,25 +925,179 @@ class Toolkit:
                         logger.debug(f"[report-collector] 客户端初始化失败（忽略）: {_e}")
                         return None
 
-                def _build_pdf_fundamentals_summary(extracted: dict) -> str:
-                    """把 report-collector 提取结果拼成基本面补充段落"""
+                def _build_pdf_fundamentals_summary(extracted: dict, hk_data_text: str = ""):
+                    """
+                    构建港股基本面补充段落（受控补缺 + 币种换算到HKD）。
+                    返回: (summary_text, structured_event_extra)
+                    """
                     if not extracted or not isinstance(extracted, dict):
-                        return ""
+                        return "", None
+
+                    def _safe_float(v):
+                        try:
+                            if v is None:
+                                return None
+                            return float(v)
+                        except Exception:
+                            return None
+
+                    def _normalize_currency(v):
+                        if v is None:
+                            return ""
+                        cur = str(v).strip().upper()
+                        if not cur:
+                            return ""
+                        aliases = {
+                            "HK$": "HKD",
+                            "US$": "USD",
+                            "RMB": "CNY",
+                            "CNH": "CNY",
+                        }
+                        return aliases.get(cur, cur)
+
+                    def _get_usd_hkd_rate():
+                        import os
+
+                        cfg_rate = Toolkit._config.get("report_collector_usd_hkd_rate")
+                        env_rate = os.getenv("REPORT_COLLECTOR_USD_HKD_RATE")
+                        raw = cfg_rate if cfg_rate is not None else env_rate
+                        if raw is None:
+                            return 7.8
+                        try:
+                            rate = float(raw)
+                            if 6.0 <= rate <= 10.0:
+                                return rate
+                        except Exception:
+                            pass
+                        return 7.8
+
+                    def _convert_to_hkd(v, src_currency, usd_hkd_rate):
+                        fv = _safe_float(v)
+                        if fv is None:
+                            return None, False
+                        src = _normalize_currency(src_currency)
+                        if src == "USD":
+                            return fv * usd_hkd_rate, True
+                        return fv, False
+
+                    def _normalize_amount_unit(v):
+                        raw = str(v or "").strip().lower()
+                        if not raw:
+                            return None
+                        if "billion" in raw or raw in ("bn", "b"):
+                            return "billion"
+                        if "million" in raw or raw in ("mn", "m"):
+                            return "million"
+                        if "thousand" in raw or raw in ("k", "thousands"):
+                            return "thousand"
+                        return raw
+
+                    def _amount_to_hkd_million(v_hkd, unit_text):
+                        fv = _safe_float(v_hkd)
+                        if fv is None:
+                            return None
+                        unit_norm = _normalize_amount_unit(unit_text) or _normalize_amount_unit(amount_unit)
+                        if unit_norm == "billion":
+                            return fv * 1000.0
+                        if unit_norm == "million":
+                            return fv
+                        if unit_norm == "thousand":
+                            return fv / 1000.0
+                        return None
+
+                    def _format_num(v):
+                        fv = _safe_float(v)
+                        if fv is None:
+                            return str(v)
+                        if abs(fv) >= 100:
+                            return f"{fv:.2f}"
+                        if abs(fv) >= 1:
+                            return f"{fv:.4f}".rstrip("0").rstrip(".")
+                        return f"{fv:.6f}".rstrip("0").rstrip(".")
+
+                    def _akshare_has_metric(text, metric_key):
+                        if not text:
+                            return False
+                        metric_hints = {
+                            "revenue": ("营业收入", "营收"),
+                            "operating_profit": ("营业利润",),
+                            "net_profit": ("归母净利润", "净利润"),
+                            "eps": ("EPS", "每股收益"),
+                            "total_assets": ("总资产",),
+                            "total_liabilities": ("总负债", "负债"),
+                            "operating_cash_flow": ("经营现金流", "每股经营现金流"),
+                        }
+                        hints = metric_hints.get(metric_key, ())
+                        return any(h in text for h in hints)
+
+                    def _period_sort_key(period_id, scope):
+                        import re
+
+                        text = str(period_id or "")
+                        scope_text = str(scope or "")
+                        year = 0
+                        quarter_rank = 0
+                        m_year = re.search(r"(\d{4})", text)
+                        if m_year:
+                            year = int(m_year.group(1))
+                        m_q = re.search(r"Q([1-4])", text, re.IGNORECASE)
+                        if m_q:
+                            quarter_rank = int(m_q.group(1))
+                        elif "H1" in text.upper():
+                            quarter_rank = 2
+                        elif "FY" in text.upper():
+                            quarter_rank = 4
+                        scope_rank_map = {
+                            "single_quarter": 4,
+                            "year_to_date": 3,
+                            "full_year": 2,
+                            "point_in_time": 1,
+                        }
+                        return (
+                            year,
+                            quarter_rank,
+                            scope_rank_map.get(scope_text, 0),
+                            text,
+                        )
+
                     data = extracted.get("data") if isinstance(extracted.get("data"), dict) else extracted
                     meta = data.get("metadata", {}) if isinstance(data.get("metadata"), dict) else {}
+                    doc = data.get("document", {}) if isinstance(data.get("document"), dict) else {}
                     inc = data.get("income_statement", {}) if isinstance(data.get("income_statement"), dict) else {}
                     bs = data.get("balance_sheet", {}) if isinstance(data.get("balance_sheet"), dict) else {}
                     cf = data.get("cash_flow_statement", {}) if isinstance(data.get("cash_flow_statement"), dict) else {}
                     met = data.get("financial_metrics", {}) if isinstance(data.get("financial_metrics"), dict) else {}
                     pdf_info = data.get("_pdf_info", {}) if isinstance(data.get("_pdf_info"), dict) else {}
+                    facts = data.get("facts", []) if isinstance(data.get("facts"), list) else []
+                    selection = data.get("_selection", {}) if isinstance(data.get("_selection"), dict) else {}
+
+                    source_currency = _normalize_currency(
+                        meta.get("currency")
+                        or doc.get("currency")
+                        or (
+                            next(
+                                (
+                                    f.get("currency")
+                                    for f in facts
+                                    if isinstance(f, dict) and f.get("currency")
+                                ),
+                                None,
+                            )
+                        )
+                    )
+                    per_share_currency = _normalize_currency(
+                        meta.get("per_share_currency") or source_currency
+                    )
+                    amount_unit = str(meta.get("amount_unit") or "").strip() or None
+                    usd_hkd_rate = _get_usd_hkd_rate()
 
                     lines = []
                     file_name = pdf_info.get("file_name") or data.get("file_name")
-                    period = meta.get("report_period") or ""
-                    selection = data.get("_selection", {}) if isinstance(data.get("_selection"), dict) else {}
-                    selected_rt = selection.get("selected_report_type") or meta.get("report_type") or ""
+                    period = meta.get("report_period") or doc.get("report_period") or ""
+                    selected_rt = selection.get("selected_report_type") or meta.get("report_type") or doc.get("report_type") or ""
                     period_end = selection.get("report_period_end") or ""
                     publish_time = selection.get("publish_time") or ""
+
                     if file_name:
                         lines.append(f"- 报告文件: {file_name}")
                     if period:
@@ -953,24 +1109,273 @@ class Toolkit:
                     if publish_time:
                         lines.append(f"- 披露时间: {publish_time}")
 
-                    # 关键字段（尽量输出，不保证币种）
-                    for label, val in (
-                        ("营收", inc.get("revenue")),
-                        ("营业利润", inc.get("operating_profit")),
-                        ("净利润", inc.get("net_profit") or inc.get("net_profit_attributable_to_parent")),
-                        ("EPS", met.get("eps") or met.get("eps_diluted")),
-                        ("总资产", bs.get("total_assets")),
-                        ("总负债", bs.get("total_liabilities")),
-                        ("经营现金流", cf.get("operating_cash_flow")),
-                    ):
-                        if val is not None:
-                            lines.append(f"- {label}: {val}")
+                    if source_currency:
+                        lines.append(f"- Collector币种: {source_currency}")
+                    if amount_unit:
+                        lines.append(f"- Collector金额单位: {amount_unit}")
+                    if source_currency == "USD":
+                        lines.append(f"- 汇率假设: 1 USD = {usd_hkd_rate} HKD")
+
+                    metric_rows = (
+                        ("revenue", "营收", inc.get("revenue"), source_currency),
+                        ("operating_profit", "营业利润", inc.get("operating_profit"), source_currency),
+                        ("net_profit", "净利润", inc.get("net_profit") or inc.get("net_profit_attributable_to_parent"), source_currency),
+                        ("eps", "EPS", met.get("eps") or met.get("eps_diluted"), per_share_currency),
+                        ("total_assets", "总资产", bs.get("total_assets"), source_currency),
+                        ("total_liabilities", "总负债", bs.get("total_liabilities"), source_currency),
+                        ("operating_cash_flow", "经营现金流", cf.get("operating_cash_flow"), source_currency),
+                    )
+
+                    data_source = {}
+                    supplemented_details = {}
+                    supplemented_fields = []
+                    period_scope_map = {}
+                    for p in data.get("periods", []) if isinstance(data.get("periods"), list) else []:
+                        if not isinstance(p, dict):
+                            continue
+                        pid = p.get("period_id")
+                        scope = p.get("scope")
+                        if isinstance(pid, str) and pid:
+                            period_scope_map[pid] = str(scope or "")
+
+                    for metric_key, label, raw_value, value_currency in metric_rows:
+                        raw_num = _safe_float(raw_value)
+                        if raw_num is None:
+                            continue
+
+                        converted_value_hkd, converted = _convert_to_hkd(raw_num, value_currency, usd_hkd_rate)
+                        akshare_has = _akshare_has_metric(hk_data_text or "", metric_key)
+                        chosen_source = "akshare" if akshare_has else "report-collector"
+                        data_source[metric_key] = chosen_source
+                        if chosen_source == "report-collector":
+                            supplemented_fields.append(metric_key)
+
+                        supplemented_details[metric_key] = {
+                            "label": label,
+                            "akshare_has_metric": akshare_has,
+                            "source_currency": _normalize_currency(value_currency) or None,
+                            "target_currency": "HKD",
+                            "amount_unit": amount_unit,
+                            "collector_value_raw": raw_num,
+                            "collector_value_hkd": converted_value_hkd,
+                            "conversion_applied": converted,
+                            "chosen_source": chosen_source,
+                        }
+
+                        line = f"- {label}: {_format_num(converted_value_hkd)} HKD"
+                        if amount_unit:
+                            line += f" ({amount_unit})"
+                        if converted:
+                            line += f" [原始 {_format_num(raw_num)} {_normalize_currency(value_currency) or ''}, 已按汇率换算]"
+                        elif _normalize_currency(value_currency) and _normalize_currency(value_currency) != "HKD":
+                            line += f" [原始币种 {_normalize_currency(value_currency)}，未换算]"
+                        if akshare_has:
+                            line += " [AKShare已有，未覆盖]"
+                        else:
+                            line += " [用于补缺]"
+                        lines.append(line)
+
+                    # 基于 facts 动态构建多期间快照（不假设固定有Q4/FY）
+                    fact_key_map = {
+                        ("income_statement", "revenue"): ("revenue", 2),
+                        ("income_statement", "operating_profit"): ("operating_profit", 2),
+                        ("income_statement", "net_profit"): ("net_profit", 3),
+                        ("income_statement", "net_profit_attributable_to_parent"): ("net_profit", 1),
+                        ("financial_metrics", "eps"): ("eps", 2),
+                        ("financial_metrics", "eps_diluted"): ("eps", 1),
+                        ("cash_flow_statement", "operating_cash_flow"): ("operating_cash_flow", 2),
+                        ("balance_sheet", "total_assets"): ("total_assets", 2),
+                        ("balance_sheet", "total_liabilities"): ("total_liabilities", 2),
+                    }
+                    period_snapshots = {}
+                    period_metric_priority = {}
+                    for fact in facts:
+                        if not isinstance(fact, dict):
+                            continue
+                        stmt = fact.get("statement")
+                        metric = fact.get("metric")
+                        key_info = fact_key_map.get((stmt, metric))
+                        if not key_info:
+                            continue
+                        normalized_key, priority = key_info
+                        period_id = fact.get("period_id")
+                        if not isinstance(period_id, str) or not period_id:
+                            continue
+                        fact_value = _safe_float(fact.get("value"))
+                        if fact_value is None:
+                            continue
+                        prev_p = period_metric_priority.get((period_id, normalized_key), -1)
+                        if prev_p > priority:
+                            continue
+
+                        fact_currency = _normalize_currency(
+                            fact.get("currency")
+                            or (per_share_currency if normalized_key == "eps" else source_currency)
+                        )
+                        fact_unit = str(fact.get("unit") or "").strip() or (amount_unit if normalized_key != "eps" else "per_share")
+                        fact_hkd_value, fact_converted = _convert_to_hkd(fact_value, fact_currency, usd_hkd_rate)
+                        fact_hkd_million = _amount_to_hkd_million(fact_hkd_value, fact_unit) if normalized_key != "eps" else None
+
+                        period_snapshots.setdefault(period_id, {})
+                        period_snapshots[period_id][normalized_key] = {
+                            "collector_value_raw": fact_value,
+                            "collector_value_hkd": fact_hkd_value,
+                            "collector_value_hkd_million": fact_hkd_million,
+                            "source_currency": fact_currency or None,
+                            "target_currency": "HKD",
+                            "unit": fact_unit,
+                            "conversion_applied": fact_converted,
+                            "source_metric": metric,
+                            "scope": period_scope_map.get(period_id) or None,
+                        }
+                        period_metric_priority[(period_id, normalized_key)] = priority
+
+                    # 期间快照文本（按可用字段动态输出）
+                    if period_snapshots:
+                        lines.append("- 多期间财务快照（collector）:")
+                        snapshot_metric_order = (
+                            ("revenue", "营收"),
+                            ("operating_profit", "营业利润"),
+                            ("net_profit", "净利润"),
+                            ("eps", "EPS"),
+                            ("operating_cash_flow", "经营现金流"),
+                            ("total_assets", "总资产"),
+                            ("total_liabilities", "总负债"),
+                        )
+                        sorted_period_ids = sorted(
+                            period_snapshots.keys(),
+                            key=lambda pid: _period_sort_key(pid, period_scope_map.get(pid)),
+                            reverse=True,
+                        )
+                        for pid in sorted_period_ids:
+                            scope = period_scope_map.get(pid) or "unknown"
+                            parts = []
+                            for mk, mk_label in snapshot_metric_order:
+                                item = period_snapshots.get(pid, {}).get(mk)
+                                if not item:
+                                    continue
+                                unit_text = str(item.get("unit") or "")
+                                value_hkd = item.get("collector_value_hkd")
+                                if value_hkd is None:
+                                    continue
+                                if mk == "eps":
+                                    parts.append(f"{mk_label} {_format_num(value_hkd)} HKD/股")
+                                else:
+                                    unit_note = f" ({unit_text})" if unit_text else ""
+                                    parts.append(f"{mk_label} {_format_num(value_hkd)} HKD{unit_note}")
+                            if parts:
+                                lines.append(f"- 期间[{pid}|{scope}]: " + "；".join(parts))
+
+                    def _build_trend(metric_key):
+                        scope_priority = ("single_quarter", "year_to_date", "full_year")
+                        grouped = {}
+                        for pid, snapshot in period_snapshots.items():
+                            item = snapshot.get(metric_key)
+                            if not item:
+                                continue
+                            scope = period_scope_map.get(pid) or item.get("scope") or "unknown"
+                            if metric_key == "eps":
+                                base_val = _safe_float(item.get("collector_value_hkd"))
+                            else:
+                                base_val = _safe_float(item.get("collector_value_hkd_million"))
+                            if base_val is None:
+                                continue
+                            grouped.setdefault(scope, [])
+                            grouped[scope].append((pid, base_val, item))
+
+                        chosen_scope = None
+                        chosen_arr = []
+                        for scope in scope_priority:
+                            arr = grouped.get(scope, [])
+                            arr = sorted(
+                                arr,
+                                key=lambda x: _period_sort_key(x[0], scope),
+                                reverse=True,
+                            )
+                            if len(arr) >= 2:
+                                chosen_scope = scope
+                                chosen_arr = arr
+                                break
+                        if not chosen_scope:
+                            return None
+
+                        latest_pid, latest_val, latest_item = chosen_arr[0]
+                        prev_pid, prev_val, prev_item = chosen_arr[1]
+                        if prev_val == 0:
+                            pct = None
+                        else:
+                            pct = (latest_val - prev_val) / abs(prev_val) * 100.0
+                        delta = latest_val - prev_val
+                        unit_out = "HKD/股" if metric_key == "eps" else "百万HKD"
+                        return {
+                            "metric_key": metric_key,
+                            "scope": chosen_scope,
+                            "latest_period_id": latest_pid,
+                            "previous_period_id": prev_pid,
+                            "latest_value": latest_val,
+                            "previous_value": prev_val,
+                            "delta": delta,
+                            "pct_change": pct,
+                            "unit": unit_out,
+                            "latest_source_metric": latest_item.get("source_metric"),
+                            "previous_source_metric": prev_item.get("source_metric"),
+                        }
+
+                    trend_rows = []
+                    revenue_trend = _build_trend("revenue")
+                    net_profit_trend = _build_trend("net_profit")
+                    eps_trend = _build_trend("eps")
+                    for row in (revenue_trend, net_profit_trend, eps_trend):
+                        if row:
+                            trend_rows.append(row)
+
+                    if trend_rows:
+                        lines.append("- 期间趋势（collector）:")
+                        name_map = {"revenue": "营收", "net_profit": "净利润", "eps": "EPS"}
+                        for row in trend_rows:
+                            metric_name = name_map.get(row.get("metric_key"), row.get("metric_key"))
+                            pct = row.get("pct_change")
+                            pct_text = f"{pct:+.2f}%" if isinstance(pct, (int, float)) else "N/A"
+                            delta = row.get("delta")
+                            delta_text = _format_num(delta) if isinstance(delta, (int, float)) else "N/A"
+                            lines.append(
+                                f"- {metric_name} ({row.get('scope')}): {row.get('latest_period_id')} vs {row.get('previous_period_id')} "
+                                f"变化 {delta_text} {row.get('unit')} ({pct_text})"
+                            )
+
+                    event_extra = {
+                        "event_type": "report_collector_fundamentals_merge",
+                        "stock_code": str(ticker),
+                        "supplemented_count": len(supplemented_fields),
+                        "supplemented_fields": supplemented_fields,
+                        "supplemented_details": supplemented_details,
+                        "data_source": data_source,
+                        "source_currency": source_currency or None,
+                        "target_currency": "HKD",
+                        "amount_unit": amount_unit,
+                        "per_share_currency": per_share_currency or None,
+                        "usd_hkd_rate": usd_hkd_rate,
+                        "report_period": period or None,
+                        "report_period_end": period_end or None,
+                        "publish_time": publish_time or None,
+                        "file_name": file_name or None,
+                        "available_periods": [
+                            {"period_id": pid, "scope": period_scope_map.get(pid) or None}
+                            for pid in sorted(
+                                period_snapshots.keys(),
+                                key=lambda x: _period_sort_key(x, period_scope_map.get(x)),
+                                reverse=True,
+                            )
+                        ],
+                        "period_snapshots": period_snapshots,
+                        "trend_analysis": trend_rows,
+                    }
 
                     if len(lines) <= 2:
-                        return ""
-                    return "## 披露易PDF财务数据补充（report-collector）\n" + "\n".join(lines)
+                        return "", event_extra
+                    return "## 披露易PDF财务数据补充（report-collector）\n" + "\n".join(lines), event_extra
 
-                def _try_pdf_supplement() -> str:
+                def _try_pdf_supplement(hk_data_text: str = "") -> str:
                     client = _get_report_collector_client()
                     if not client:
                         return ""
@@ -1008,7 +1413,15 @@ class Toolkit:
                                     )
                             except Exception as _log_e:
                                 logger.debug(f"[report-collector] 记录选中报告日志失败（忽略）: {_log_e}")
-                            summary = _build_pdf_fundamentals_summary(extracted_latest)
+                            summary, event_extra = _build_pdf_fundamentals_summary(
+                                extracted_latest,
+                                hk_data_text=hk_data_text,
+                            )
+                            if isinstance(event_extra, dict):
+                                logger.info(
+                                    "[report-collector] 基本面补齐明细已生成",
+                                    extra=event_extra,
+                                )
                             if summary:
                                 return summary
                     except Exception as _e:
@@ -1037,7 +1450,7 @@ class Toolkit:
 
                 # 📌 无论 AKShare 是否成功，都尝试附加披露易PDF财务补充（若启用且可用）
                 try:
-                    pdf_supplement = _try_pdf_supplement()
+                    pdf_supplement = _try_pdf_supplement(hk_data_text=hk_data if isinstance(hk_data, str) else "")
                     if pdf_supplement:
                         result_data.append(pdf_supplement)
                         logger.info("📊 [统一基本面工具] 已附加披露易PDF财务数据补充")
@@ -1313,7 +1726,8 @@ class Toolkit:
                 """按配置创建 report-collector 客户端（不可用则返回None）"""
                 try:
                     enabled = bool(Toolkit._config.get("report_collector_enabled", False))
-                    if not enabled:
+                    analysis_enabled = bool(Toolkit._config.get("report_collector_analysis_enabled", False))
+                    if not enabled or not analysis_enabled:
                         return None
                     from tradingagents.services.report_collector_client import ReportCollectorClient
                     base_url = Toolkit._config.get("report_collector_url") or os.getenv("REPORT_COLLECTOR_URL", "http://localhost")

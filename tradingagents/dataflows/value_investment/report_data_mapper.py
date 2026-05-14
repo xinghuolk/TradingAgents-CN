@@ -23,6 +23,38 @@ def _safe_float(val: Any, default: Optional[float] = None) -> Optional[float]:
         return default
 
 
+def _unwrap_report_payload(report: Any) -> Dict[str, Any]:
+    """兼容 report 或 report.data 两种结构。"""
+    if not isinstance(report, dict):
+        return {}
+    nested = report.get("data")
+    if isinstance(nested, dict):
+        return nested
+    return report
+
+
+def _get_statement_data(report_payload: Dict[str, Any], statement: str) -> Dict[str, Any]:
+    """
+    优先使用 v2 主期间映射结果，其次回退兼容字段。
+    """
+    v2_statement_data = report_payload.get("_v2_statement_data")
+    if isinstance(v2_statement_data, dict):
+        selected = v2_statement_data.get(statement)
+        if isinstance(selected, dict):
+            return selected
+    raw = report_payload.get(statement)
+    return raw if isinstance(raw, dict) else {}
+
+
+def _get_pdf_info(report: Dict[str, Any], report_payload: Dict[str, Any]) -> Dict[str, Any]:
+    """兼容 _pdf_info 在 report 或 report.data 层级。"""
+    payload_pdf_info = report_payload.get("_pdf_info")
+    if isinstance(payload_pdf_info, dict):
+        return payload_pdf_info
+    top_level_pdf_info = report.get("_pdf_info") if isinstance(report, dict) else None
+    return top_level_pdf_info if isinstance(top_level_pdf_info, dict) else {}
+
+
 def map_extracted_reports_to_financial_data(extracted_reports: List[Dict[str, Any]]) -> Dict[str, Any]:
     """
     将 report-collector 提取的多份年报映射为 financial_data 字典格式
@@ -67,11 +99,12 @@ def map_extracted_reports_to_financial_data(extracted_reports: List[Dict[str, An
     revenues = []
 
     for report in extracted_reports:
-        income = report.get("income_statement") or {}
-        balance = report.get("balance_sheet") or {}
-        cashflow = report.get("cash_flow_statement") or {}
-        metrics = report.get("financial_metrics") or {}
-        pdf_info = report.get("_pdf_info") or {}
+        report_payload = _unwrap_report_payload(report)
+        income = _get_statement_data(report_payload, "income_statement")
+        balance = _get_statement_data(report_payload, "balance_sheet")
+        cashflow = _get_statement_data(report_payload, "cash_flow_statement")
+        metrics = _get_statement_data(report_payload, "financial_metrics")
+        pdf_info = _get_pdf_info(report, report_payload)
 
         # 净利润
         np_val = _safe_float(income.get("net_profit"))
@@ -102,11 +135,11 @@ def map_extracted_reports_to_financial_data(extracted_reports: List[Dict[str, An
     data['net_profits'] = net_profits[:5]  # 最近5期
 
     # 最新一期的详细数据
-    latest = extracted_reports[0]
-    latest_income = latest.get("income_statement") or {}
-    latest_balance = latest.get("balance_sheet") or {}
-    latest_cashflow = latest.get("cash_flow_statement") or {}
-    latest_metrics = latest.get("financial_metrics") or {}
+    latest_payload = _unwrap_report_payload(extracted_reports[0])
+    latest_income = _get_statement_data(latest_payload, "income_statement")
+    latest_balance = _get_statement_data(latest_payload, "balance_sheet")
+    latest_cashflow = _get_statement_data(latest_payload, "cash_flow_statement")
+    latest_metrics = _get_statement_data(latest_payload, "financial_metrics")
 
     # 现金流
     data['operating_cash_flow'] = _safe_float(latest_cashflow.get("operating_cash_flow"))
@@ -200,6 +233,7 @@ def merge_financial_data(akshare_data: Dict[str, Any], rc_data: Dict[str, Any]) 
     ]
 
     supplemented_count = 0
+    supplemented_details: Dict[str, Dict[str, Any]] = {}
 
     for field in fields_to_merge:
         akshare_val = akshare_data.get(field)
@@ -214,6 +248,10 @@ def merge_financial_data(akshare_data: Dict[str, Any], rc_data: Dict[str, Any]) 
             merged[field] = rc_val
             data_source[field] = 'report-collector'
             supplemented_count += 1
+            supplemented_details[field] = {
+                'akshare_value': akshare_val,
+                'collector_value': rc_val,
+            }
         else:
             data_source[field] = 'missing'
 
@@ -222,12 +260,26 @@ def merge_financial_data(akshare_data: Dict[str, Any], rc_data: Dict[str, Any]) 
         merged['financials_list'] = rc_data['financials_list']
         data_source['financials_list'] = 'report-collector'
         supplemented_count += 1
+        supplemented_details['financials_list'] = {
+            'akshare_value': akshare_data.get('financials_list'),
+            'collector_value': rc_data.get('financials_list'),
+        }
     else:
         data_source['financials_list'] = 'akshare'
 
     merged['_data_source'] = data_source
+    merged['_supplemented_details'] = supplemented_details
 
-    logger.info(f"[数据合并] report-collector 补充了 {supplemented_count} 个字段")
+    logger.info(
+        f"[数据合并] report-collector 补充了 {supplemented_count} 个字段",
+        extra={
+            'event_type': 'report_collector_merge',
+            'supplemented_count': supplemented_count,
+            'supplemented_fields': list(supplemented_details.keys()),
+            'supplemented_details': supplemented_details,
+            'data_source': data_source,
+        },
+    )
 
     return merged
 

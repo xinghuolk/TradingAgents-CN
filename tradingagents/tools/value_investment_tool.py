@@ -19,6 +19,9 @@ from typing import Dict, Any, Optional, List
 from langchain_core.tools import tool
 
 from tradingagents.utils.logging_init import get_logger
+from tradingagents.services.report_collector_config import (
+    get_report_collector_config,
+)
 from tradingagents.dataflows.value_investment import (
     DividendFetcher,
     BuybackFetcher,
@@ -83,13 +86,7 @@ def validate_stock_code(ticker: str, market: str = "A") -> tuple[bool, str, str]
 
 def _get_report_collector_config() -> Dict[str, Any]:
     """从环境变量获取 report-collector 配置"""
-    return {
-        "url": os.getenv("REPORT_COLLECTOR_URL", "http://localhost"),
-        "port": int(os.getenv("REPORT_COLLECTOR_PORT", "8001")),
-        "enabled": os.getenv("REPORT_COLLECTOR_ENABLED", "false").lower() == "true",
-        "timeout": int(os.getenv("REPORT_COLLECTOR_TIMEOUT", "60")),
-        "max_reports": int(os.getenv("REPORT_COLLECTOR_MAX_REPORTS", "5")),
-    }
+    return get_report_collector_config()
 
 
 def _get_mongo_client():
@@ -952,7 +949,7 @@ def get_value_investment_analysis(
 
         # 1.5: Report-Collector 补充缺失字段
         rc_config = _get_report_collector_config()
-        if rc_config["enabled"]:
+        if rc_config["enabled"] and rc_config["analysis_enabled"]:
             financial_data = _supplement_with_report_collector(financial_data, ticker, market)
 
         # 2. C1: 获取结构化行情数据（直接使用 AKShare）
