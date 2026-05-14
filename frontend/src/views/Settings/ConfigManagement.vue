@@ -44,6 +44,10 @@
               <el-icon><Cpu /></el-icon>
               <span>大模型配置</span>
             </el-menu-item>
+            <el-menu-item index="subscription-auth">
+              <el-icon><Lock /></el-icon>
+              <span>订阅授权</span>
+            </el-menu-item>
             <el-menu-item index="datasource">
               <el-icon><DataBoard /></el-icon>
               <span>数据源配置</span>
@@ -362,6 +366,19 @@
               </div>
             </div>
           </div>
+        </el-card>
+
+        <!-- 订阅授权 -->
+        <el-card v-show="activeTab === 'subscription-auth'" class="config-content" shadow="never">
+          <template #header>
+            <div class="card-header">
+              <h3>订阅授权</h3>
+              <span class="header-hint">
+                使用您的 Anthropic / ChatGPT 订阅授权 TradingAgents-CN 调用大模型。
+              </span>
+            </div>
+          </template>
+          <SubscriptionAuthManagement />
         </el-card>
 
         <!-- 数据源配置 -->
@@ -1086,6 +1103,7 @@ import {
   Plus,
   Refresh,
   Key,
+  Lock,
   OfficeBuilding,
   CircleCheck,
   Collection,
@@ -1111,6 +1129,7 @@ import DataSourceConfigDialog from './components/DataSourceConfigDialog.vue'
 import MarketCategoryManagement from './components/MarketCategoryManagement.vue'
 import DataSourceGroupingDialog from './components/DataSourceGroupingDialog.vue'
 import SortableDataSourceList from './components/SortableDataSourceList.vue'
+import SubscriptionAuthManagement from './components/SubscriptionAuthManagement.vue'
 
 // 响应式数据
 const activeTab = ref('validation')
