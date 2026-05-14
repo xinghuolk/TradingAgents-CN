@@ -14,10 +14,12 @@ import logging
 import platform
 import subprocess
 import time
+import urllib.parse
+import urllib.request
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Literal, Optional
+from typing import Literal, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -144,6 +146,14 @@ def _platform_system() -> str:
     return platform.system()
 
 
+_CLAUDE_CODE_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
+_CLAUDE_CODE_TOKEN_ENDPOINTS = (
+    "https://platform.claude.com/v1/oauth/token",
+    "https://console.anthropic.com/v1/oauth/token",
+)
+_CLAUDE_CODE_USER_AGENT = "TradingAgents-CN/1.0 (claude-code-oauth)"
+
+
 def read_claude_code_from_keychain() -> Optional[SubscriptionCredential]:
     """Read Claude Code OAuth credentials from the macOS Keychain.
 
@@ -183,4 +193,52 @@ def read_claude_code_from_keychain() -> Optional[SubscriptionCredential]:
         expires_at_ms=int(oauth.get("expiresAt") or 0),
         provider="claude_code",
         source="macos_keychain",
+    )
+
+
+def refresh_claude_code(refresh_token: str, *, timeout: float = 10.0) -> Tuple[str, str, int]:
+    """Exchange a Claude Code refresh token for a new (access, refresh, expires_at_ms).
+
+    Tries `platform.claude.com` first, then falls back to `console.anthropic.com`.
+    Returns the rotated refresh token as the second element — the caller MUST
+    persist it (the previous one is now invalid).
+
+    Raises SubscriptionCredentialError on any failure.
+    """
+    if not refresh_token:
+        raise SubscriptionCredentialError("refresh_token is required")
+    body = urllib.parse.urlencode({
+        "grant_type": "refresh_token",
+        "refresh_token": refresh_token,
+        "client_id": _CLAUDE_CODE_CLIENT_ID,
+    }).encode("utf-8")
+    last_exc: Optional[Exception] = None
+    for endpoint in _CLAUDE_CODE_TOKEN_ENDPOINTS:
+        req = urllib.request.Request(
+            endpoint,
+            data=body,
+            headers={
+                "Content-Type": "application/x-www-form-urlencoded",
+                "User-Agent": _CLAUDE_CODE_USER_AGENT,
+            },
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                payload = json.loads(resp.read().decode("utf-8"))
+        except Exception as exc:  # network, http, json — all "try the next endpoint"
+            logger.debug("Claude Code token refresh failed at %s: %s", endpoint, exc)
+            last_exc = exc
+            continue
+        new_access = payload.get("access_token") or ""
+        if not new_access:
+            raise SubscriptionCredentialError(
+                f"Claude Code refresh response missing access_token: {payload!r}"
+            )
+        new_refresh = payload.get("refresh_token") or refresh_token
+        expires_in = int(payload.get("expires_in") or 3600)
+        expires_at_ms = int(time.time() * 1000) + expires_in * 1000
+        return new_access, new_refresh, expires_at_ms
+    raise SubscriptionCredentialError(
+        f"Claude Code token refresh failed against all endpoints: {last_exc}"
     )

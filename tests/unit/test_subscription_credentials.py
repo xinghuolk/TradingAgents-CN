@@ -2,6 +2,8 @@
 import dataclasses
 import json
 import time
+import urllib.error
+from contextlib import contextmanager
 from unittest.mock import patch, MagicMock
 
 import pytest
@@ -221,3 +223,79 @@ class TestReadCodexFromFile:
             cred = sc.read_codex_from_file()
         assert cred is not None
         assert cred.expires_at_ms == 0  # unparseable → treated as "no expiry tracked"
+
+
+class TestRefreshClaudeCode:
+    def test_empty_refresh_token_raises(self):
+        with pytest.raises(sc.SubscriptionCredentialError):
+            sc.refresh_claude_code("")
+
+    def test_success_returns_new_tokens(self, monkeypatch):
+        captured = {}
+        @contextmanager
+        def fake_urlopen(req, timeout=None):  # noqa: ARG001
+            captured["url"] = req.full_url
+            captured["headers"] = dict(req.header_items())
+            captured["data"] = req.data
+            resp = MagicMock()
+            resp.read.return_value = json.dumps({
+                "access_token": "new-at",
+                "refresh_token": "new-rt",
+                "expires_in": 3600,
+            }).encode()
+            yield resp
+        monkeypatch.setattr(sc.urllib.request, "urlopen", fake_urlopen)
+
+        before_ms = int(time.time() * 1000)
+        new_at, new_rt, new_exp = sc.refresh_claude_code("old-rt")
+        after_ms = int(time.time() * 1000)
+
+        assert new_at == "new-at"
+        assert new_rt == "new-rt"
+        # expires_at_ms should be roughly now + 3600s
+        assert before_ms + 3_600_000 <= new_exp <= after_ms + 3_600_000 + 100
+        # POST hit the primary endpoint with x-www-form-urlencoded body
+        assert captured["url"] == "https://platform.claude.com/v1/oauth/token"
+        assert b"grant_type=refresh_token" in captured["data"]
+        assert b"refresh_token=old-rt" in captured["data"]
+        # client_id must be the public Claude Code client id
+        assert b"client_id=9d1c250a-e61b-44d9-88ed-5944d1962f5e" in captured["data"]
+
+    def test_primary_endpoint_fails_falls_back_to_console(self, monkeypatch):
+        call_count = {"n": 0}
+        @contextmanager
+        def fake_urlopen(req, timeout=None):  # noqa: ARG001
+            call_count["n"] += 1
+            if call_count["n"] == 1:
+                raise urllib.error.URLError("primary down")
+            resp = MagicMock()
+            resp.read.return_value = json.dumps({
+                "access_token": "fallback-at",
+                "refresh_token": "old-rt",
+                "expires_in": 1800,
+            }).encode()
+            yield resp
+        monkeypatch.setattr(sc.urllib.request, "urlopen", fake_urlopen)
+
+        new_at, _, _ = sc.refresh_claude_code("old-rt")
+        assert new_at == "fallback-at"
+        assert call_count["n"] == 2
+
+    def test_all_endpoints_fail_raises(self, monkeypatch):
+        @contextmanager
+        def always_fail(req, timeout=None):  # noqa: ARG001
+            raise urllib.error.URLError("network out")
+            yield  # noqa: unreachable
+        monkeypatch.setattr(sc.urllib.request, "urlopen", always_fail)
+        with pytest.raises(sc.SubscriptionCredentialError):
+            sc.refresh_claude_code("any")
+
+    def test_response_missing_access_token_raises(self, monkeypatch):
+        @contextmanager
+        def fake_urlopen(req, timeout=None):  # noqa: ARG001
+            resp = MagicMock()
+            resp.read.return_value = json.dumps({"refresh_token": "x"}).encode()
+            yield resp
+        monkeypatch.setattr(sc.urllib.request, "urlopen", fake_urlopen)
+        with pytest.raises(sc.SubscriptionCredentialError):
+            sc.refresh_claude_code("any")
