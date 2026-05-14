@@ -103,7 +103,7 @@ def format_value_report_source_note(financial_data: dict[str, Any]) -> str:
 
     lines = [
         "",
-        "▶ 七、年报数据来源说明",
+        "▶ 年报数据来源说明（FinancialReportClient）",
         "───────────────────────────────────────────────────────────────",
         f"  FinancialReportClient 字段参与计算: {', '.join(sorted(_one_line(field) for field in frc_fields))}",
         f"  extraction: {_one_line(meta.get('company', ''))} {_one_line(meta.get('market', ''))} {_one_line(meta.get('period_end', ''))}",

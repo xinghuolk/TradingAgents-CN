@@ -139,7 +139,7 @@ def test_format_value_report_source_note_uses_financial_data_metadata():
 
     text = format_value_report_source_note(financial_data)
 
-    assert "▶ 七、年报数据来源说明" in text
+    assert "▶ 年报数据来源说明（FinancialReportClient）" in text
     assert "free_cash_flow, net_profits" in text
     assert "600519 CN 2024-12-31" in text
     assert "capital_expenditures unavailable: source_unavailable" in text

@@ -22,6 +22,10 @@ from tradingagents.utils.logging_init import get_logger
 from tradingagents.services.report_collector_config import (
     get_report_collector_config,
 )
+from tradingagents.dataflows.financial_reports import (
+    apply_financial_report_client_data,
+    format_value_report_source_note,
+)
 from tradingagents.dataflows.value_investment import (
     DividendFetcher,
     BuybackFetcher,
@@ -952,6 +956,14 @@ def get_value_investment_analysis(
         if rc_config["enabled"] and rc_config["analysis_enabled"]:
             financial_data = _supplement_with_report_collector(financial_data, ticker, market)
 
+        # 1.6: FinancialReportClient authoritative annual-report fields
+        financial_data = apply_financial_report_client_data(
+            financial_data=financial_data,
+            ticker=ticker,
+            market=market,
+            period_end=None,
+        )
+
         # 2. C1: 获取结构化行情数据（直接使用 AKShare）
         market_data = _fetch_market_data_structured(ticker, market)
 
@@ -1175,6 +1187,10 @@ def _generate_report(
                 for er in extracted[:5]:
                     pi = er.get('_pdf_info', {})
                     report += f"    - {pi.get('file_name', '未知')} (报告年份: {pi.get('report_year', 'N/A')})\n"
+
+    financial_report_note = format_value_report_source_note(financial_data or {})
+    if financial_report_note:
+        report += financial_report_note
 
     report += """
 ═══════════════════════════════════════════════════════════════
