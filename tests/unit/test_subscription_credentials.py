@@ -392,3 +392,14 @@ class TestRefreshCodex:
         _, _, exp_ms = sc.refresh_codex("any")
         # Should fall back to 3600s default
         assert before_ms + 3_600_000 <= exp_ms <= before_ms + 3_600_000 + 1000
+
+    def test_response_missing_access_token_raises(self, monkeypatch):
+        """If the server returns a dict but omits access_token, raise SubscriptionCredentialError."""
+        @contextmanager
+        def fake_urlopen(req, timeout=None):  # noqa: ARG001
+            resp = MagicMock()
+            resp.read.return_value = json.dumps({"refresh_token": "x"}).encode()
+            yield resp
+        monkeypatch.setattr(sc.urllib.request, "urlopen", fake_urlopen)
+        with pytest.raises(sc.SubscriptionCredentialError):
+            sc.refresh_codex("any")
