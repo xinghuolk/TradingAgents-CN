@@ -2283,6 +2283,12 @@ onMounted(async () => {
         display: flex;
         gap: 8px;
       }
+
+      .header-hint {
+        font-size: 12px;
+        color: var(--el-text-color-secondary);
+        margin-left: 12px;
+      }
     }
 
     .datasource-content {

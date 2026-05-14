@@ -81,7 +81,11 @@ export const useOAuthStore = defineStore('oauth', {
         this.pkceDialogPopup = popup
         this.pkceDialogOpen = true
 
-        const listener = (event: MessageEvent) => this._handlePkceMessage(event)
+        const listener = (event: MessageEvent) => {
+          this._handlePkceMessage(event).catch((err) => {
+            console.error('❌ PKCE message handler 失败', err)
+          })
+        }
         this._pkceMessageListener = listener
         window.addEventListener('message', listener)
       } catch (err) {

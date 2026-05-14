@@ -79,10 +79,10 @@
       <el-form-item label="模型代码" prop="model_name">
         <el-input
           v-model="formData.model_name"
-          placeholder="输入模型的API调用代码，如：qwen-turbo"
+          :placeholder="isSubscriptionProvider ? '请输入订阅 provider 的模型名称，如：claude-opus-4-5 / gpt-5-codex' : '输入模型的API调用代码，如：qwen-turbo'"
         />
         <div class="form-tip">
-          💡 实际调用API时使用的模型标识符
+          💡 {{ isSubscriptionProvider ? '订阅 provider 需手动指定模型名（无 catalog）' : '实际调用API时使用的模型标识符' }}
         </div>
       </el-form-item>
 
