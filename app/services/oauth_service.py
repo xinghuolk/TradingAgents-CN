@@ -27,6 +27,7 @@ _REFRESH_SKEW_SECONDS = 60
 # --- PKCE / Anthropic Claude Code OAuth constants ---
 _ANTHROPIC_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
 _ANTHROPIC_AUTHORIZE_URL = "https://claude.ai/oauth/authorize"
+_ANTHROPIC_TOKEN_URL = "https://platform.claude.com/v1/oauth/token"
 _ANTHROPIC_SCOPES = "org:create_api_key user:profile user:inference"
 _PKCE_TTL_SECONDS = 600
 
@@ -182,3 +183,74 @@ async def start_pkce_flow(
     }
     authorize_url = f"{_ANTHROPIC_AUTHORIZE_URL}?" + urllib.parse.urlencode(params)
     return {"authorize_url": authorize_url, "state": state}
+
+
+async def complete_pkce_flow(
+    *,
+    redis_client,
+    collection: AsyncIOMotorCollection,
+    state: str,
+    code: str,
+    redirect_uri: str,
+    http_client,
+) -> str:
+    """Complete the PKCE callback: validate state, exchange code, store creds.
+
+    Returns the user_id whose binding was established (so the router can
+    decide what to redirect to / which postMessage to emit).
+
+    Raises:
+        OAuthCredentialError: state missing/expired, token exchange failed.
+    """
+    redis_key = f"oauth:state:claude_code:{state}"
+    raw = await redis_client.get(redis_key)
+    if raw is None:
+        raise OAuthCredentialError("OAuth state expired or invalid. Re-start authorize.")
+
+    state_data = json.loads(raw if isinstance(raw, str) else raw.decode())
+    user_id = state_data["user_id"]
+    code_verifier = state_data["code_verifier"]
+    # Sanity-check redirect_uri matches what we issued the authorize with
+    if state_data.get("redirect_uri") != redirect_uri:
+        raise OAuthCredentialError(
+            "redirect_uri mismatch between authorize and callback"
+        )
+
+    resp = await http_client.post(
+        _ANTHROPIC_TOKEN_URL,
+        data={
+            "grant_type": "authorization_code",
+            "code": code,
+            "redirect_uri": redirect_uri,
+            "client_id": _ANTHROPIC_CLIENT_ID,
+            "code_verifier": code_verifier,
+        },
+        headers={
+            "Content-Type": "application/x-www-form-urlencoded",
+            "User-Agent": "TradingAgents-CN/1.0 (oauth-pkce)",
+        },
+    )
+    if resp.status_code != 200:
+        raise OAuthCredentialError(
+            f"Anthropic token exchange failed: HTTP {resp.status_code}"
+        )
+    payload = resp.json()
+    access_token = payload.get("access_token") or ""
+    refresh_token = payload.get("refresh_token") or ""
+    expires_in = int(payload.get("expires_in") or 3600)
+    if not access_token:
+        raise OAuthCredentialError(
+            f"Anthropic token exchange returned no access_token: {payload!r}"
+        )
+
+    expires_at = datetime.now(timezone.utc) + timedelta(seconds=expires_in)
+    await store_credentials(
+        collection=collection,
+        user_id=user_id,
+        provider="claude_code",
+        access_token=access_token,
+        refresh_token=refresh_token,
+        expires_at=expires_at,
+    )
+    await redis_client.delete(redis_key)
+    return user_id

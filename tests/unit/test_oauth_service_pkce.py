@@ -63,3 +63,65 @@ class TestStartPkceFlow:
         r1 = await svc.start_pkce_flow(fake_redis, user_id="u", redirect_uri="https://h")
         r2 = await svc.start_pkce_flow(fake_redis, user_id="u", redirect_uri="https://h")
         assert r1["state"] != r2["state"]
+
+
+class TestCompletePkceFlow:
+    async def test_state_not_in_redis_raises(self, fake_redis):
+        from app.models.oauth import OAuthCredentialError
+        fake_redis.get.return_value = None
+        with pytest.raises(OAuthCredentialError) as exc:
+            await svc.complete_pkce_flow(
+                redis_client=fake_redis,
+                collection=AsyncMock(),
+                state="bogus-state",
+                code="any-code",
+                redirect_uri="https://h",
+                http_client=AsyncMock(),
+            )
+        assert "state" in str(exc.value).lower()
+
+    async def test_successful_exchange_stores_credentials(self, fake_redis):
+        import json
+        from datetime import datetime, timezone
+        fake_redis.get.return_value = json.dumps({
+            "user_id": "u1",
+            "code_verifier": "verifier-abc",
+            "redirect_uri": "https://my.host/api/oauth/callback/claude_code",
+        })
+        fake_redis.delete = AsyncMock()
+        fake_collection = AsyncMock()
+        # Mock httpx response
+        http_resp = AsyncMock()
+        http_resp.status_code = 200
+        http_resp.json = lambda: {
+            "access_token": "at-anthropic",
+            "refresh_token": "rt-anthropic",
+            "expires_in": 3600,
+        }
+        fake_http = AsyncMock()
+        fake_http.post.return_value = http_resp
+
+        user_id = await svc.complete_pkce_flow(
+            redis_client=fake_redis,
+            collection=fake_collection,
+            state="valid-state",
+            code="auth-code-xyz",
+            redirect_uri="https://my.host/api/oauth/callback/claude_code",
+            http_client=fake_http,
+        )
+
+        assert user_id == "u1"
+        # POST to platform.claude.com/v1/oauth/token
+        fake_http.post.assert_called_once()
+        url = fake_http.post.call_args.args[0]
+        assert url == "https://platform.claude.com/v1/oauth/token"
+        form = fake_http.post.call_args.kwargs.get("data") or fake_http.post.call_args.kwargs.get("json", {})
+        # Body must include grant_type, code, redirect_uri, client_id, code_verifier
+        body_str = str(form)
+        assert "authorization_code" in body_str
+        assert "auth-code-xyz" in body_str
+        assert "verifier-abc" in body_str
+        # Credentials stored
+        fake_collection.update_one.assert_called_once()
+        # State key deleted
+        fake_redis.delete.assert_called_once_with("oauth:state:claude_code:valid-state")
