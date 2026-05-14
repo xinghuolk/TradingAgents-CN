@@ -44,3 +44,18 @@ class TestSubscriptionCredential:
     def test_custom_skew(self):
         cred = _make_cred(int(time.time() * 1000) + 30_000)
         assert sc.is_expiring(cred, skew_seconds=10) is False
+
+    def test_expired_with_zero_skew(self):
+        """Pin the comparison direction: expired token is always expiring, regardless of skew."""
+        cred = _make_cred(int(time.time() * 1000) - 1000)  # 1s ago
+        assert sc.is_expiring(cred, skew_seconds=0) is True
+
+    def test_repr_redacts_tokens(self):
+        """Tokens must not appear in repr — accidental logging would leak them."""
+        cred = _make_cred(0)
+        r = repr(cred)
+        assert "at-test" not in r
+        assert "rt-test" not in r
+        # But the non-secret diagnostic fields should still be present
+        assert "claude_code" in r
+        assert "test" in r  # the source value

@@ -10,8 +10,8 @@ Reference: hermes-agent/agent/anthropic_adapter.py:580-870
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass
-from typing import Optional
+from dataclasses import dataclass, field
+from typing import Literal, Optional
 
 
 class SubscriptionCredentialError(RuntimeError):
@@ -20,12 +20,18 @@ class SubscriptionCredentialError(RuntimeError):
 
 @dataclass(frozen=True)
 class SubscriptionCredential:
-    """A loaded OAuth credential for a subscription provider."""
+    """A loaded OAuth credential for a subscription provider.
 
-    access_token: str
-    refresh_token: Optional[str]
+    `access_token` and `refresh_token` are intentionally excluded from __repr__
+    so that diagnostic logging (e.g. `logger.debug("loaded %s", cred)`) cannot
+    leak live OAuth credentials into log files. Use `cred.access_token`
+    explicitly when you need the value.
+    """
+
+    access_token: str = field(repr=False)
+    refresh_token: Optional[str] = field(repr=False)
     expires_at_ms: int  # epoch ms; 0 means never-expires (managed keys)
-    provider: str       # "claude_code" | "codex"
+    provider: Literal["claude_code", "codex"]
     source: str         # how/where it was loaded — for diagnostics only
 
 
