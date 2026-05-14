@@ -1,31 +1,18 @@
 """Unit tests for the claude_code / codex branches in create_llm_by_provider."""
-import sys
-import types
+import pytest
 from unittest.mock import patch, MagicMock
 
-# ---------------------------------------------------------------------------
-# Stub out heavy optional dependencies that are not installed in the test
-# environment so that importing trading_graph does not fail at collection time.
-# ---------------------------------------------------------------------------
 
-def _make_stub(name: str) -> types.ModuleType:
-    mod = types.ModuleType(name)
-    sys.modules[name] = mod
-    return mod
+@pytest.fixture(autouse=True)
+def _use_stubs(stub_optional_llm_deps):
+    """Auto-apply the session-scoped LLM dep stubs from conftest."""
 
 
-if "dashscope" not in sys.modules:
-    ds = _make_stub("dashscope")
-    ds.TextEmbedding = MagicMock()  # type: ignore[attr-defined]
-
-if "chromadb" not in sys.modules:
-    _make_stub("chromadb")
-
-if "chromadb.config" not in sys.modules:
-    cc = _make_stub("chromadb.config")
-    cc.Settings = MagicMock()  # type: ignore[attr-defined]
-
-from tradingagents.graph.trading_graph import create_llm_by_provider  # noqa: E402
+def _import_target():
+    """Lazy import so the stubs (provided by stub_optional_llm_deps) are in
+    sys.modules before trading_graph triggers the dashscope/chromadb imports."""
+    from tradingagents.graph.trading_graph import create_llm_by_provider
+    return create_llm_by_provider
 
 
 class TestCreateLlmByProviderSubscription:
@@ -35,7 +22,7 @@ class TestCreateLlmByProviderSubscription:
             "tradingagents.llm_adapters.claude_code_adapter.ChatClaudeCodeOAuth",
             return_value=fake,
         ) as ctor:
-            llm = create_llm_by_provider(
+            llm = _import_target()(
                 provider="claude_code",
                 model="claude-opus-4-7",
                 backend_url="",        # ignored for OAuth path
@@ -57,7 +44,7 @@ class TestCreateLlmByProviderSubscription:
             "tradingagents.llm_adapters.codex_adapter.ChatCodexOAuth",
             return_value=fake,
         ) as ctor:
-            llm = create_llm_by_provider(
+            llm = _import_target()(
                 provider="codex",
                 model="gpt-5",
                 backend_url="",
@@ -76,5 +63,5 @@ class TestCreateLlmByProviderSubscription:
             "tradingagents.llm_adapters.claude_code_adapter.ChatClaudeCodeOAuth",
             return_value=fake,
         ):
-            assert create_llm_by_provider("Claude_Code", "claude-opus-4-7", "", 0, 1, 1) is fake
-            assert create_llm_by_provider("CLAUDE_CODE", "claude-opus-4-7", "", 0, 1, 1) is fake
+            assert _import_target()("Claude_Code", "claude-opus-4-7", "", 0, 1, 1) is fake
+            assert _import_target()("CLAUDE_CODE", "claude-opus-4-7", "", 0, 1, 1) is fake
