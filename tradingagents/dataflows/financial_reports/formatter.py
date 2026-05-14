@@ -19,34 +19,38 @@ CORE_FIELDS = (
 )
 
 
+def _one_line(value: Any) -> str:
+    return " ".join(str("" if value is None else value).split())
+
+
 def _staleness_text(extraction: Any) -> str:
     staleness = getattr(extraction, "staleness", None)
-    return str(getattr(staleness, "value", staleness or "unknown"))
+    return _one_line(getattr(staleness, "value", staleness or "unknown"))
 
 
 def _format_value(field: Any) -> str:
     value = getattr(field, "value", None)
     currency = getattr(field, "currency", None)
     unit = getattr(field, "unit", None)
-    suffix = " ".join(part for part in (currency, unit) if part)
-    return f"{value} {suffix}".strip()
+    suffix = " ".join(_one_line(part) for part in (currency, unit) if part)
+    return f"{_one_line(value)} {suffix}".strip()
 
 
 def _field_line(field_id: str, field: Any) -> str:
     page = getattr(field, "evidence_page", None)
-    source = getattr(field, "source", None) or "unknown"
+    source = _one_line(getattr(field, "source", None) or "unknown")
     page_text = f", page {page}" if page is not None else ""
     reliability = "reliable" if bool(getattr(field, "is_reliable", False)) else "display-only"
-    return f"- {field_id}: {_format_value(field)} ({reliability}, source={source}{page_text})"
+    return f"- {_one_line(field_id)}: {_format_value(field)} ({reliability}, source={source}{page_text})"
 
 
-def format_annual_report_section(*, extraction: Any, caveats: list[str], max_fields: int = 12) -> str:
+def format_annual_report_section(extraction: Any, caveats: list[str], max_fields: int = 12) -> str:
     raw_fields = getattr(extraction, "fields", {})
     fields = raw_fields if isinstance(raw_fields, dict) else {}
-    company = getattr(extraction, "company", "")
-    market = getattr(extraction, "market", "")
-    period_end = getattr(extraction, "period_end", "")
-    catalog_version = getattr(extraction, "catalog_version", "")
+    company = _one_line(getattr(extraction, "company", ""))
+    market = _one_line(getattr(extraction, "market", ""))
+    period_end = _one_line(getattr(extraction, "period_end", ""))
+    catalog_version = _one_line(getattr(extraction, "catalog_version", ""))
     staleness = _staleness_text(extraction)
 
     lines = [
@@ -74,7 +78,7 @@ def format_annual_report_section(*, extraction: Any, caveats: list[str], max_fie
 
     for caveat in caveats:
         if caveat:
-            lines.append(f"- caveat: {caveat}")
+            lines.append(f"- caveat: {_one_line(caveat)}")
 
     if shown == 0 and not caveats:
         lines.append("- no usable annual-report fields")
@@ -101,10 +105,10 @@ def format_value_report_source_note(financial_data: dict[str, Any]) -> str:
         "",
         "▶ 七、年报数据来源说明",
         "───────────────────────────────────────────────────────────────",
-        f"  FinancialReportClient 字段参与计算: {', '.join(frc_fields)}",
-        f"  extraction: {meta.get('company', '')} {meta.get('market', '')} {meta.get('period_end', '')}",
-        f"  catalog_version: {meta.get('catalog_version', '')}",
+        f"  FinancialReportClient 字段参与计算: {', '.join(sorted(_one_line(field) for field in frc_fields))}",
+        f"  extraction: {_one_line(meta.get('company', ''))} {_one_line(meta.get('market', ''))} {_one_line(meta.get('period_end', ''))}",
+        f"  catalog_version: {_one_line(meta.get('catalog_version', ''))}",
     ]
     for caveat in caveats[:5]:
-        lines.append(f"  caveat: {caveat}")
+        lines.append(f"  caveat: {_one_line(caveat)}")
     return "\n".join(lines) + "\n"

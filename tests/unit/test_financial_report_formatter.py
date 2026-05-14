@@ -88,11 +88,44 @@ def test_format_annual_report_section_marks_stale_and_llm_caveats():
     assert "LLM supplement from codex-subscription allowed by policy" in text
 
 
+def test_format_annual_report_section_allows_positional_args_and_sanitizes_lines():
+    extraction = FakeExtraction(
+        company="600519\n- injected",
+        fields={
+            "net_profit": FakeField(
+                "net_profit",
+                Decimal("100"),
+                source="akshare\n- injected",
+            )
+        },
+    )
+
+    text = format_annual_report_section(
+        extraction,
+        ["first line\n- injected caveat"],
+        max_fields=5,
+    )
+
+    assert "600519 - injected CN 2024-12-31" in text
+    assert "source=akshare - injected" in text
+    assert "- caveat: first line - injected caveat" in text
+
+
+def test_format_annual_report_section_preserves_zero_values():
+    extraction = FakeExtraction(fields={
+        "capital_expenditures": FakeField("capital_expenditures", Decimal("0")),
+    })
+
+    text = format_annual_report_section(extraction, [], max_fields=5)
+
+    assert "capital_expenditures: 0 CNY yuan" in text
+
+
 def test_format_value_report_source_note_uses_financial_data_metadata():
     financial_data = {
         "_data_source": {
-            "net_profits": "financial-report-client",
             "free_cash_flow": "financial-report-client:derived",
+            "net_profits": "financial-report-client",
             "roe_avg_3y": "akshare",
         },
         "_financial_report_client": {
@@ -107,6 +140,28 @@ def test_format_value_report_source_note_uses_financial_data_metadata():
     text = format_value_report_source_note(financial_data)
 
     assert "▶ 七、年报数据来源说明" in text
-    assert "net_profits, free_cash_flow" in text
+    assert "free_cash_flow, net_profits" in text
     assert "600519 CN 2024-12-31" in text
     assert "capital_expenditures unavailable: source_unavailable" in text
+
+
+def test_format_value_report_source_note_sanitizes_metadata_and_caveats():
+    financial_data = {
+        "_data_source": {
+            "z_metric\n- injected": "financial-report-client",
+            "a_metric": "financial-report-client:derived",
+        },
+        "_financial_report_client": {
+            "company": "600519\n- injected",
+            "market": "CN",
+            "period_end": "2024-12-31",
+            "catalog_version": "2026-05-02",
+            "caveats": ["first line\n- injected caveat"],
+        },
+    }
+
+    text = format_value_report_source_note(financial_data)
+
+    assert "a_metric, z_metric - injected" in text
+    assert "600519 - injected CN 2024-12-31" in text
+    assert "caveat: first line - injected caveat" in text
