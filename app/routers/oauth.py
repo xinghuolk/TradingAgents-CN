@@ -49,7 +49,7 @@ async def status_endpoint(
     """Return the binding status of (user, provider)."""
     collection = get_credentials_collection()
     doc = await collection.find_one(
-        {"user_id": user["_id"], "provider": provider}
+        {"user_id": user["id"], "provider": provider}
     )
     if doc is None:
         return OAuthStatusResponse(bound=False, provider=provider)
@@ -69,7 +69,7 @@ async def unbind_endpoint(
     """Delete the binding for (user, provider)."""
     from app.services import oauth_service
     collection = get_credentials_collection()
-    await oauth_service.delete_credentials(collection, user["_id"], provider)
+    await oauth_service.delete_credentials(collection, user["id"], provider)
 
 
 from app.models.oauth import AuthorizeClaudeCodeResponse  # noqa: E402
@@ -93,7 +93,7 @@ async def authorize_claude_code(
     redis_client = get_redis_client()
     result = await oauth_service.start_pkce_flow(
         redis_client=redis_client,
-        user_id=user["_id"],
+        user_id=user["id"],
         redirect_uri=redirect_uri,
     )
     return AuthorizeClaudeCodeResponse(**result)
@@ -158,7 +158,7 @@ async def authorize_codex(user: dict = Depends(get_current_user)):
     from app.services import oauth_service
     result = await oauth_service.start_device_code_flow(
         redis_client=get_redis_client(),
-        user_id=user["_id"],
+        user_id=user["id"],
         http_client=get_http_client(),
     )
     return AuthorizeCodexResponse(**result)
@@ -171,7 +171,7 @@ async def poll_codex(user: dict = Depends(get_current_user)):
     result = await oauth_service.poll_device_code_flow(
         redis_client=get_redis_client(),
         collection=get_credentials_collection(),
-        user_id=user["_id"],
+        user_id=user["id"],
         http_client=get_http_client(),
     )
     return PollCodexResponse(**result)
@@ -187,7 +187,7 @@ async def refresh_endpoint(
     try:
         await oauth_service.resolve(
             get_credentials_collection(),
-            user["_id"],
+            user["id"],
             provider,
             force_refresh=True,
         )

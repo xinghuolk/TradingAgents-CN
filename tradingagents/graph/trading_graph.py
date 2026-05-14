@@ -153,15 +153,19 @@ def create_llm_by_provider(provider: str, model: str, backend_url: str, temperat
             "CUSTOM_OPENAI_API_KEY"         # 通用环境变量
         ]
 
-        custom_api_key = None
-        for env_var in api_key_candidates:
-            custom_api_key = os.getenv(env_var)
-            if custom_api_key:
-                logger.info(f"✅ 从环境变量 {env_var} 获取到 API Key")
-                break
+        if api_key:
+            custom_api_key = api_key
+            logger.info(f"✅ 使用传入的 API Key (provider={provider})")
+        else:
+            custom_api_key = None
+            for env_var in api_key_candidates:
+                custom_api_key = os.getenv(env_var)
+                if custom_api_key:
+                    logger.info(f"✅ 从环境变量 {env_var} 获取到 API Key")
+                    break
 
-        if not custom_api_key:
-            logger.warning(f"⚠️ 未找到自定义厂家 {provider} 的 API Key，尝试使用默认配置")
+            if not custom_api_key:
+                logger.warning(f"⚠️ 未找到自定义厂家 {provider} 的 API Key，尝试使用默认配置")
 
         return ChatOpenAI(
             model=model,

@@ -136,3 +136,17 @@ class TestNativeBranchesReduced:
             )
         kwargs = ctor.call_args.kwargs
         assert kwargs["base_url"] == "https://open.bigmodel.cn/api/paas/v4"
+
+    def test_dashscope_explicit_api_key_takes_precedence_over_env(self, monkeypatch):
+        """User-supplied api_key (e.g. from DB config) must override env var."""
+        monkeypatch.setenv("DASHSCOPE_API_KEY", "env-key-should-not-win")
+        with patch("tradingagents.graph.trading_graph.ChatOpenAI") as ctor:
+            _import_target()(
+                "dashscope", "qwen-test",
+                "https://dashscope.aliyuncs.com/compatible-mode/v1",
+                0.1, 100, 10,
+                api_key="explicit-db-key",
+            )
+        ctor.assert_called_once()
+        kwargs = ctor.call_args.kwargs
+        assert kwargs["api_key"] == "explicit-db-key"

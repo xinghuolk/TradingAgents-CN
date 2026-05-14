@@ -25,7 +25,7 @@ def app_client(monkeypatch):
 
     # Stub auth dependency to always return a fixed test user
     async def _fake_current_user():
-        return {"_id": "test-user-1", "is_admin": False}
+        return {"id": "test-user-1", "is_admin": False}
     app.dependency_overrides[oauth_router.get_current_user] = _fake_current_user
 
     return TestClient(app)
