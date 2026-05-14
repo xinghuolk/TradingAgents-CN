@@ -21,6 +21,10 @@
       v-model="showConfigWizard"
       @complete="handleWizardComplete"
     />
+
+    <!-- OAuth 全局弹窗 -->
+    <ClaudeCodePkceDialog />
+    <CodexDeviceCodeDialog />
   </div>
 </template>
 
@@ -30,6 +34,8 @@ import { ElMessage } from 'element-plus'
 import NetworkStatus from '@/components/NetworkStatus.vue'
 import axios from 'axios'
 import { configApi } from '@/api/config'
+import ClaudeCodePkceDialog from '@/components/oauth/ClaudeCodePkceDialog.vue'
+import CodexDeviceCodeDialog from '@/components/oauth/CodexDeviceCodeDialog.vue'
 
 // 需要缓存的组件
 const keepAliveComponents = computed(() => [
