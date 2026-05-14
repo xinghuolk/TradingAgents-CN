@@ -96,6 +96,70 @@ class AnalysisService:
 
         return self._trading_graph_cache[config_key]
 
+    def _inject_oauth_token_if_needed(self, task: AnalysisTask, config: Dict[str, Any]) -> None:
+        """For OAuth subscription providers, resolve the user's access_token
+        and stamp it onto ``config["quick_api_key"]`` / ``config["deep_api_key"]``.
+
+        Synchronous wrapper for thread-pool callers. Safe to call when the
+        provider is *not* OAuth — it short-circuits.
+        """
+        provider = config.get("llm_provider")
+        if provider not in ("claude_code", "codex"):
+            return
+
+        import asyncio
+        from app.services import oauth_service
+        from app.routers.oauth import get_credentials_collection
+
+        user_id = str(task.user_id)
+        try:
+            token = asyncio.run(oauth_service.resolve(
+                get_credentials_collection(),
+                user_id,
+                provider,
+            ))
+            config["quick_api_key"] = token
+            config["deep_api_key"] = token
+            logger.info(
+                f"✅ OAuth token injected for user {user_id}, provider {provider}"
+            )
+        except Exception as exc:
+            logger.error(
+                f"❌ OAuth token resolution failed for user {user_id}, "
+                f"provider {provider}: {exc}"
+            )
+            raise
+
+    async def _inject_oauth_token_if_needed_async(
+        self, task: AnalysisTask, config: Dict[str, Any]
+    ) -> None:
+        """Async variant for callers already inside an event loop."""
+        provider = config.get("llm_provider")
+        if provider not in ("claude_code", "codex"):
+            return
+
+        from app.services import oauth_service
+        from app.routers.oauth import get_credentials_collection
+
+        user_id = str(task.user_id)
+        try:
+            token = await oauth_service.resolve(
+                get_credentials_collection(),
+                user_id,
+                provider,
+            )
+            config["quick_api_key"] = token
+            config["deep_api_key"] = token
+            logger.info(
+                f"✅ OAuth token injected for user {user_id}, provider {provider}"
+            )
+        except Exception as exc:
+            logger.error(
+                f"❌ OAuth token resolution failed for user {user_id}, "
+                f"provider {provider}: {exc}"
+            )
+            raise
+
     def _execute_analysis_sync_with_progress(self, task: AnalysisTask, progress_tracker: RedisProgressTracker) -> AnalysisResult:
         """同步执行分析任务（在线程池中运行，带进度跟踪）"""
         try:
@@ -168,7 +232,17 @@ class AnalysisService:
             progress_tracker.update_progress("💰 预估分析成本")
 
             # 根据模型名称动态查找供应商（同步版本）
-            llm_provider = "dashscope"  # 默认使用dashscope
+            # 默认 dashscope；若数据库中查到模型对应的 OAuth 订阅 provider
+            # (claude_code / codex)，则使用该 provider 以便走 OAuth 通路。
+            llm_provider = "dashscope"
+            try:
+                from app.services.simple_analysis_service import get_provider_by_model_name_sync
+                discovered_provider = get_provider_by_model_name_sync(quick_model)
+                if discovered_provider:
+                    llm_provider = discovered_provider
+                    logger.info(f"🔍 模型 {quick_model} 对应的 provider: {llm_provider}")
+            except Exception as exc:
+                logger.warning(f"⚠️ 同步查找 provider 失败，回退到默认 dashscope: {exc}")
 
             # 参数配置
             progress_tracker.update_progress("⚙️ 配置分析参数")
@@ -185,6 +259,13 @@ class AnalysisService:
                 quick_model_config=quick_model_config,  # 传递模型配置
                 deep_model_config=deep_model_config     # 传递模型配置
             )
+
+            # OAuth subscription providers (claude_code / codex): resolve the
+            # user's access_token here and stuff it into the config so that
+            # downstream create_llm_by_provider picks it up via the api_key
+            # field. We're running in a thread pool worker, so it's safe to
+            # asyncio.run() — there is no running loop in this thread.
+            self._inject_oauth_token_if_needed(task, config)
 
             # 启动引擎
             progress_tracker.update_progress("🚀 初始化AI分析引擎")
@@ -294,6 +375,14 @@ class AnalysisService:
 
             # 根据模型名称动态查找供应商（同步版本）
             llm_provider = "dashscope"  # 默认使用dashscope
+            try:
+                from app.services.simple_analysis_service import get_provider_by_model_name_sync
+                discovered_provider = get_provider_by_model_name_sync(quick_model)
+                if discovered_provider:
+                    llm_provider = discovered_provider
+                    logger.info(f"🔍 模型 {quick_model} 对应的 provider: {llm_provider}")
+            except Exception as exc:
+                logger.warning(f"⚠️ 同步查找 provider 失败，回退到默认 dashscope: {exc}")
 
             # 使用标准配置函数创建完整配置
             from app.services.simple_analysis_service import create_analysis_config
@@ -307,6 +396,9 @@ class AnalysisService:
                 quick_model_config=quick_model_config,  # 传递模型配置
                 deep_model_config=deep_model_config     # 传递模型配置
             )
+
+            # OAuth subscription providers: inject access_token per-request.
+            self._inject_oauth_token_if_needed(task, config)
 
             # 获取TradingAgents实例
             trading_graph = self._get_trading_graph(config)
@@ -675,7 +767,12 @@ class AnalysisService:
             
             if progress_callback:
                 progress_callback(30, "创建分析图...")
-            
+
+            # OAuth subscription providers: resolve and inject access_token
+            # before constructing the graph. We're in an async context here,
+            # so call the async resolver directly.
+            await self._inject_oauth_token_if_needed_async(task, config)
+
             # 获取TradingAgents实例
             trading_graph = self._get_trading_graph(config)
             
