@@ -557,6 +557,8 @@ const handleProviderChange = async (provider: string) => {
   if (SUBSCRIPTION_PROVIDER_NAMES.has(provider)) {
     modelOptions.value = []
     formData.value.model_name = ''
+    formData.value.model_display_name = ''
+    selectedModelKey.value = ''
     formData.value.input_price_per_1k = 0
     formData.value.output_price_per_1k = 0
     formData.value.currency = 'CNY'

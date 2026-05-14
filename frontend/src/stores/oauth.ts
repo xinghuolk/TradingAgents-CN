@@ -67,6 +67,7 @@ export const useOAuthStore = defineStore('oauth', {
 
     async startClaudeCodeFlow(): Promise<void> {
       if (this.pkceDialogOpen) return
+      this.pkceDialogOpen = true   // claim slot before the await so rapid double-clicks bail
       try {
         const resp = await oauthApi.authorizeClaudeCode()
         const popup = window.open(
@@ -75,11 +76,11 @@ export const useOAuthStore = defineStore('oauth', {
           'width=600,height=800',
         )
         if (!popup) {
+          this.pkceDialogOpen = false
           ElMessage.error('弹窗被浏览器拦截，请在地址栏允许弹窗后重试')
           return
         }
         this.pkceDialogPopup = popup
-        this.pkceDialogOpen = true
 
         const listener = (event: MessageEvent) => {
           this._handlePkceMessage(event).catch((err) => {
@@ -89,12 +90,17 @@ export const useOAuthStore = defineStore('oauth', {
         this._pkceMessageListener = listener
         window.addEventListener('message', listener)
       } catch (err) {
+        this.pkceDialogOpen = false
         console.error('❌ Claude Code 授权启动失败', err)
         ElMessage.error('启动 Claude Code 授权失败')
       }
     },
 
     async _handlePkceMessage(event: MessageEvent) {
+      // Only accept messages from the popup we opened — prevents arbitrary cross-origin
+      // pages from spoofing oauth-success. Backend sends from claude.ai so we can't
+      // verify event.origin against window.location.origin.
+      if (event.source !== this.pkceDialogPopup) return
       const data = event.data
       if (!data || typeof data !== 'object') return
       if (data.type === 'oauth-success' && data.provider === 'claude_code') {
@@ -127,6 +133,7 @@ export const useOAuthStore = defineStore('oauth', {
 
     async startCodexFlow(): Promise<void> {
       if (this.deviceCodeDialogOpen) return
+      this.deviceCodeDialogOpen = true   // claim slot before the await
       try {
         const resp = await oauthApi.authorizeCodex()
         this.deviceCodeState = {
@@ -136,9 +143,9 @@ export const useOAuthStore = defineStore('oauth', {
           interval: resp.interval,
           poll_timer: null,
         }
-        this.deviceCodeDialogOpen = true
         this._scheduleNextPoll()
       } catch (err) {
+        this.deviceCodeDialogOpen = false
         console.error('❌ Codex 授权启动失败', err)
         ElMessage.error('启动 Codex 授权失败')
       }
