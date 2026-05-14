@@ -32,6 +32,10 @@ import os
 import sys
 import time
 
+from dotenv import load_dotenv
+
+
+load_dotenv()
 
 POLL_TIMEOUT_SECONDS = 600  # 10 minutes for the user to complete authorization
 
@@ -59,82 +63,90 @@ async def main() -> int:
     redis_client = get_redis()
     http_client = httpx.AsyncClient(timeout=10.0)
 
-    # --- Phase 1: start device-code flow ---
-    print(f"\nStarting Codex device-code flow for user {user_id}")
+    # --- Phase 1: reuse existing binding when possible ---
+    access_token = None
+    print("\nChecking for existing Codex OAuth binding...")
     try:
-        start_result = await oauth_service.start_device_code_flow(
-            redis_client=redis_client,
-            user_id=user_id,
-            http_client=http_client,
-        )
+        access_token = await oauth_service.resolve(collection, user_id, "codex")
+        print("✓ Existing token resolved from MongoDB; skipping device-code flow.")
     except Exception as exc:
-        print(f"FAIL: start_device_code_flow raised: {exc}", file=sys.stderr)
-        return 3
+        print(f"No reusable binding found ({type(exc).__name__}: {exc})")
 
-    user_code = start_result["user_code"]
-    verification_uri = start_result["verification_uri"]
-    interval = max(int(start_result.get("interval", 5)), 1)
-    expires_in = int(start_result.get("expires_in", 600))
-
-    print()
-    print("=" * 70)
-    print(f"  STEP 1: Open this URL in your browser:")
-    print(f"          {verification_uri}")
-    print()
-    print(f"  STEP 2: Enter this code on the page:")
-    print(f"          {user_code}")
-    print()
-    print(f"  STEP 3: Click 'Continue' / 'Sign in' and authorize.")
-    print(f"  (Code expires in ~{expires_in}s)")
-    print("=" * 70)
-    print()
-    print(f"Polling every {interval}s; press Ctrl+C to abort...")
-
-    # --- Phase 2: poll until bound ---
-    deadline = time.time() + min(POLL_TIMEOUT_SECONDS, expires_in)
-    current_interval = interval
-    bound = False
-    while time.time() < deadline:
+    if access_token is None:
+        # --- Phase 2: start device-code flow ---
+        print(f"\nStarting Codex device-code flow for user {user_id}")
         try:
-            poll = await oauth_service.poll_device_code_flow(
+            start_result = await oauth_service.start_device_code_flow(
                 redis_client=redis_client,
-                collection=collection,
                 user_id=user_id,
                 http_client=http_client,
             )
         except Exception as exc:
-            print(f"FAIL: poll_device_code_flow raised: {exc}", file=sys.stderr)
+            print(f"FAIL: start_device_code_flow raised: {exc}", file=sys.stderr)
             return 3
 
-        status = poll.get("status")
-        if status == "bound":
-            bound = True
-            print("\n✓ Authorization complete. Token encrypted and stored.")
-            break
-        if status in ("expired", "denied"):
-            print(f"\nFAIL: device-code flow ended with status={status}", file=sys.stderr)
+        user_code = start_result["user_code"]
+        verification_uri = start_result["verification_uri"]
+        interval = max(int(start_result.get("interval", 5)), 1)
+        expires_in = int(start_result.get("expires_in", 600))
+
+        print()
+        print("=" * 70)
+        print(f"  STEP 1: Open this URL in your browser:")
+        print(f"          {verification_uri}")
+        print()
+        print(f"  STEP 2: Enter this code on the page:")
+        print(f"          {user_code}")
+        print()
+        print(f"  STEP 3: Click 'Continue' / 'Sign in' and authorize.")
+        print(f"  (Code expires in ~{expires_in}s)")
+        print("=" * 70)
+        print()
+        print(f"Polling every {interval}s; press Ctrl+C to abort...")
+
+        deadline = time.time() + min(POLL_TIMEOUT_SECONDS, expires_in)
+        current_interval = interval
+        bound = False
+        while time.time() < deadline:
+            try:
+                poll = await oauth_service.poll_device_code_flow(
+                    redis_client=redis_client,
+                    collection=collection,
+                    user_id=user_id,
+                    http_client=http_client,
+                )
+            except Exception as exc:
+                print(f"FAIL: poll_device_code_flow raised: {exc}", file=sys.stderr)
+                return 3
+
+            status = poll.get("status")
+            if status == "bound":
+                bound = True
+                print("\n✓ Authorization complete. Token encrypted and stored.")
+                break
+            if status in ("expired", "denied"):
+                print(f"\nFAIL: device-code flow ended with status={status}", file=sys.stderr)
+                return 3
+            if poll.get("increment_interval"):
+                current_interval += 5
+                print(f"  (server requested slow_down; backing off to {current_interval}s)")
+
+            # Print a heartbeat with seconds remaining
+            remaining = int(deadline - time.time())
+            print(f"  ...pending (status={status}, {remaining}s remaining)")
+            await asyncio.sleep(current_interval)
+
+        if not bound:
+            print("\nFAIL: polling timed out before user completed authorization",
+                  file=sys.stderr)
             return 3
-        if poll.get("increment_interval"):
-            current_interval += 5
-            print(f"  (server requested slow_down; backing off to {current_interval}s)")
 
-        # Print a heartbeat with seconds remaining
-        remaining = int(deadline - time.time())
-        print(f"  ...pending (status={status}, {remaining}s remaining)")
-        await asyncio.sleep(current_interval)
-
-    if not bound:
-        print("\nFAIL: polling timed out before user completed authorization",
-              file=sys.stderr)
-        return 3
-
-    # --- Phase 3: resolve token + make a real Codex API call ---
-    print("\nResolving token from MongoDB...")
-    try:
-        access_token = await oauth_service.resolve(collection, user_id, "codex")
-    except Exception as exc:
-        print(f"FAIL: resolve raised: {exc}", file=sys.stderr)
-        return 4
+        print("\nResolving token from MongoDB...")
+        try:
+            access_token = await oauth_service.resolve(collection, user_id, "codex")
+        except Exception as exc:
+            print(f"FAIL: resolve raised: {exc}", file=sys.stderr)
+            return 4
 
     print(f"✓ Token resolved (length={len(access_token)}, starts with {access_token[:20]}...)")
 
