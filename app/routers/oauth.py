@@ -175,3 +175,22 @@ async def poll_codex(user: dict = Depends(get_current_user)):
         http_client=get_http_client(),
     )
     return PollCodexResponse(**result)
+
+
+@router.post("/refresh/{provider}")
+async def refresh_endpoint(
+    provider: OAuthProvider,
+    user: dict = Depends(get_current_user),
+):
+    """Force-refresh the token. Returns the new expiry."""
+    from app.services import oauth_service
+    try:
+        await oauth_service.resolve(
+            get_credentials_collection(),
+            user["_id"],
+            provider,
+            force_refresh=True,
+        )
+    except OAuthCredentialError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {"status": "refreshed"}

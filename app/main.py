@@ -729,6 +729,10 @@ app.include_router(news_data.router, tags=["news-data"])
 app.include_router(social_media.router, tags=["social-media"])
 app.include_router(internal_messages.router, tags=["internal-messages"])
 
+# OAuth subscription auth (PR-2)
+from app.routers import oauth as oauth_router
+app.include_router(oauth_router.router, prefix="/api/oauth", tags=["oauth"])
+
 
 @app.get("/")
 async def root():

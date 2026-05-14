@@ -172,3 +172,30 @@ class TestCodexPoll:
 
         r = app_client.post("/api/oauth/poll/codex")
         assert r.json()["status"] == "bound"
+
+
+class TestRefreshEndpoint:
+    def test_refresh_calls_resolve_with_force(self, app_client, monkeypatch):
+        from app.services import oauth_service
+        called = {}
+        async def fake_resolve(coll, user_id, provider, *, force_refresh=False):
+            called["force_refresh"] = force_refresh
+            return "new-token-xyz"
+        monkeypatch.setattr(oauth_service, "resolve", fake_resolve)
+        monkeypatch.setattr(oauth_router, "get_credentials_collection", lambda: AsyncMock())
+
+        r = app_client.post("/api/oauth/refresh/claude_code")
+        assert r.status_code == 200
+        assert called["force_refresh"] is True
+
+    def test_refresh_propagates_credential_error(self, app_client, monkeypatch):
+        from app.services import oauth_service
+        from app.models.oauth import OAuthCredentialError
+        async def fake_resolve(*args, **kwargs):
+            raise OAuthCredentialError("not bound")
+        monkeypatch.setattr(oauth_service, "resolve", fake_resolve)
+        monkeypatch.setattr(oauth_router, "get_credentials_collection", lambda: AsyncMock())
+
+        r = app_client.post("/api/oauth/refresh/claude_code")
+        assert r.status_code == 400
+        assert "not bound" in r.json().get("detail", "")
