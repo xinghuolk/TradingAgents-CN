@@ -47,7 +47,9 @@ class TestChatClaudeCodeOAuth:
             assert "api_key" not in kwargs or not kwargs.get("api_key")
             # OAuth headers must be present
             hdr = kwargs["default_headers"]
-            assert "anthropic-beta" in hdr
+            # Lock the exact header surface — if any code adds (or strips) a
+            # header, this test must update deliberately.
+            assert set(hdr.keys()) == {"anthropic-beta", "user-agent", "x-app"}
             for required in OAUTH_BETA_HEADERS:
                 assert required in hdr["anthropic-beta"], f"missing beta: {required}"
             assert hdr.get("x-app") == "cli"

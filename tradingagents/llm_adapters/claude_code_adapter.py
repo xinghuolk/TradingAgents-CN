@@ -1,8 +1,11 @@
 """LangChain chat model that authenticates against Anthropic via Claude Code OAuth.
 
 Uses the subscription's OAuth access token (read from ~/.claude/.credentials.json
-or macOS Keychain) instead of an API key. The token is automatically refreshed
-when expiring.
+or macOS Keychain) instead of an API key. The token is refreshed once at
+construction if it is already expiring; the resolved token is then baked into
+the underlying Anthropic client and is NOT refreshed again during the object's
+lifetime. For sessions longer than the token TTL (typically ~1 hour), construct
+a new ChatClaudeCodeOAuth instance per request.
 
 Reference: hermes-agent/agent/anthropic_adapter.py:604-621
 """
@@ -66,7 +69,10 @@ class ChatClaudeCodeOAuth(ChatAnthropic):
             auth_token=cred.access_token,
             default_headers=default_headers,
         )
-        # Bypass pydantic's frozen-on-some-versions guard.
+        # _client / _async_client are functools.cached_property descriptors on
+        # ChatAnthropic. Writing to __dict__ directly (via object.__setattr__)
+        # shadows the descriptor before it fires, so the cached factory never
+        # runs and our OAuth-authenticated client is what every request uses.
         object.__setattr__(self, "_client", sync_client)
         object.__setattr__(self, "_async_client", async_client)
         logger.info(
