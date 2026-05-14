@@ -230,13 +230,20 @@ def refresh_claude_code(refresh_token: str, *, timeout: float = 10.0) -> Tuple[s
             logger.debug("Claude Code token refresh failed at %s: %s", endpoint, exc)
             last_exc = exc
             continue
+        if not isinstance(payload, dict):
+            raise SubscriptionCredentialError(
+                f"Claude Code refresh response is not a JSON object: {payload!r}"
+            )
         new_access = payload.get("access_token") or ""
         if not new_access:
             raise SubscriptionCredentialError(
                 f"Claude Code refresh response missing access_token: {payload!r}"
             )
         new_refresh = payload.get("refresh_token") or refresh_token
-        expires_in = int(payload.get("expires_in") or 3600)
+        try:
+            expires_in = int(payload.get("expires_in") or 3600)
+        except (TypeError, ValueError):
+            expires_in = 3600
         expires_at_ms = int(time.time() * 1000) + expires_in * 1000
         return new_access, new_refresh, expires_at_ms
     raise SubscriptionCredentialError(

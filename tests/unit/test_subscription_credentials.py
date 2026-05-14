@@ -299,3 +299,31 @@ class TestRefreshClaudeCode:
         monkeypatch.setattr(sc.urllib.request, "urlopen", fake_urlopen)
         with pytest.raises(sc.SubscriptionCredentialError):
             sc.refresh_claude_code("any")
+
+    def test_non_dict_response_raises_typed_error(self, monkeypatch):
+        """If server returns valid JSON that is not an object, raise SubscriptionCredentialError (not AttributeError)."""
+        @contextmanager
+        def fake_urlopen(req, timeout=None):  # noqa: ARG001
+            resp = MagicMock()
+            resp.read.return_value = json.dumps(["not", "a", "dict"]).encode()
+            yield resp
+        monkeypatch.setattr(sc.urllib.request, "urlopen", fake_urlopen)
+        with pytest.raises(sc.SubscriptionCredentialError):
+            sc.refresh_claude_code("any")
+
+    def test_non_numeric_expires_in_falls_back_to_default(self, monkeypatch):
+        """If server returns garbage for expires_in, default to 3600s instead of crashing."""
+        @contextmanager
+        def fake_urlopen(req, timeout=None):  # noqa: ARG001
+            resp = MagicMock()
+            resp.read.return_value = json.dumps({
+                "access_token": "at",
+                "refresh_token": "rt",
+                "expires_in": "forever",  # non-numeric
+            }).encode()
+            yield resp
+        monkeypatch.setattr(sc.urllib.request, "urlopen", fake_urlopen)
+        before_ms = int(time.time() * 1000)
+        _, _, exp_ms = sc.refresh_claude_code("any")
+        # Should fall back to 3600s default
+        assert before_ms + 3_600_000 <= exp_ms <= before_ms + 3_600_000 + 1000
