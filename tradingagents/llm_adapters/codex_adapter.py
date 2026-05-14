@@ -19,7 +19,7 @@ Reference: hermes-agent/hermes_cli/auth.py:74-91 (Codex endpoint + client id)
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, Optional
 
 from langchain_openai import ChatOpenAI
 
@@ -44,8 +44,22 @@ class ChatCodexOAuth(ChatOpenAI):
     divergences should be documented in the design doc.
     """
 
-    def __init__(self, model: str, **kwargs: Any) -> None:
-        cred = sc.resolve("codex")
+    def __init__(
+        self,
+        model: str,
+        *,
+        access_token: Optional[str] = None,
+        **kwargs: Any,
+    ) -> None:
+        if access_token is None:
+            cred = sc.resolve("codex")
+            access_token = cred.access_token
+            source = cred.source
+            expires_at_ms = cred.expires_at_ms
+        else:
+            source = "web_oauth"
+            expires_at_ms = None
+
         # `base_url` is overridable for diagnostics (e.g. pointing at a local
         # proxy during smoke testing). `api_key` is NOT overridable — the whole
         # point of this adapter is to inject the OAuth token; allowing a caller
@@ -53,10 +67,10 @@ class ChatCodexOAuth(ChatOpenAI):
         kwargs.setdefault("base_url", CODEX_BASE_URL)
         super().__init__(
             model=model,
-            api_key=cred.access_token,
+            api_key=access_token,
             **kwargs,
         )
         logger.info(
             "ChatCodexOAuth initialized: model=%s source=%s expires_at_ms=%s",
-            model, cred.source, cred.expires_at_ms,
+            model, source, expires_at_ms,
         )

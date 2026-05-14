@@ -59,3 +59,15 @@ class TestChatCodexOAuth:
         ):
             with pytest.raises(sc.SubscriptionCredentialError):
                 ChatCodexOAuth(model="gpt-5")
+
+    def test_explicit_access_token_skips_local_resolve(self):
+        """When access_token is passed in, skip subscription_credentials.resolve."""
+        with patch.object(sc, "resolve",
+                          side_effect=AssertionError("should not be called")):
+            chat = ChatCodexOAuth(
+                model="gpt-5",
+                access_token="web-cx-token",
+            )
+        api_key_field = getattr(chat, "openai_api_key", None) or getattr(chat, "api_key", None)
+        raw = api_key_field.get_secret_value() if hasattr(api_key_field, "get_secret_value") else api_key_field
+        assert raw == "web-cx-token"
