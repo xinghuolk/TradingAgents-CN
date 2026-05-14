@@ -66,6 +66,7 @@ export const useOAuthStore = defineStore('oauth', {
     },
 
     async startClaudeCodeFlow(): Promise<void> {
+      if (this.pkceDialogOpen) return
       try {
         const resp = await oauthApi.authorizeClaudeCode()
         const popup = window.open(
@@ -89,12 +90,12 @@ export const useOAuthStore = defineStore('oauth', {
       }
     },
 
-    _handlePkceMessage(event: MessageEvent) {
+    async _handlePkceMessage(event: MessageEvent) {
       const data = event.data
       if (!data || typeof data !== 'object') return
       if (data.type === 'oauth-success' && data.provider === 'claude_code') {
         this._closePkceDialog()
-        this.fetchStatus('claude_code')
+        await this.fetchStatus('claude_code')
         ElMessage.success('Claude Code 授权成功')
       } else if (data.type === 'oauth-error' && data.provider === 'claude_code') {
         this._closePkceDialog()
@@ -121,6 +122,7 @@ export const useOAuthStore = defineStore('oauth', {
     },
 
     async startCodexFlow(): Promise<void> {
+      if (this.deviceCodeDialogOpen) return
       try {
         const resp = await oauthApi.authorizeCodex()
         this.deviceCodeState = {
@@ -180,7 +182,7 @@ export const useOAuthStore = defineStore('oauth', {
         this._scheduleNextPoll()
       } catch (err) {
         console.error('❌ Codex 轮询失败', err)
-        // Network blip — retry one more interval; if still failing, bail.
+        // Network error — keep retrying each interval until the device code expires.
         if (this.deviceCodeState) {
           if (Date.now() >= this.deviceCodeState.expires_at) {
             this._closeDeviceCodeDialog()
