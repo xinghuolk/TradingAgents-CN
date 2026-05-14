@@ -132,6 +132,17 @@ class TestReadClaudeCodeFromKeychain:
              patch("subprocess.run", return_value=completed):
             assert sc.read_claude_code_from_keychain() is None
 
+    def test_security_command_timeout_returns_none(self):
+        import subprocess
+        with patch.object(sc, "_platform_system", return_value="Darwin"), \
+             patch("subprocess.run", side_effect=subprocess.TimeoutExpired(cmd="security", timeout=5)):
+            assert sc.read_claude_code_from_keychain() is None
+
+    def test_security_command_os_error_returns_none(self):
+        with patch.object(sc, "_platform_system", return_value="Darwin"), \
+             patch("subprocess.run", side_effect=OSError("spawn failed")):
+            assert sc.read_claude_code_from_keychain() is None
+
     def test_valid_keychain_payload_returns_credential(self):
         payload = json.dumps({
             "claudeAiOauth": {
@@ -146,10 +157,19 @@ class TestReadClaudeCodeFromKeychain:
             cred = sc.read_claude_code_from_keychain()
         assert cred is not None
         assert cred.access_token == "at-kc"
+        assert cred.refresh_token == "rt-kc"
+        assert cred.expires_at_ms == 1_800_000_000_000
+        assert cred.provider == "claude_code"
         assert cred.source == "macos_keychain"
 
     def test_keychain_returns_garbage_returns_none(self):
         completed = MagicMock(returncode=0, stdout="not json", stderr="")
+        with patch.object(sc, "_platform_system", return_value="Darwin"), \
+             patch("subprocess.run", return_value=completed):
+            assert sc.read_claude_code_from_keychain() is None
+
+    def test_keychain_missing_claudeAiOauth_key_returns_none(self):
+        completed = MagicMock(returncode=0, stdout=json.dumps({"otherKey": {}}), stderr="")
         with patch.object(sc, "_platform_system", return_value="Darwin"), \
              patch("subprocess.run", return_value=completed):
             assert sc.read_claude_code_from_keychain() is None
