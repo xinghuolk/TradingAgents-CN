@@ -5,7 +5,12 @@ this file currently has only the CRUD + resolve layer.
 """
 from __future__ import annotations
 
+import base64
+import hashlib
+import json
 import logging
+import secrets as _secrets
+import urllib.parse
 from datetime import datetime, timedelta, timezone
 from typing import Literal
 
@@ -18,6 +23,16 @@ logger = logging.getLogger(__name__)
 
 # 60-second skew window: refresh when token expires within this margin.
 _REFRESH_SKEW_SECONDS = 60
+
+# --- PKCE / Anthropic Claude Code OAuth constants ---
+_ANTHROPIC_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
+_ANTHROPIC_AUTHORIZE_URL = "https://claude.ai/oauth/authorize"
+_ANTHROPIC_SCOPES = "org:create_api_key user:profile user:inference"
+_PKCE_TTL_SECONDS = 600
+
+
+def _b64url(data: bytes) -> str:
+    return base64.urlsafe_b64encode(data).rstrip(b"=").decode("ascii")
 
 
 async def store_credentials(
@@ -131,3 +146,39 @@ async def resolve(
         expires_at=new_expires_at,
     )
     return new_at
+
+
+async def start_pkce_flow(
+    redis_client,
+    *,
+    user_id: str,
+    redirect_uri: str,
+) -> dict:
+    """Begin the PKCE flow for Claude Code.
+
+    Generates state + code_verifier + code_challenge, stores them in Redis,
+    returns the authorize_url and state to redirect the browser to.
+    """
+    code_verifier = _b64url(_secrets.token_bytes(32))
+    code_challenge = _b64url(hashlib.sha256(code_verifier.encode()).digest())
+    state = _b64url(_secrets.token_bytes(32))
+
+    redis_key = f"oauth:state:claude_code:{state}"
+    redis_value = json.dumps({
+        "user_id": user_id,
+        "code_verifier": code_verifier,
+        "redirect_uri": redirect_uri,
+    })
+    await redis_client.setex(redis_key, _PKCE_TTL_SECONDS, redis_value)
+
+    params = {
+        "response_type": "code",
+        "client_id": _ANTHROPIC_CLIENT_ID,
+        "redirect_uri": redirect_uri,
+        "scope": _ANTHROPIC_SCOPES,
+        "state": state,
+        "code_challenge": code_challenge,
+        "code_challenge_method": "S256",
+    }
+    authorize_url = f"{_ANTHROPIC_AUTHORIZE_URL}?" + urllib.parse.urlencode(params)
+    return {"authorize_url": authorize_url, "state": state}
