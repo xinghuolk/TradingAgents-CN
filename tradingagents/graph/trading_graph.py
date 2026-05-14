@@ -67,6 +67,7 @@ def create_llm_by_provider(provider: str, model: str, backend_url: str, temperat
         from tradingagents.llm_adapters.claude_code_adapter import ChatClaudeCodeOAuth
         return ChatClaudeCodeOAuth(
             model=model,
+            access_token=api_key,  # None on CLI path → adapter falls back to local resolve
             temperature=temperature,
             max_tokens=max_tokens,
             timeout=timeout,
@@ -76,6 +77,7 @@ def create_llm_by_provider(provider: str, model: str, backend_url: str, temperat
         from tradingagents.llm_adapters.codex_adapter import ChatCodexOAuth
         return ChatCodexOAuth(
             model=model,
+            access_token=api_key,
             temperature=temperature,
             max_tokens=max_tokens,
             timeout=timeout,

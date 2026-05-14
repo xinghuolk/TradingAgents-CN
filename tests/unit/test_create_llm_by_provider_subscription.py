@@ -65,3 +65,34 @@ class TestCreateLlmByProviderSubscription:
         ):
             assert _import_target()("Claude_Code", "claude-opus-4-7", "", 0, 1, 1) is fake
             assert _import_target()("CLAUDE_CODE", "claude-opus-4-7", "", 0, 1, 1) is fake
+
+    def test_claude_code_api_key_routes_to_access_token(self):
+        """api_key passed in (from oauth_service.resolve) becomes access_token."""
+        with patch(
+            "tradingagents.llm_adapters.claude_code_adapter.ChatClaudeCodeOAuth",
+        ) as ctor:
+            _import_target()(
+                provider="claude_code",
+                model="claude-opus-4-7",
+                backend_url="",
+                temperature=0.4,
+                max_tokens=4000,
+                timeout=180,
+                api_key="web-supplied-token",
+            )
+        assert ctor.call_args.kwargs.get("access_token") == "web-supplied-token"
+
+    def test_codex_api_key_routes_to_access_token(self):
+        with patch(
+            "tradingagents.llm_adapters.codex_adapter.ChatCodexOAuth",
+        ) as ctor:
+            _import_target()(
+                provider="codex",
+                model="gpt-5",
+                backend_url="",
+                temperature=0.5,
+                max_tokens=2000,
+                timeout=180,
+                api_key="web-cx-token",
+            )
+        assert ctor.call_args.kwargs.get("access_token") == "web-cx-token"
