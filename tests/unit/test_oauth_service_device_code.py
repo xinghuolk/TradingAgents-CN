@@ -51,7 +51,9 @@ class TestStartDeviceCodeFlow:
             http_client=fake_http_with_device_response,
         )
         assert result["user_code"] == "ABCD-EFGH"
-        assert result["verification_uri"] == "https://auth.openai.com/deviceauth?user_code=ABCD-EFGH"
+        # Fixed URL (hermes-verified); user_code is entered manually on the page,
+        # NOT appended as a query param.
+        assert result["verification_uri"] == "https://auth.openai.com/codex/device"
         assert result["interval"] == 5
         assert result["expires_in"] == 600
 

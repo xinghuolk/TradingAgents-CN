@@ -310,9 +310,10 @@ async def start_device_code_flow(
     })
     await redis_client.setex(redis_key, expires_in, redis_value)
 
-    # Synthesize a verification URL the user can open. OpenAI's deviceauth
-    # endpoint accepts ?user_code=... query param.
-    verification_uri = f"https://auth.openai.com/deviceauth?user_code={user_code}"
+    # Hermes-verified URL: a fixed page where the user manually enters the
+    # user_code displayed in the UI. Don't append query params — OpenAI
+    # ignores them and the bare URL redirects to the home page.
+    verification_uri = "https://auth.openai.com/codex/device"
 
     return {
         "user_code": user_code,
