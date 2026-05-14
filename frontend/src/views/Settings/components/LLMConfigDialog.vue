@@ -86,13 +86,30 @@
         </div>
       </el-form-item>
 
-      <el-form-item label="API基础URL" prop="api_base">
+      <el-form-item label="API基础URL" prop="api_base" v-if="!isSubscriptionProvider">
         <el-input
           v-model="formData.api_base"
           placeholder="可选，自定义API端点（留空使用厂家默认地址）"
         />
         <div class="form-tip">
           💡 API密钥已在厂家配置中设置，此处只需配置模型参数
+        </div>
+      </el-form-item>
+
+      <!-- 订阅类 provider 的状态卡 -->
+      <el-form-item label="订阅状态" v-if="isSubscriptionProvider">
+        <div v-if="subscriptionStatus?.bound" class="subscription-status bound">
+          <el-icon><CircleCheck /></el-icon>
+          <span>您的订阅已绑定，无需 API Key</span>
+          <el-link type="primary" @click="goManageSubscription">管理订阅 →</el-link>
+        </div>
+        <div v-else class="subscription-status unbound">
+          <el-icon><Warning /></el-icon>
+          <span>您当前未绑定此订阅。配置仍可保存（系统级），但您本人将无法用此配置跑分析。</span>
+          <el-button size="small" type="warning" @click="bindSubscription">立即授权</el-button>
+        </div>
+        <div class="form-tip">
+          💡 订阅模式由 OAuth 路由，无需自定义 API Key 或 Base URL
         </div>
       </el-form-item>
 
@@ -351,8 +368,11 @@
 import { ref, computed, watch, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import type { FormInstance, FormRules } from 'element-plus'
-import { Refresh } from '@element-plus/icons-vue'
+import { Refresh, CircleCheck, Warning } from '@element-plus/icons-vue'
 import { configApi, type LLMProvider, type LLMConfig, validateLLMConfig } from '@/api/config'
+import { useOAuthStore } from '@/stores/oauth'
+
+const oauthStore = useOAuthStore()
 
 // Props
 interface Props {
@@ -368,6 +388,7 @@ const props = withDefaults(defineProps<Props>(), {
 const emit = defineEmits<{
   'update:visible': [value: boolean]
   'success': []
+  'navigate-subscription': []
 }>()
 
 // Refs
@@ -376,8 +397,49 @@ const loading = ref(false)
 const providersLoading = ref(false)
 const availableProviders = ref<LLMProvider[]>([])
 
+// 订阅类（OAuth）供应商不存在于 providers 表中——以合成项注入下拉
+const SUBSCRIPTION_PROVIDERS: LLMProvider[] = [
+  {
+    id: 'claude_code',
+    name: 'claude_code',
+    display_name: 'Claude Code (订阅)',
+    is_active: true,
+    supported_features: ['chat'],
+  } as LLMProvider,
+  {
+    id: 'codex',
+    name: 'codex',
+    display_name: 'Codex / ChatGPT (订阅)',
+    is_active: true,
+    supported_features: ['chat'],
+  } as LLMProvider,
+]
+
+const SUBSCRIPTION_PROVIDER_NAMES = new Set(SUBSCRIPTION_PROVIDERS.map(p => p.name))
+
 // Computed
 const isEdit = computed(() => !!props.config)
+
+const isSubscriptionProvider = computed(() =>
+  SUBSCRIPTION_PROVIDER_NAMES.has(formData.value.provider),
+)
+
+const subscriptionStatus = computed(() => {
+  if (!isSubscriptionProvider.value) return null
+  return oauthStore.statusFor(formData.value.provider as 'claude_code' | 'codex')
+})
+
+const bindSubscription = () => {
+  if (formData.value.provider === 'claude_code') {
+    oauthStore.startClaudeCodeFlow()
+  } else if (formData.value.provider === 'codex') {
+    oauthStore.startCodexFlow()
+  }
+}
+
+const goManageSubscription = () => {
+  emit('navigate-subscription')
+}
 
 // 表单数据
 const defaultFormData = {
@@ -644,6 +706,8 @@ watch(
         }
         selectedModelKey.value = ''
       }
+      // 拉一次订阅状态，让状态卡反映最新绑定
+      oauthStore.fetchAllStatus()
     }
   }
 )
@@ -703,18 +767,24 @@ const loadProviders = async (showSuccessMessage = false) => {
   providersLoading.value = true
   try {
     const providers = await configApi.getLLMProviders()
-    // 只显示启用的厂家
-    availableProviders.value = providers.filter(p => p.is_active)
+    // 只显示启用的厂家，前置两个订阅类合成项
+    availableProviders.value = [
+      ...SUBSCRIPTION_PROVIDERS,
+      ...providers.filter(p => p.is_active),
+    ]
     console.log('✅ 加载厂家列表成功:', availableProviders.value.length)
 
     if (showSuccessMessage) {
-      ElMessage.success(`已刷新供应商列表，共 ${availableProviders.value.length} 个启用的供应商`)
+      ElMessage.success(`已刷新供应商列表，共 ${availableProviders.value.length} 个供应商`)
     }
 
-    // 如果是新增模式且没有选择供应商，默认选择第一个
-    if (!isEdit.value && !formData.value.provider && availableProviders.value.length > 0) {
-      formData.value.provider = availableProviders.value[0].name
-      await handleProviderChange(formData.value.provider)
+    // 如果是新增模式且没有选择供应商，默认选择第一个真实厂家（跳过订阅项）
+    if (!isEdit.value && !formData.value.provider) {
+      const firstReal = availableProviders.value.find(p => !SUBSCRIPTION_PROVIDER_NAMES.has(p.name))
+      if (firstReal) {
+        formData.value.provider = firstReal.name
+        await handleProviderChange(formData.value.provider)
+      }
     }
   } catch (error) {
     console.error('❌ 加载厂家列表失败:', error)
@@ -767,6 +837,26 @@ onMounted(() => {
 
   span {
     display: inline-block;
+  }
+}
+
+.subscription-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 6px;
+  font-size: 13px;
+  flex-wrap: wrap;
+
+  &.bound {
+    background: var(--el-color-success-light-9);
+    color: var(--el-color-success);
+  }
+
+  &.unbound {
+    background: var(--el-color-warning-light-9);
+    color: var(--el-color-warning);
   }
 }
 </style>

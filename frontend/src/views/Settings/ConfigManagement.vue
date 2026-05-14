@@ -968,6 +968,7 @@
       v-model:visible="llmDialogVisible"
       :config="currentLLMConfig"
       @success="handleLLMConfigSuccess"
+      @navigate-subscription="activeTab = 'subscription-auth'"
     />
 
     <!-- 数据源配置对话框 -->
