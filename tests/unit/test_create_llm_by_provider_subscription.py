@@ -96,3 +96,43 @@ class TestCreateLlmByProviderSubscription:
                 api_key="web-cx-token",
             )
         assert ctor.call_args.kwargs.get("access_token") == "web-cx-token"
+
+
+class TestNativeBranchesReduced:
+    """Verify dashscope/qianfan/zhipu/siliconflow no longer have native branches.
+
+    Each should construct via the generic OpenAI-compatible fallback.
+    """
+    def test_dashscope_uses_generic_fallback(self, monkeypatch):
+        monkeypatch.setenv("DASHSCOPE_API_KEY", "test")
+        with patch("tradingagents.graph.trading_graph.ChatOpenAI") as ctor:
+            _import_target()(
+                "dashscope", "qwen-test",
+                "https://dashscope.aliyuncs.com/compatible-mode/v1",
+                0.1, 100, 10,
+            )
+        ctor.assert_called_once()
+        kwargs = ctor.call_args.kwargs
+        assert kwargs["base_url"] == "https://dashscope.aliyuncs.com/compatible-mode/v1"
+
+    def test_qianfan_uses_generic_fallback(self, monkeypatch):
+        monkeypatch.setenv("QIANFAN_API_KEY", "test")
+        with patch("tradingagents.graph.trading_graph.ChatOpenAI") as ctor:
+            _import_target()(
+                "qianfan", "ernie-test",
+                "https://qianfan.baidubce.com/v2",
+                0.1, 100, 10,
+            )
+        kwargs = ctor.call_args.kwargs
+        assert kwargs["base_url"] == "https://qianfan.baidubce.com/v2"
+
+    def test_zhipu_uses_generic_fallback(self, monkeypatch):
+        monkeypatch.setenv("ZHIPU_API_KEY", "test")
+        with patch("tradingagents.graph.trading_graph.ChatOpenAI") as ctor:
+            _import_target()(
+                "zhipu", "glm-test",
+                "https://open.bigmodel.cn/api/paas/v4",
+                0.1, 100, 10,
+            )
+        kwargs = ctor.call_args.kwargs
+        assert kwargs["base_url"] == "https://open.bigmodel.cn/api/paas/v4"

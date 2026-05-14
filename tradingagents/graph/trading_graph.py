@@ -10,7 +10,7 @@ import time
 from langchain_openai import ChatOpenAI
 from langchain_anthropic import ChatAnthropic
 from langchain_google_genai import ChatGoogleGenerativeAI
-from tradingagents.llm_adapters import ChatDashScopeOpenAI, ChatGoogleOpenAI
+from tradingagents.llm_adapters import ChatGoogleOpenAI
 
 from langgraph.prebuilt import ToolNode
 
@@ -99,20 +99,6 @@ def create_llm_by_provider(provider: str, model: str, backend_url: str, temperat
             timeout=timeout
         )
 
-    elif provider.lower() == "dashscope":
-        # 优先使用传入的 API Key，否则从环境变量读取
-        dashscope_api_key = api_key or os.getenv('DASHSCOPE_API_KEY')
-
-        # 传递 base_url 参数，使厂家配置的 default_base_url 生效
-        return ChatDashScopeOpenAI(
-            model=model,
-            api_key=dashscope_api_key,  # 🔥 传递 API Key
-            base_url=backend_url if backend_url else None,  # 如果有自定义 URL 则使用
-            temperature=temperature,
-            max_tokens=max_tokens,
-            request_timeout=timeout
-        )
-
     elif provider.lower() == "deepseek":
         # 优先使用传入的 API Key，否则从环境变量读取
         deepseek_api_key = api_key or os.getenv('DEEPSEEK_API_KEY')
@@ -123,22 +109,6 @@ def create_llm_by_provider(provider: str, model: str, backend_url: str, temperat
             model=model,
             api_key=deepseek_api_key,
             base_url=backend_url,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            timeout=timeout
-        )
-
-    elif provider.lower() == "zhipu":
-        # 智谱AI处理
-        zhipu_api_key = api_key or os.getenv('ZHIPU_API_KEY')
-        if not zhipu_api_key:
-            raise ValueError("使用智谱AI需要设置ZHIPU_API_KEY环境变量或在数据库中配置API Key")
-        
-        return create_openai_compatible_llm(
-            provider="zhipu",
-            model=model,
-            api_key=zhipu_api_key,
-            base_url=backend_url,  # 使用用户提供的backend_url
             temperature=temperature,
             max_tokens=max_tokens,
             timeout=timeout
@@ -165,16 +135,6 @@ def create_llm_by_provider(provider: str, model: str, backend_url: str, temperat
 
     elif provider.lower() == "anthropic":
         return ChatAnthropic(
-            model=model,
-            base_url=backend_url,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            timeout=timeout
-        )
-
-    elif provider.lower() in ["qianfan", "custom_openai"]:
-        return create_openai_compatible_llm(
-            provider=provider,
             model=model,
             base_url=backend_url,
             temperature=temperature,
