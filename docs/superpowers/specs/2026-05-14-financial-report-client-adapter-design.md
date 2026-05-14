@@ -243,6 +243,29 @@ FINANCIAL_REPORT_LLM_CONFIG_PATH=
 
 默认 `financial_report_client_enabled=false`，保证未安装 extractor 的用户不受影响。
 
+### LLM 配置边界
+
+TradingAgents-CN 与 extractor 的 LLM 配置互相隔离：
+
+- TradingAgents-CN 的 LLM 配置只服务于多智能体分析、报告生成、研究员辩论和最终投资建议。
+- extractor 的 LLM 配置只服务于年报字段抽取、PDF evidence supplement 和 LLM supplement。
+- TradingAgents-CN 不读取、不保存、不校验 extractor 的 API key。
+- TradingAgents-CN 不解析 extractor 的 LLM config schema，只把 `FINANCIAL_REPORT_LLM_CONFIG_PATH` 传给 `FinancialReportClient`。
+- extractor 的 API key 由 extractor config 内的 `api_key_env` 决定，例如 `FINANCIAL_REPORT_OPENAI_API_KEY`。
+- `ExtractionResult.llm_provider` / `llm_model` 只作为结果 metadata，用于 caveat 和 LLM trust policy。
+
+示例：
+
+```text
+TradingAgents-CN env:
+  FINANCIAL_REPORT_LLM_CONFIG_PATH=/path/to/extractor_llm_config.json
+
+extractor_llm_config.json:
+  provider/model/base_url/api_key_env 由 extractor 自己解释
+```
+
+如果 extractor 因 LLM config 或 key 缺失失败，adapter 只捕获并转换为 warning/error，TradingAgents-CN 不接管 key 管理。
+
 ## 错误与降级
 
 错误处理规则：
