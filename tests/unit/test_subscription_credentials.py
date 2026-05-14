@@ -1,6 +1,9 @@
 """Unit tests for tradingagents.llm_adapters.subscription_credentials."""
 import dataclasses
+import json
 import time
+from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -59,3 +62,56 @@ class TestSubscriptionCredential:
         # But the non-secret diagnostic fields should still be present
         assert "claude_code" in r
         assert "test" in r  # the source value
+
+
+class TestReadClaudeCodeFromFile:
+    def test_file_missing_returns_none(self, tmp_path):
+        with patch.object(sc, "_claude_code_credentials_path", return_value=tmp_path / "nope.json"):
+            assert sc.read_claude_code_from_file() is None
+
+    def test_valid_file_returns_credential(self, tmp_path):
+        creds_path = tmp_path / ".credentials.json"
+        creds_path.write_text(json.dumps({
+            "claudeAiOauth": {
+                "accessToken": "at-real",
+                "refreshToken": "rt-real",
+                "expiresAt": 1_700_000_000_000,
+            }
+        }))
+        with patch.object(sc, "_claude_code_credentials_path", return_value=creds_path):
+            cred = sc.read_claude_code_from_file()
+        assert cred is not None
+        assert cred.access_token == "at-real"
+        assert cred.refresh_token == "rt-real"
+        assert cred.expires_at_ms == 1_700_000_000_000
+        assert cred.provider == "claude_code"
+        assert cred.source == "claude_code_file"
+
+    def test_missing_access_token_returns_none(self, tmp_path):
+        creds_path = tmp_path / ".credentials.json"
+        creds_path.write_text(json.dumps({"claudeAiOauth": {"refreshToken": "rt"}}))
+        with patch.object(sc, "_claude_code_credentials_path", return_value=creds_path):
+            assert sc.read_claude_code_from_file() is None
+
+    def test_malformed_json_returns_none(self, tmp_path):
+        creds_path = tmp_path / ".credentials.json"
+        creds_path.write_text("not json {")
+        with patch.object(sc, "_claude_code_credentials_path", return_value=creds_path):
+            assert sc.read_claude_code_from_file() is None
+
+    def test_missing_claudeAiOauth_key_returns_none(self, tmp_path):
+        creds_path = tmp_path / ".credentials.json"
+        creds_path.write_text(json.dumps({"someOtherKey": {}}))
+        with patch.object(sc, "_claude_code_credentials_path", return_value=creds_path):
+            assert sc.read_claude_code_from_file() is None
+
+    def test_no_expires_at_defaults_to_zero(self, tmp_path):
+        creds_path = tmp_path / ".credentials.json"
+        creds_path.write_text(json.dumps({
+            "claudeAiOauth": {"accessToken": "at-noexp"}
+        }))
+        with patch.object(sc, "_claude_code_credentials_path", return_value=creds_path):
+            cred = sc.read_claude_code_from_file()
+        assert cred is not None
+        assert cred.expires_at_ms == 0
+        assert cred.refresh_token is None
