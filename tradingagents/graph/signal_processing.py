@@ -6,6 +6,7 @@ from langchain_openai import ChatOpenAI
 from tradingagents.utils.logging_init import get_logger
 from tradingagents.utils.tool_logging import log_graph_module
 logger = get_logger("graph.signal_processing")
+from tradingagents.utils.llm_content import coerce_llm_content_to_text
 
 
 class SignalProcessor:
@@ -108,7 +109,8 @@ class SignalProcessor:
         logger.debug(f"🔍 [SignalProcessor] 准备调用LLM，消息数量: {len(messages)}, 信号长度: {len(full_signal)}")
 
         try:
-            response = self.quick_thinking_llm.invoke(messages).content
+            raw_response = self.quick_thinking_llm.invoke(messages)
+            response = coerce_llm_content_to_text(getattr(raw_response, "content", raw_response))
             logger.debug(f"🔍 [SignalProcessor] LLM响应: {response[:200]}...")
 
             # 尝试解析JSON响应

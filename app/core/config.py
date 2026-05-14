@@ -270,6 +270,13 @@ class Settings(BaseSettings):
     US_DATA_CACHE_HOURS: int = Field(default=24, ge=1, le=168, description="美股数据缓存时长（小时）")
     US_DEFAULT_DATA_SOURCE: str = Field(default="yfinance", description="美股默认数据源（yfinance/finnhub）")
 
+    # ==================== Report-Collector 财报收集服务 ====================
+    REPORT_COLLECTOR_URL: str = Field(default="http://localhost", description="Report-Collector 服务地址")
+    REPORT_COLLECTOR_PORT: int = Field(default=8001, description="Report-Collector 服务端口")
+    REPORT_COLLECTOR_ENABLED: bool = Field(default=False, description="启用 Report-Collector 数据补充")
+    REPORT_COLLECTOR_TIMEOUT: int = Field(default=60, description="Report-Collector 请求超时(秒)")
+    REPORT_COLLECTOR_MAX_REPORTS: int = Field(default=5, description="最大下载年报数量")
+
     # ===== 新闻数据同步服务配置 =====
     NEWS_SYNC_ENABLED: bool = Field(default=True)
     NEWS_SYNC_CRON: str = Field(default="0 */2 * * *")  # 每2小时

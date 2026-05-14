@@ -136,6 +136,15 @@ class GraphSetup:
             delete_nodes["fundamentals"] = create_msg_delete()
             tool_nodes["fundamentals"] = self.tool_nodes["fundamentals"]
 
+        if "value" in selected_analysts:
+            # 价值投资分析师 - 基于穿透回报率模型
+            logger.debug(f"📊 [DEBUG] 使用价值投资分析师（穿透回报率模型）")
+            analyst_nodes["value"] = create_value_analyst(
+                self.quick_thinking_llm, self.toolkit
+            )
+            delete_nodes["value"] = create_msg_delete()
+            tool_nodes["value"] = self.tool_nodes["value"]
+
         # Create researcher and manager nodes
         bull_researcher_node = create_bull_researcher(
             self.quick_thinking_llm, self.bull_memory

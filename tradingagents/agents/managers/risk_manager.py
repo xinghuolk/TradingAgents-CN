@@ -4,6 +4,7 @@ import json
 # 导入统一日志系统
 from tradingagents.utils.logging_init import get_logger
 logger = get_logger("default")
+from tradingagents.utils.llm_content import coerce_llm_content_to_text
 
 
 def create_risk_manager(llm, memory):
@@ -83,7 +84,7 @@ def create_risk_manager(llm, memory):
                 elapsed_time = time.time() - start_time
                 
                 if response and hasattr(response, 'content') and response.content:
-                    response_content = response.content.strip()
+                    response_content = coerce_llm_content_to_text(response.content).strip()
 
                     # 📊 统计响应信息
                     response_length = len(response_content)

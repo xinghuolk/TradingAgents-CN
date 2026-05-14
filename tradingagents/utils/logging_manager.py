@@ -42,7 +42,26 @@ class ColoredFormatter(logging.Formatter):
 
 class StructuredFormatter(logging.Formatter):
     """结构化日志格式化器（JSON格式）"""
-    
+
+    _RESERVED_ATTRS = set(logging.LogRecord("", 0, "", 0, "", (), None).__dict__.keys())
+
+    @classmethod
+    def _to_json_safe(cls, value: Any, depth: int = 0) -> Any:
+        """将 extra 字段转换为可 JSON 序列化的结构。"""
+        if depth > 4:
+            return str(value)
+        if value is None or isinstance(value, (str, int, float, bool)):
+            return value
+        if isinstance(value, dict):
+            safe_dict: Dict[str, Any] = {}
+            for k, v in value.items():
+                safe_key = str(k)
+                safe_dict[safe_key] = cls._to_json_safe(v, depth + 1)
+            return safe_dict
+        if isinstance(value, (list, tuple, set)):
+            return [cls._to_json_safe(v, depth + 1) for v in value]
+        return str(value)
+
     def format(self, record):
         log_entry = {
             'timestamp': datetime.fromtimestamp(record.created).isoformat(),
@@ -65,7 +84,15 @@ class StructuredFormatter(logging.Formatter):
             log_entry['cost'] = record.cost
         if hasattr(record, 'tokens'):
             log_entry['tokens'] = record.tokens
-            
+
+        # 自动注入所有 extra 字段，避免结构化日志丢失业务明细
+        for key, value in record.__dict__.items():
+            if key in self._RESERVED_ATTRS:
+                continue
+            if key in log_entry:
+                continue
+            log_entry[key] = self._to_json_safe(value)
+
         return json.dumps(log_entry, ensure_ascii=False)
 
 

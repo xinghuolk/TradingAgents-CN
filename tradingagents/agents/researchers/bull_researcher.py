@@ -5,6 +5,7 @@ import json
 # 导入统一日志系统
 from tradingagents.utils.logging_init import get_logger
 logger = get_logger("default")
+from tradingagents.utils.llm_content import coerce_llm_content_to_text
 
 
 def create_bull_researcher(llm, memory):
@@ -127,7 +128,7 @@ def create_bull_researcher(llm, memory):
 
         response = llm.invoke(prompt)
 
-        argument = f"Bull Analyst: {response.content}"
+        argument = f"Bull Analyst: {coerce_llm_content_to_text(getattr(response, 'content', response))}"
 
         new_count = investment_debate_state["count"] + 1
         logger.info(f"🐂 [多头研究员] 发言完成，计数: {investment_debate_state['count']} -> {new_count}")

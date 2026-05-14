@@ -4,6 +4,7 @@ import json
 # 导入统一日志系统
 from tradingagents.utils.logging_init import get_logger
 logger = get_logger("default")
+from tradingagents.utils.llm_content import coerce_llm_content_to_text
 
 
 def create_neutral_debator(llm):
@@ -61,9 +62,10 @@ def create_neutral_debator(llm):
 
         llm_elapsed = time.time() - llm_start_time
         logger.info(f"⏱️ [Neutral Analyst] LLM调用完成，耗时: {llm_elapsed:.2f}秒")
-        logger.info(f"📝 [Neutral Analyst] 响应长度: {len(response.content):,} 字符")
+        response_text = coerce_llm_content_to_text(getattr(response, 'content', response))
+        logger.info(f"📝 [Neutral Analyst] 响应长度: {len(response_text):,} 字符")
 
-        argument = f"Neutral Analyst: {response.content}"
+        argument = f"Neutral Analyst: {response_text}"
 
         new_count = risk_debate_state["count"] + 1
         logger.info(f"⚖️ [中性风险分析师] 发言完成，计数: {risk_debate_state['count']} -> {new_count}")

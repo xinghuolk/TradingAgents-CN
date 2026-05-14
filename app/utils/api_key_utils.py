@@ -8,44 +8,51 @@ import os
 from typing import Optional
 
 
-def is_valid_api_key(api_key: Optional[str]) -> bool:
+def is_valid_api_key(api_key: Optional[str], provider_name: Optional[str] = None) -> bool:
     """
     判断 API Key 是否有效
-    
+
     有效的 API Key 必须满足：
     1. 不能为空
-    2. 长度必须 > 10
+    2. 长度必须 > 10（本地服务如 ollama 除外）
     3. 不能是占位符（前缀：your_, your-）
     4. 不能是占位符（后缀：_here, -here）
     5. 不能是截断的密钥（包含 '...'）
-    
+
     Args:
         api_key: 要验证的 API Key
-        
+        provider_name: 可选的提供商名称，用于特殊处理本地服务
+
     Returns:
         bool: 是否有效
     """
     if not api_key:
         return False
-    
+
     api_key = api_key.strip()
-    
+
     # 1. 不能为空
     if not api_key:
         return False
-    
+
+    # 本地服务（如 ollama）不需要严格验证 API Key
+    local_providers = ['ollama', 'local', 'custom_openai', 'lmstudio', 'localai']
+    if provider_name and provider_name.lower() in local_providers:
+        # 只要有值就认为有效
+        return len(api_key) > 0
+
     # 2. 长度必须 > 10
     if len(api_key) <= 10:
         return False
-    
+
     # 3. 不能是占位符（前缀）
     if api_key.startswith('your_') or api_key.startswith('your-'):
         return False
-    
+
     # 4. 不能是占位符（后缀）
     if api_key.endswith('_here') or api_key.endswith('-here'):
         return False
-    
+
     # 5. 不能是截断的密钥（包含 '...'）
     if '...' in api_key:
         return False

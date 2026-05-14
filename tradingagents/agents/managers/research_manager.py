@@ -4,6 +4,7 @@ import json
 # 导入统一日志系统
 from tradingagents.utils.logging_init import get_logger
 logger = get_logger("default")
+from tradingagents.utils.llm_content import coerce_llm_content_to_text
 
 
 def create_research_manager(llm, memory):
@@ -83,26 +84,27 @@ def create_research_manager(llm, memory):
 
         # ⏱️ 记录结束时间
         elapsed_time = time.time() - start_time
+        response_text = coerce_llm_content_to_text(getattr(response, "content", response))
 
         # 📊 统计响应信息
-        response_length = len(response.content) if response and hasattr(response, 'content') else 0
+        response_length = len(response_text)
         estimated_output_tokens = int(response_length / 1.8)
 
         logger.info(f"⏱️ [Research Manager] LLM调用耗时: {elapsed_time:.2f}秒")
         logger.info(f"📊 [Research Manager] 响应统计: {response_length} 字符, 估算~{estimated_output_tokens} tokens")
 
         new_investment_debate_state = {
-            "judge_decision": response.content,
+            "judge_decision": response_text,
             "history": investment_debate_state.get("history", ""),
             "bear_history": investment_debate_state.get("bear_history", ""),
             "bull_history": investment_debate_state.get("bull_history", ""),
-            "current_response": response.content,
+            "current_response": response_text,
             "count": investment_debate_state["count"],
         }
 
         return {
             "investment_debate_state": new_investment_debate_state,
-            "investment_plan": response.content,
+            "investment_plan": response_text,
         }
 
     return research_manager_node

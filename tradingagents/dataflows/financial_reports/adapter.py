@@ -1,0 +1,205 @@
+"""Adapter around financial-report-llm-extractor public client API."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import date, datetime
+from pathlib import Path
+from typing import Any
+
+from .config import FinancialReportClientConfig
+
+
+@dataclass(frozen=True)
+class FinancialReportAdapterResult:
+    available: bool
+    company: str
+    market: str
+    period_end: str
+    extraction: Any | None
+    warnings: list[str]
+    errors: list[str]
+
+
+def infer_annual_period_end(reference_date: str | None) -> str:
+    if reference_date:
+        ref = datetime.strptime(reference_date[:10], "%Y-%m-%d").date()
+    else:
+        ref = date.today()
+    report_year = ref.year - 1 if ref.month >= 5 else ref.year - 2
+    return f"{report_year}-12-31"
+
+
+def _load_extractor_client() -> tuple[Any, Any, Any, Any] | None:
+    try:
+        from financial_report_llm_extractor.client import (  # type: ignore[import-not-found]
+            ExtractorConfig,
+            ExtractorError,
+            FinancialReportClient,
+            RefreshPolicy,
+        )
+    except ImportError:
+        return None
+    return ExtractorConfig, ExtractorError, FinancialReportClient, RefreshPolicy
+
+
+def _path_from_pdf_info(pdf_info: dict[str, Any] | None) -> Path | None:
+    if not isinstance(pdf_info, dict):
+        return None
+    for key in ("file_path", "path", "pdf_path", "local_path"):
+        raw = pdf_info.get(key)
+        if raw:
+            path = Path(str(raw))
+            if path.exists():
+                return path
+    return None
+
+
+def _optional_path(raw: str) -> Path | None:
+    return Path(raw) if raw else None
+
+
+class FinancialReportAdapter:
+    def __init__(
+        self,
+        config: FinancialReportClientConfig,
+        report_collector: Any | None = None,
+    ) -> None:
+        self.config = config
+        self.report_collector = report_collector
+
+    def resolve_pdf(self, query: Any) -> Path | None:
+        if self.config.pdf_root:
+            root = Path(self.config.pdf_root)
+            candidates = (
+                root / str(query.market).lower() / str(query.company) / f"{query.period_end}.pdf",
+                root / str(query.market).upper() / str(query.company) / f"{query.period_end}.pdf",
+                root / str(query.company) / f"{query.period_end}.pdf",
+            )
+            for candidate in candidates:
+                if candidate.exists():
+                    return candidate
+
+        if self.report_collector is not None:
+            pdf_info = self.report_collector.fetch_latest_pdf_info(
+                stock_code=str(query.company),
+                market=str(query.market),
+                report_types=("annual",),
+            )
+            return _path_from_pdf_info(pdf_info)
+        return None
+
+    def _refresh_policy(self, refresh_policy_module: Any) -> Any:
+        if self.config.force_refresh:
+            return refresh_policy_module.FORCE_REFRESH
+        if self.config.cache_only:
+            return refresh_policy_module.CACHE_ONLY
+        return refresh_policy_module.CACHE_FIRST
+
+    def get_annual_report_data(
+        self,
+        *,
+        ticker: str,
+        market: str,
+        period_end: str | None,
+        reference_date: str | None = None,
+    ) -> FinancialReportAdapterResult:
+        resolved_period_end = period_end or infer_annual_period_end(reference_date)
+        if not self.config.enabled:
+            return FinancialReportAdapterResult(
+                available=False,
+                company=ticker,
+                market=market,
+                period_end=resolved_period_end,
+                extraction=None,
+                warnings=["FinancialReportClient disabled"],
+                errors=[],
+            )
+
+        loaded = _load_extractor_client()
+        if loaded is None:
+            return FinancialReportAdapterResult(
+                available=False,
+                company=ticker,
+                market=market,
+                period_end=resolved_period_end,
+                extraction=None,
+                warnings=["financial-report-llm-extractor is not installed"],
+                errors=[],
+            )
+
+        ExtractorConfig, ExtractorError, FinancialReportClient, RefreshPolicy = loaded
+        try:
+            include_llm = bool(self.config.include_llm_supplement and self.config.llm_config_path)
+            extractor_config = ExtractorConfig(
+                llm_config_path=_optional_path(self.config.llm_config_path),
+                cache_root=_optional_path(self.config.extractor_cache_root),
+                pdf_resolver=self.resolve_pdf if include_llm else None,
+            )
+            client = FinancialReportClient(config=extractor_config)
+            extraction = client.get_extraction(
+                company=ticker,
+                market=market,
+                period_end=resolved_period_end,
+                include_llm_supplement=include_llm,
+                refresh_policy=self._refresh_policy(RefreshPolicy),
+            )
+            warnings: list[str] = []
+            staleness = getattr(extraction, "staleness", None)
+            if bool(getattr(staleness, "is_missing", False)):
+                warnings.append("annual-report extraction missing")
+            if bool(getattr(staleness, "is_stale", False)):
+                warnings.append("annual-report extraction stale")
+            return FinancialReportAdapterResult(
+                available=not bool(getattr(staleness, "is_missing", False)),
+                company=ticker,
+                market=market,
+                period_end=resolved_period_end,
+                extraction=extraction,
+                warnings=warnings,
+                errors=[],
+            )
+        except ExtractorError as exc:
+            reason = getattr(exc, "reason", "extractor_error")
+            return FinancialReportAdapterResult(
+                available=False,
+                company=ticker,
+                market=market,
+                period_end=resolved_period_end,
+                extraction=None,
+                warnings=[],
+                errors=[f"{reason}: {exc}"],
+            )
+        except Exception as exc:
+            return FinancialReportAdapterResult(
+                available=False,
+                company=ticker,
+                market=market,
+                period_end=resolved_period_end,
+                extraction=None,
+                warnings=[],
+                errors=[f"unexpected_error: {exc}"],
+            )
+
+
+def create_financial_report_adapter(config: FinancialReportClientConfig) -> FinancialReportAdapter:
+    """Create adapter with report-collector wired only as a PDF provider."""
+    if not config.enabled or not (config.include_llm_supplement and config.llm_config_path):
+        return FinancialReportAdapter(config=config)
+
+    report_collector = None
+    try:
+        from tradingagents.services.report_collector_client import ReportCollectorClient
+        from tradingagents.services.report_collector_config import get_report_collector_config
+
+        rc_config = get_report_collector_config()
+        if rc_config.get("enabled"):
+            client = ReportCollectorClient(
+                base_url=rc_config["url"],
+                port=rc_config["port"],
+                timeout=rc_config["timeout"],
+            )
+            report_collector = client if client.is_available() else None
+    except Exception:
+        report_collector = None
+    return FinancialReportAdapter(config=config, report_collector=report_collector)
