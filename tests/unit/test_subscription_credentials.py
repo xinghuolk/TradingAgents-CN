@@ -544,3 +544,44 @@ class TestResolve:
         assert result.refresh_token == "cx-rt-2"
         assert result.source == "codex_file+refreshed"
         assert called["rt"] == "cx-rt-1"
+
+    def test_force_refresh_bypasses_expiry_check(self, monkeypatch, tmp_path):
+        """force_refresh=True must call refresh_claude_code even on a fresh token."""
+        fresh = sc.SubscriptionCredential(
+            access_token="fresh-at",
+            refresh_token="rt-1",
+            expires_at_ms=int(time.time() * 1000) + 3600_000,  # 1h away — not expiring
+            provider="claude_code",
+            source="claude_code_file",
+        )
+        monkeypatch.setattr(sc, "read_claude_code_from_keychain", lambda: None)
+        monkeypatch.setattr(sc, "read_claude_code_from_file", lambda: fresh)
+
+        called = {}
+        def fake_refresh(rt, **_):
+            called["rt"] = rt
+            return ("forced-at", "rt-2", int(time.time() * 1000) + 3600_000)
+        monkeypatch.setattr(sc, "refresh_claude_code", fake_refresh)
+        monkeypatch.setattr(sc, "_claude_code_credentials_path", lambda: tmp_path / "creds.json")
+
+        result = sc.resolve("claude_code", force_refresh=True)
+        assert result.access_token == "forced-at"
+        assert called["rt"] == "rt-1"
+
+    def test_force_refresh_default_is_false(self, monkeypatch):
+        """Default behavior unchanged: fresh token is returned without refresh."""
+        fresh = sc.SubscriptionCredential(
+            access_token="fresh-at",
+            refresh_token="rt-1",
+            expires_at_ms=int(time.time() * 1000) + 3600_000,
+            provider="claude_code",
+            source="claude_code_file",
+        )
+        monkeypatch.setattr(sc, "read_claude_code_from_keychain", lambda: None)
+        monkeypatch.setattr(sc, "read_claude_code_from_file", lambda: fresh)
+        # If refresh is accidentally called, fail
+        monkeypatch.setattr(sc, "refresh_claude_code",
+                            lambda *_, **__: pytest.fail("should not refresh"))
+
+        result = sc.resolve("claude_code")  # default force_refresh=False
+        assert result.access_token == "fresh-at"

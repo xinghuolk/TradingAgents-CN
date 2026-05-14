@@ -332,7 +332,11 @@ def _write_claude_code_credentials(
     path.chmod(0o600)
 
 
-def resolve(provider: Literal["claude_code", "codex"]) -> SubscriptionCredential:
+def resolve(
+    provider: Literal["claude_code", "codex"],
+    *,
+    force_refresh: bool = False,
+) -> SubscriptionCredential:
     """Locate and (if needed) refresh subscription credentials for `provider`.
 
     Lookup order:
@@ -343,6 +347,10 @@ def resolve(provider: Literal["claude_code", "codex"]) -> SubscriptionCredential
     refresh_token is present, refreshes against the upstream endpoint and writes
     the rotated tokens back to disk (Claude Code only; Codex write-back is
     deferred — Codex CLI's auth.json schema is partially private).
+
+    If ``force_refresh=True``, refreshes the token even if it is not yet
+    expiring. Useful when a caller knows the token has been revoked (e.g.
+    received a 401 from upstream).
 
     Raises SubscriptionCredentialError if no credential is found, if the token
     is expired with no refresh_token, or if the refresh call fails.
@@ -355,7 +363,7 @@ def resolve(provider: Literal["claude_code", "codex"]) -> SubscriptionCredential
                 "then retry. Looked in: macOS Keychain ('Claude Code-credentials') "
                 f"and {_claude_code_credentials_path()}."
             )
-        if not is_expiring(cred):
+        if not force_refresh and not is_expiring(cred):
             return cred
         if not cred.refresh_token:
             raise SubscriptionCredentialError(
@@ -389,7 +397,7 @@ def resolve(provider: Literal["claude_code", "codex"]) -> SubscriptionCredential
                 "No Codex credentials found. Run `codex login` first, then retry. "
                 f"Looked in: {_codex_credentials_path()}."
             )
-        if not is_expiring(cred):
+        if not force_refresh and not is_expiring(cred):
             return cred
         if not cred.refresh_token:
             raise SubscriptionCredentialError(
