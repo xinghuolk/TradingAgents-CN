@@ -18,13 +18,12 @@
 - 「订阅授权」主面板（新增 `ConfigManagement` 左菜单项）
 - Anthropic PKCE flow 弹窗与回调消息处理
 - Codex device-code flow modal（含轮询）
-- 首次绑定的合规免责声明 modal
 - LLMConfigDialog 集成：选订阅 provider 时显示绑定状态卡 / 警告 + 「立即授权」按钮
 - Pinia store 统一管理 OAuth 状态与流程触发
-- 后端微调：`consent_acknowledged_at` 字段 + `POST /api/oauth/consent/{provider}` 端点
 
 ### 1.2 范围 out of scope
 
+- **合规免责声明 modal**（本地使用场景暂不需要；未来上线生产前再加，届时补 `consent_acknowledged_at` 字段 + 端点 + 前端 modal）
 - LLMConfig 改为 per-user（架构层面，明确不动；保持系统级 + per-user OAuth 组合）
 - 多语言 i18n（项目中文优先，UI 文案硬编码中文）
 - 浏览器扩展 / desktop app
@@ -46,13 +45,12 @@
 │                                                                │
 │  src/components/oauth/ (新目录)                                │
 │   ├── ClaudeCodePkceDialog.vue       PKCE 弹窗触发 + 监听      │
-│   ├── CodexDeviceCodeDialog.vue      device-code 大码 + 轮询    │
-│   └── OAuthConsentDialog.vue         首次合规弹窗              │
+│   └── CodexDeviceCodeDialog.vue      device-code 大码 + 轮询    │
 │                                                                │
 │  src/stores/oauth.ts (新)            状态 + actions             │
 │  src/api/oauth.ts (新)               REST 包装                  │
 │                                                                │
-│  src/App.vue                         挂载 3 个全局 dialog       │
+│  src/App.vue                         挂载 2 个全局 dialog       │
 │  src/views/Settings/components/                                │
 │    LLMConfigDialog.vue (改)          选订阅 provider 时显示状态 │
 └────────────────────────────────────────────────────────────────┘
@@ -62,15 +60,16 @@
 ┌────────────────────────────────────────────────────────────────┐
 │ Backend (PR-2 已实现 + PR-3 微调)                              │
 ├────────────────────────────────────────────────────────────────┤
-│  GET    /api/oauth/status/{provider}     → bound? + consent?   │
+│  GET    /api/oauth/status/{provider}     → bound? + expiry     │
 │  GET    /api/oauth/authorize/claude_code → authorize_url       │
 │  POST   /api/oauth/authorize/codex       → user_code + uri     │
 │  GET    /api/oauth/callback/claude_code  → HTML + postMessage  │
 │  POST   /api/oauth/poll/codex            → status 状态机       │
 │  POST   /api/oauth/refresh/{provider}    → 强制刷新             │
 │  DELETE /api/oauth/unbind/{provider}     → 删 doc              │
-│  POST   /api/oauth/consent/{provider}    → 记录用户同意 (NEW)  │
 └────────────────────────────────────────────────────────────────┘
+
+PR-3 不新增后端端点（合规 modal 已从 scope 移除）。
 ```
 
 ## 3. 前端模块详设
@@ -89,7 +88,6 @@ export interface OAuthStatus {
   provider: OAuthProvider
   expires_at: string | null      // ISO datetime
   last_refresh_at: string | null
-  consent_acknowledged: boolean   // NEW: 是否已确认合规声明
 }
 
 export interface AuthorizeClaudeCodeResponse {
@@ -128,9 +126,6 @@ export const oauthApi = {
 
   unbind: (provider: OAuthProvider) =>
     request.delete(`/api/oauth/unbind/${provider}`),
-
-  consent: (provider: OAuthProvider) =>
-    request.post(`/api/oauth/consent/${provider}`),
 }
 ```
 
@@ -160,10 +155,6 @@ export const useOAuthStore = defineStore('oauth', {
 
     deviceCodeDialogOpen: false,
     deviceCodeState: null as DeviceCodeState | null,
-
-    consentDialogOpen: false,
-    consentDialogProvider: null as OAuthProvider | null,
-    consentDialogPendingFlow: null as (() => Promise<void>) | null,
   }),
 
   actions: {
@@ -172,19 +163,14 @@ export const useOAuthStore = defineStore('oauth', {
 
     /** Entry point — called from "登录 Claude" button anywhere */
     async startClaudeCodeFlow(): Promise<void> {
-      // 1. Ensure consent acknowledged
-      const status = this.claudeCodeStatus ?? await this.fetchStatus('claude_code')
-      if (!status.consent_acknowledged) {
-        return this.requestConsent('claude_code', () => this.startClaudeCodeFlow())
-      }
-      // 2. Get authorize_url
+      // 1. Get authorize_url
       const resp = await oauthApi.authorizeClaudeCode()
-      // 3. Open popup
+      // 2. Open popup
       const popup = window.open(resp.authorize_url, '_blank', 'width=600,height=800')
       if (!popup) { /* popup blocked */ throw new Error('弹窗被浏览器拦截') }
       this.pkceDialogPopup = popup
       this.pkceDialogOpen = true
-      // 4. Listen for message from popup
+      // 3. Listen for message from popup
       window.addEventListener('message', this._handlePkceMessage)
     },
 
@@ -204,10 +190,6 @@ export const useOAuthStore = defineStore('oauth', {
     },
 
     async startCodexFlow(): Promise<void> {
-      const status = this.codexStatus ?? await this.fetchStatus('codex')
-      if (!status.consent_acknowledged) {
-        return this.requestConsent('codex', () => this.startCodexFlow())
-      }
       const resp = await oauthApi.authorizeCodex()
       this.deviceCodeState = {
         user_code: resp.user_code,
@@ -257,24 +239,6 @@ export const useOAuthStore = defineStore('oauth', {
       }
       this.deviceCodeDialogOpen = false
       this.deviceCodeState = null
-    },
-
-    requestConsent(provider: OAuthProvider, onAccept: () => Promise<void>) {
-      this.consentDialogProvider = provider
-      this.consentDialogPendingFlow = onAccept
-      this.consentDialogOpen = true
-    },
-
-    async acceptConsent() {
-      if (!this.consentDialogProvider || !this.consentDialogPendingFlow) return
-      const provider = this.consentDialogProvider
-      const flow = this.consentDialogPendingFlow
-      await oauthApi.consent(provider)
-      this.consentDialogOpen = false
-      this.consentDialogProvider = null
-      this.consentDialogPendingFlow = null
-      await this.fetchStatus(provider)        // refresh status with consent=true
-      await flow()                            // re-trigger original OAuth flow
     },
 
     async refresh(provider: OAuthProvider) {
@@ -338,29 +302,7 @@ export const useOAuthStore = defineStore('oauth', {
 
 **注意**：轮询逻辑在 store 里，Dialog 只显示状态。Dialog 关闭时 store 自动清 timer。
 
-### 3.6 `components/oauth/OAuthConsentDialog.vue` (新)
-
-挂载在 `App.vue`，由 `store.consentDialogOpen` 控制。
-
-**内容**：
-- Element Plus `el-dialog`，宽度 600px
-- 标题：「订阅授权合规提示」（⚠️ 黄色图标）
-- 正文：
-  ```
-  您正在使用您的 Anthropic / ChatGPT 个人订阅授权 TradingAgents-CN 调用大模型。
-
-  请注意：
-  • Anthropic / OpenAI 的订阅条款限制程序化批量调用
-  • 本工具仅用于个人学习与研究，请合理使用避免触发服务方风控
-  • 建议每日分析量保持在合理范围内
-
-  详见：[订阅条款链接 - 占位]
-  ```
-- `el-checkbox`：「☐ 我已了解并同意上述风险」
-- 「取消」按钮 → 关闭 dialog，不发任何请求，不继续 OAuth flow
-- 「继续授权」按钮 → 仅 checkbox 勾选时可点 → 调 `store.acceptConsent()` → 后端记录 → 继续原 flow
-
-### 3.7 `App.vue` 改动
+### 3.6 `App.vue` 改动
 
 在 root template 加：
 
@@ -369,13 +311,12 @@ export const useOAuthStore = defineStore('oauth', {
   <!-- existing app structure -->
   <ClaudeCodePkceDialog />
   <CodexDeviceCodeDialog />
-  <OAuthConsentDialog />
 </template>
 ```
 
 挂载位置：放在 `el-config-provider` 内部、router-view 同级。
 
-### 3.8 `views/Settings/components/LLMConfigDialog.vue` 改动
+### 3.7 `views/Settings/components/LLMConfigDialog.vue` 改动
 
 定位现有 `LLMConfigDialog.vue` 中 provider 选择 + API Key 输入区域。改动：
 
@@ -390,87 +331,7 @@ export const useOAuthStore = defineStore('oauth', {
 
 ## 4. 后端微调
 
-### 4.1 数据模型扩展
-
-`app/models/oauth.py`：
-
-```python
-class OAuthCredentialDoc(BaseModel):
-    # ... existing fields ...
-    consent_acknowledged_at: Optional[datetime] = None  # NEW
-```
-
-`OAuthStatusResponse`：
-
-```python
-class OAuthStatusResponse(BaseModel):
-    bound: bool
-    provider: OAuthProvider
-    expires_at: Optional[datetime] = None
-    last_refresh_at: Optional[datetime] = None
-    consent_acknowledged: bool = False    # NEW
-```
-
-### 4.2 服务层新方法
-
-`app/services/oauth_service.py`：
-
-```python
-async def mark_consent(
-    collection: AsyncIOMotorCollection,
-    user_id: str,
-    provider: OAuthProvider,
-) -> None:
-    """Record that the user has acknowledged the compliance notice.
-
-    If the user has no binding yet, insert a stub doc with only the consent
-    timestamp; first real bind will fill in the rest via store_credentials.
-    """
-    now = datetime.now(timezone.utc)
-    await collection.update_one(
-        {"user_id": user_id, "provider": provider},
-        {"$set": {"consent_acknowledged_at": now}},
-        upsert=True,
-    )
-```
-
-### 4.3 新端点
-
-`app/routers/oauth.py`：
-
-```python
-@router.post("/consent/{provider}", status_code=204)
-async def consent_endpoint(
-    provider: OAuthProvider,
-    user: dict = Depends(get_current_user),
-):
-    """Record user's acknowledgement of the compliance notice."""
-    from app.services import oauth_service
-    await oauth_service.mark_consent(
-        get_credentials_collection(),
-        user["id"],
-        provider,
-    )
-```
-
-### 4.4 状态端点扩展
-
-`status_endpoint` 改返回：
-
-```python
-return OAuthStatusResponse(
-    bound=doc is not None and doc.get("ciphertext") is not None,
-    provider=provider,
-    expires_at=doc.get("access_token_expires_at") if doc else None,
-    last_refresh_at=doc.get("last_refresh_at") if doc else None,
-    consent_acknowledged=doc.get("consent_acknowledged_at") is not None
-                        if doc else False,
-)
-```
-
-**注意**：`bound` 判定改为「有 ciphertext」，因为现在可能存在「只有 consent 没有 token」的中间状态 doc（用户点了同意但没完成 OAuth flow）。
-
-**对 PR-2 既有测试的影响**：`tests/unit/test_oauth_router.py:TestStatusEndpoint::test_bound_provider_returns_expiry` 之前假设 `doc != None ⇒ bound=True`；现在需要 fixture 的 doc 必须有 `ciphertext` 字段才返回 `bound=True`。fixture 已经满足这点，但加一个新测试 `test_consent_only_doc_returns_bound_false` 显式验证新增的中间状态。
+**无后端改动**。PR-2 的 7 个端点已完全覆盖 PR-3 所需。合规 modal 推迟到未来生产化时再加（届时补 `consent_acknowledged_at` 字段、`POST /api/oauth/consent/{provider}` 端点、以及状态端点的 `bound = has ciphertext` 判定）。
 
 ## 5. 关键交互流程
 
@@ -479,18 +340,6 @@ return OAuthStatusResponse(
 ```
 [用户在订阅授权 tab 或 LLMConfigDialog 点击「登录 Claude」]
   → store.startClaudeCodeFlow()
-  → store.fetchStatus('claude_code') 检查 consent
-  
-[consent_acknowledged=false 的分支]
-  → store.requestConsent('claude_code', () => startClaudeCodeFlow())
-  → OAuthConsentDialog 弹出
-  → 用户勾选 + 点「继续授权」
-  → store.acceptConsent()
-    → POST /api/oauth/consent/claude_code
-    → 刷新 status
-    → 重新触发 startClaudeCodeFlow()
-
-[consent_acknowledged=true 的分支]
   → GET /api/oauth/authorize/claude_code → authorize_url + state
   → window.open(authorize_url, 'oauth_popup', '600x800')
   → ClaudeCodePkceDialog 显示「等待中...」
@@ -513,9 +362,6 @@ return OAuthStatusResponse(
 ```
 [点击「登录 ChatGPT」]
   → store.startCodexFlow()
-  → consent 检查同上（如未确认则先弹合规 modal）
-
-[consent OK]
   → POST /api/oauth/authorize/codex → user_code + verification_uri + interval
   → store.deviceCodeState = {...}, deviceCodeDialogOpen = true
   → CodexDeviceCodeDialog 显示大码 + 跳转链接 + 等待提示
@@ -569,29 +415,23 @@ return OAuthStatusResponse(
 | Codex 用户拒绝 | 「您拒绝了授权，已取消」+ 关闭 dialog |
 | Codex polling 网络中断 | 自动重试一次；连续失败 → 关闭 dialog + 提示 |
 | Cloudflare 403（理论可能） | toast「服务端临时不可用，请稍后重试」+ 记录到 console |
-| Consent 端点失败 | toast 错误，不继续 OAuth flow（避免无 consent 强行绑定） |
 
 ## 7. 测试策略
 
 ### 7.1 单元测试
 
 后端（pytest）：
-- `tests/unit/test_oauth_router.py`：扩展 — 加 `POST /api/oauth/consent/{provider}` 测试
-  - 调用 → upsert + 204
-  - 未绑定状态下调用 → consent 字段单独写入（部分 doc）
-- `tests/unit/test_oauth_service_resolve.py`：扩展 — 加 `mark_consent` 测试
-- `tests/unit/test_oauth_models.py`：扩展 — 验 `OAuthStatusResponse.consent_acknowledged` 字段
+- PR-3 不动后端，PR-2 既有测试维持不变；无新增后端测试。
 
 前端（Vitest，如果项目使用）：
-- 项目未发现 vitest/jest 配置；前端测试由人工 + smoke 完成
+- 项目未发现 vitest/jest 配置；前端测试由人工 + smoke 完成。
 
 ### 7.2 手动端到端
 
 新增 `scripts/smoke_test_pr3_ui.md`（不是脚本，是 checklist）：
 - [ ] 全新用户首次进入 `订阅授权` tab → 两张卡都「未绑定」
-- [ ] 点「登录 Claude」→ 弹合规 modal → 勾选 + 继续 → popup 打开 → claude.ai 授权 → popup 关闭 → 卡片变「已绑定」
+- [ ] 点「登录 Claude」→ popup 打开 → claude.ai 授权 → popup 关闭 → 卡片变「已绑定」
 - [ ] 点「登录 ChatGPT」→ 大码 modal → 浏览器输 code → 卡片变「已绑定」
-- [ ] 解绑后再绑：不应再弹合规 modal（已 acknowledged）
 - [ ] 手动刷新按钮：`expires_at` 与 `last_refresh_at` 都更新
 - [ ] 解绑：二次确认后卡片变「未绑定」，再刷新页面状态正确
 - [ ] LLMConfigDialog 选 codex：admin 未绑时显示警告 + 「立即授权」按钮，点击触发 OAuth flow；admin 已绑时显示绿色状态
@@ -599,13 +439,12 @@ return OAuthStatusResponse(
 
 ## 8. 工作量与拆分
 
-**预估 ~3 人日**：
+**预估 ~2.5 人日**：
 
 | 部分 | 工作量 |
 |------|--------|
-| 后端微调（consent 字段 + endpoint + 测试） | ~0.5 人日 |
 | API + Pinia store | ~0.5 人日 |
-| 三个 dialog 组件 | ~1 人日 |
+| 两个 dialog 组件（PKCE + device-code） | ~0.75 人日 |
 | SubscriptionAuthManagement.vue 主面板 | ~0.5 人日 |
 | LLMConfigDialog 集成 | ~0.25 人日 |
 | ConfigManagement 菜单 + App.vue 挂载 | ~0.1 人日 |
@@ -621,21 +460,18 @@ return OAuthStatusResponse(
 | `postMessage` 跨域 | 后端 callback HTML 已用 `'*'` target；前端验证 `event.origin === window.location.origin` 或 `event.source === this.popup` |
 | Codex 轮询期间用户关闭对话框 | `cancelCodexFlow` 显式清 timer；组件 `unmounted` 钩子兜底 |
 | Token 自然过期 UI 不更新 | 主面板 30s 间隔拉 status；卡片显示「即将过期」徽章 |
-| 合规未勾选但被绕过 | store action 内置检查；后端 status 端点返回 `consent_acknowledged`，前端不信任本地状态 |
 | 弹窗被关闭但 store 状态没清 | 在 `unmounted` 时调 `store.pkceDialogOpen = false`；30s 自检 popup 存活 |
 | 多 tab 同步 | 不解决（首版 YAGNI）；用户在 tab1 绑定后 tab2 刷新页面可见 |
 
 ## 10. 待定问题
 
-1. **合规链接占位符**：合规 modal 里的「订阅条款链接」具体指向哪里？需要产品确认（Anthropic ToS + OpenAI ToS 的中文链接）。**默认决定**：暂用占位 `#`，PR-3 之后由产品补全。
+1. **取消 PKCE flow 时关闭 popup**：popup 是用户浏览器的窗口，能否被父窗口主动 close()？取决于浏览器是否允许（同源开的 popup 一般可以）。**默认决定**：尝试 `popup.close()`，失败也不影响主流程，仅记 console。
 
-2. **取消 PKCE flow 时关闭 popup**：popup 是用户浏览器的窗口，能否被父窗口主动 close()？取决于浏览器是否允许（同源开的 popup 一般可以）。**默认决定**：尝试 `popup.close()`，失败也不影响主流程，仅记 console。
-
-3. **状态徽章「即将过期」阈值**：默认 10 分钟内显示。**默认决定**：硬编码 10min，留 TODO 注释。
+2. **状态徽章「即将过期」阈值**：默认 10 分钟内显示。**默认决定**：硬编码 10min，留 TODO 注释。
 
 ## 11. 参考
 
-- 后端 API：`app/routers/oauth.py`（PR-2 已实现的 7 个端点 + PR-3 新加的 consent）
+- 后端 API：`app/routers/oauth.py`（PR-2 已实现的 7 个端点，PR-3 不新增）
 - 设计文档：`docs/design/llm-subscription-auth-design.md` § 6 PR-3 节
 - UI 组件库：Element Plus 2.4+
 - 状态管理：Pinia 2.1+
