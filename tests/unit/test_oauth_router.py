@@ -81,3 +81,54 @@ class TestUnbindEndpoint:
         fake_coll.delete_one.assert_called_once_with(
             {"user_id": "test-user-1", "provider": "codex"}
         )
+
+
+class TestPkceAuthorizeEndpoint:
+    def test_returns_authorize_url(self, app_client, monkeypatch):
+        async def fake_start(redis_client, *, user_id, redirect_uri):
+            assert user_id == "test-user-1"
+            assert "localhost" in redirect_uri or "testserver" in redirect_uri
+            return {"authorize_url": "https://claude.ai/oauth/authorize?state=abc",
+                    "state": "abc"}
+        monkeypatch.setattr("app.services.oauth_service.start_pkce_flow", fake_start)
+        monkeypatch.setattr(oauth_router, "get_redis_client", lambda: AsyncMock())
+
+        r = app_client.get("/api/oauth/authorize/claude_code")
+        assert r.status_code == 200
+        body = r.json()
+        assert body["authorize_url"].startswith("https://claude.ai/")
+        assert body["state"] == "abc"
+
+
+class TestPkceCallbackEndpoint:
+    def test_callback_completes_flow(self, app_client, monkeypatch):
+        from app.services import oauth_service
+        async def fake_complete(*, redis_client, collection, state, code,
+                                redirect_uri, http_client):
+            assert state == "valid-state"
+            assert code == "auth-code"
+            return "test-user-1"
+        monkeypatch.setattr(oauth_service, "complete_pkce_flow", fake_complete)
+        monkeypatch.setattr(oauth_router, "get_redis_client", lambda: AsyncMock())
+        monkeypatch.setattr(oauth_router, "get_http_client", lambda: AsyncMock())
+        monkeypatch.setattr(oauth_router, "get_credentials_collection", lambda: AsyncMock())
+
+        r = app_client.get(
+            "/api/oauth/callback/claude_code"
+            "?state=valid-state&code=auth-code",
+            follow_redirects=False,
+        )
+        assert r.status_code == 200
+        assert "text/html" in r.headers["content-type"]
+        # Response body must include the postMessage JS
+        assert "postMessage" in r.text
+        assert "oauth-success" in r.text
+
+    def test_callback_with_error_returns_error_html(self, app_client, monkeypatch):
+        # User denied authorization
+        r = app_client.get(
+            "/api/oauth/callback/claude_code?error=access_denied",
+            follow_redirects=False,
+        )
+        assert r.status_code == 200
+        assert "access_denied" in r.text or "error" in r.text.lower()

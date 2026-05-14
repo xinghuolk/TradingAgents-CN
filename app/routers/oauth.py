@@ -70,3 +70,80 @@ async def unbind_endpoint(
     from app.services import oauth_service
     collection = get_credentials_collection()
     await oauth_service.delete_credentials(collection, user["_id"], provider)
+
+
+from app.models.oauth import AuthorizeClaudeCodeResponse  # noqa: E402
+
+
+def _derive_redirect_uri(request: Request, provider: str) -> str:
+    """Construct https://<host>/api/oauth/callback/<provider> from request headers."""
+    scheme = request.headers.get("x-forwarded-proto", request.url.scheme)
+    host = request.headers.get("x-forwarded-host", request.headers.get("host", "localhost"))
+    return f"{scheme}://{host}/api/oauth/callback/{provider}"
+
+
+@router.get("/authorize/claude_code", response_model=AuthorizeClaudeCodeResponse)
+async def authorize_claude_code(
+    request: Request,
+    user: dict = Depends(get_current_user),
+):
+    """Start the Anthropic PKCE flow."""
+    from app.services import oauth_service
+    redirect_uri = _derive_redirect_uri(request, "claude_code")
+    redis_client = get_redis_client()
+    result = await oauth_service.start_pkce_flow(
+        redis_client=redis_client,
+        user_id=user["_id"],
+        redirect_uri=redirect_uri,
+    )
+    return AuthorizeClaudeCodeResponse(**result)
+
+
+_CALLBACK_HTML_SUCCESS = """<!doctype html><html><body>
+<h2>Authorization complete</h2>
+<p>You can close this window.</p>
+<script>
+  if (window.opener) {
+    window.opener.postMessage({type: "oauth-success", provider: "claude_code"}, "*");
+    setTimeout(() => window.close(), 1000);
+  }
+</script>
+</body></html>"""
+
+_CALLBACK_HTML_ERROR = """<!doctype html><html><body>
+<h2>Authorization failed</h2>
+<p>Error: %s</p>
+<p>You can close this window.</p>
+<script>
+  if (window.opener) {
+    window.opener.postMessage({type: "oauth-error", provider: "claude_code", error: "%s"}, "*");
+  }
+</script>
+</body></html>"""
+
+
+@router.get("/callback/claude_code", response_class=HTMLResponse)
+async def callback_claude_code(
+    request: Request,
+    state: str | None = None,
+    code: str | None = None,
+    error: str | None = None,
+):
+    """PKCE callback. Note: no JWT requirement — auth flow's own state is the bearer."""
+    if error or not state or not code:
+        err = error or "missing_parameters"
+        return HTMLResponse(_CALLBACK_HTML_ERROR % (err, err))
+    from app.services import oauth_service
+    redirect_uri = _derive_redirect_uri(request, "claude_code")
+    try:
+        await oauth_service.complete_pkce_flow(
+            redis_client=get_redis_client(),
+            collection=get_credentials_collection(),
+            state=state,
+            code=code,
+            redirect_uri=redirect_uri,
+            http_client=get_http_client(),
+        )
+    except OAuthCredentialError as exc:
+        return HTMLResponse(_CALLBACK_HTML_ERROR % (str(exc), str(exc)))
+    return HTMLResponse(_CALLBACK_HTML_SUCCESS)
