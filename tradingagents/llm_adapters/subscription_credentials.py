@@ -298,3 +298,94 @@ def refresh_codex(refresh_token: str, *, timeout: float = 10.0) -> Tuple[str, st
         expires_in = 3600
     expires_at_ms = int(time.time() * 1000) + expires_in * 1000
     return new_access, new_refresh, expires_at_ms
+
+
+def _write_claude_code_credentials(
+    access_token: str, refresh_token: str, expires_at_ms: int
+) -> None:
+    """Persist refreshed credentials back to ~/.claude/.credentials.json.
+
+    Claude Code's refresh tokens rotate on each use, so failing to write back
+    will permanently lose access after the first refresh. We preserve any other
+    keys already in the file.
+    """
+    path = _claude_code_credentials_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    existing: dict = {}
+    if path.exists():
+        try:
+            existing = json.loads(path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            existing = {}
+    oauth = existing.get("claudeAiOauth")
+    if not isinstance(oauth, dict):
+        oauth = {}
+    oauth.update({
+        "accessToken": access_token,
+        "refreshToken": refresh_token,
+        "expiresAt": expires_at_ms,
+    })
+    existing["claudeAiOauth"] = oauth
+    path.write_text(json.dumps(existing, indent=2), encoding="utf-8")
+
+
+def resolve(provider: Literal["claude_code", "codex"]) -> SubscriptionCredential:
+    """Locate and (if needed) refresh subscription credentials for `provider`.
+
+    Lookup order:
+      claude_code: macOS Keychain → ~/.claude/.credentials.json
+      codex:       ~/.codex/auth.json
+
+    If the located credential is expiring (within the default 60s skew) and a
+    refresh_token is present, refreshes against the upstream endpoint and writes
+    the rotated tokens back to disk (Claude Code only; Codex write-back is
+    deferred — Codex CLI's auth.json schema is partially private).
+
+    Raises SubscriptionCredentialError if no credential is found, if the token
+    is expired with no refresh_token, or if the refresh call fails.
+    """
+    if provider == "claude_code":
+        cred = read_claude_code_from_keychain() or read_claude_code_from_file()
+        if cred is None:
+            raise SubscriptionCredentialError(
+                "No Claude Code credentials found. Run `claude login` first, "
+                "then retry. Looked in: macOS Keychain ('Claude Code-credentials') "
+                f"and {_claude_code_credentials_path()}."
+            )
+        if not is_expiring(cred):
+            return cred
+        if not cred.refresh_token:
+            raise SubscriptionCredentialError(
+                "Claude Code access token has expired and no refresh_token is "
+                "available. Run `claude login` again."
+            )
+        new_at, new_rt, new_exp = refresh_claude_code(cred.refresh_token)
+        _write_claude_code_credentials(new_at, new_rt, new_exp)
+        return SubscriptionCredential(
+            access_token=new_at, refresh_token=new_rt, expires_at_ms=new_exp,
+            provider="claude_code", source=cred.source + "+refreshed",
+        )
+    if provider == "codex":
+        cred = read_codex_from_file()
+        if cred is None:
+            raise SubscriptionCredentialError(
+                "No Codex credentials found. Run `codex login` first, then retry. "
+                f"Looked in: {_codex_credentials_path()}."
+            )
+        if not is_expiring(cred):
+            return cred
+        if not cred.refresh_token:
+            raise SubscriptionCredentialError(
+                "Codex access token has expired and no refresh_token is available. "
+                "Run `codex login` again."
+            )
+        new_at, new_rt, new_exp = refresh_codex(cred.refresh_token)
+        # NOTE: Codex auth.json write-back is intentionally deferred — the file
+        # has other fields managed by Codex CLI and we don't yet have a safe
+        # schema-preserving writer. If the test invocation rate is high enough
+        # to hit token expiry, the user should re-run `codex login`.
+        return SubscriptionCredential(
+            access_token=new_at, refresh_token=new_rt, expires_at_ms=new_exp,
+            provider="codex", source=cred.source + "+refreshed",
+        )
+    raise ValueError(f"Unknown subscription provider: {provider!r}")

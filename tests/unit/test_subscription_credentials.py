@@ -403,3 +403,81 @@ class TestRefreshCodex:
         monkeypatch.setattr(sc.urllib.request, "urlopen", fake_urlopen)
         with pytest.raises(sc.SubscriptionCredentialError):
             sc.refresh_codex("any")
+
+
+class TestResolve:
+    def test_no_credentials_raises(self, monkeypatch):
+        monkeypatch.setattr(sc, "read_claude_code_from_keychain", lambda: None)
+        monkeypatch.setattr(sc, "read_claude_code_from_file", lambda: None)
+        with pytest.raises(sc.SubscriptionCredentialError) as exc:
+            sc.resolve("claude_code")
+        assert "claude login" in str(exc.value).lower()
+
+    def test_keychain_takes_precedence(self, monkeypatch):
+        base = _make_cred(int(time.time() * 1000) + 3600_000)
+        kc_cred = dataclasses.replace(base, source="macos_keychain")
+        file_cred = dataclasses.replace(base, source="claude_code_file")
+        monkeypatch.setattr(sc, "read_claude_code_from_keychain", lambda: kc_cred)
+        monkeypatch.setattr(sc, "read_claude_code_from_file", lambda: file_cred)
+        result = sc.resolve("claude_code")
+        assert result.source == "macos_keychain"
+
+    def test_falls_back_to_file_when_keychain_empty(self, monkeypatch):
+        file_cred = _make_cred(int(time.time() * 1000) + 3600_000)
+        monkeypatch.setattr(sc, "read_claude_code_from_keychain", lambda: None)
+        monkeypatch.setattr(sc, "read_claude_code_from_file", lambda: file_cred)
+        result = sc.resolve("claude_code")
+        assert result is file_cred
+
+    def test_refreshes_when_expiring(self, monkeypatch, tmp_path):
+        expiring = sc.SubscriptionCredential(
+            access_token="stale-at",
+            refresh_token="rt-1",
+            expires_at_ms=int(time.time() * 1000) + 10_000,  # expires in 10s, within 60s skew
+            provider="claude_code",
+            source="claude_code_file",
+        )
+        monkeypatch.setattr(sc, "read_claude_code_from_keychain", lambda: None)
+        monkeypatch.setattr(sc, "read_claude_code_from_file", lambda: expiring)
+
+        called = {}
+        def fake_refresh(rt, **_):
+            called["rt"] = rt
+            return ("fresh-at", "rt-2", int(time.time() * 1000) + 3600_000)
+        monkeypatch.setattr(sc, "refresh_claude_code", fake_refresh)
+        # Persist write target to a tmp file
+        monkeypatch.setattr(sc, "_claude_code_credentials_path", lambda: tmp_path / "creds.json")
+
+        result = sc.resolve("claude_code")
+        assert result.access_token == "fresh-at"
+        assert result.refresh_token == "rt-2"
+        assert called["rt"] == "rt-1"
+        # Verify write-back happened with the rotated tokens
+        written = json.loads((tmp_path / "creds.json").read_text())
+        assert written["claudeAiOauth"]["accessToken"] == "fresh-at"
+        assert written["claudeAiOauth"]["refreshToken"] == "rt-2"
+
+    def test_no_refresh_token_and_expiring_raises(self, monkeypatch):
+        expiring_no_rt = sc.SubscriptionCredential(
+            access_token="x", refresh_token=None,
+            expires_at_ms=1, provider="claude_code", source="test",
+        )
+        monkeypatch.setattr(sc, "read_claude_code_from_keychain", lambda: None)
+        monkeypatch.setattr(sc, "read_claude_code_from_file", lambda: expiring_no_rt)
+        with pytest.raises(sc.SubscriptionCredentialError) as exc:
+            sc.resolve("claude_code")
+        assert "expired" in str(exc.value).lower() or "refresh" in str(exc.value).lower()
+
+    def test_unknown_provider_raises(self):
+        with pytest.raises(ValueError):
+            sc.resolve("nonsense")  # type: ignore[arg-type]
+
+    def test_codex_path(self, monkeypatch):
+        fresh = sc.SubscriptionCredential(
+            access_token="cx-at", refresh_token="cx-rt",
+            expires_at_ms=int(time.time() * 1000) + 3600_000,
+            provider="codex", source="codex_file",
+        )
+        monkeypatch.setattr(sc, "read_codex_from_file", lambda: fresh)
+        result = sc.resolve("codex")
+        assert result is fresh
