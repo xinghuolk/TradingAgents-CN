@@ -31,6 +31,11 @@ _ANTHROPIC_TOKEN_URL = "https://platform.claude.com/v1/oauth/token"
 _ANTHROPIC_SCOPES = "org:create_api_key user:profile user:inference"
 _PKCE_TTL_SECONDS = 600
 
+# --- Codex / OpenAI device-code OAuth constants ---
+_CODEX_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
+_CODEX_DEVICE_CODE_URL = "https://auth.openai.com/oauth/device/code"
+_CODEX_TOKEN_URL = "https://auth.openai.com/oauth/token"
+
 
 def _b64url(data: bytes) -> str:
     return base64.urlsafe_b64encode(data).rstrip(b"=").decode("ascii")
@@ -254,3 +259,44 @@ async def complete_pkce_flow(
     )
     await redis_client.delete(redis_key)
     return user_id
+
+
+async def start_device_code_flow(
+    *,
+    redis_client,
+    user_id: str,
+    http_client,
+) -> dict:
+    """Begin Codex device-code flow. Returns user-facing code + URL."""
+    resp = await http_client.post(
+        _CODEX_DEVICE_CODE_URL,
+        data={
+            "client_id": _CODEX_CLIENT_ID,
+            "scope": "openid profile email",
+        },
+        headers={
+            "Content-Type": "application/x-www-form-urlencoded",
+            "User-Agent": "TradingAgents-CN/1.0 (oauth-device)",
+        },
+    )
+    if resp.status_code != 200:
+        raise OAuthCredentialError(
+            f"Codex device-code request failed: HTTP {resp.status_code}"
+        )
+    payload = resp.json()
+    device_code = payload["device_code"]
+    expires_in = int(payload.get("expires_in") or 600)
+    interval = int(payload.get("interval") or 5)
+    redis_key = f"oauth:device:{user_id}:codex"
+    redis_value = json.dumps({
+        "device_code": device_code,
+        "interval": interval,
+        "expires_at": (datetime.now(timezone.utc) + timedelta(seconds=expires_in)).isoformat(),
+    })
+    await redis_client.setex(redis_key, expires_in, redis_value)
+    return {
+        "user_code": payload["user_code"],
+        "verification_uri": payload.get("verification_uri_complete") or payload.get("verification_uri"),
+        "expires_in": expires_in,
+        "interval": interval,
+    }
