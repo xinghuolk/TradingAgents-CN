@@ -315,15 +315,27 @@ class ConfigurationError(Exception):
 def validate_startup_config() -> ValidationResult:
     """
     验证启动配置（便捷函数）
-    
+
     Returns:
         ValidationResult: 验证结果
-    
+
     Raises:
         ConfigurationError: 如果验证失败
     """
     validator = StartupValidator()
     result = validator.validate()
     validator.raise_if_failed()
+
+    # OAuth encryption key validation (PR-2)
+    # We can't query MongoDB at startup_validator time (database may not be
+    # initialized yet); pass has_existing_credentials=False so missing key
+    # is only a warning. If a misconfigured server has tokens in the DB,
+    # the first oauth_service call will fail loudly via OAuthCryptoError.
+    try:
+        from app.services.oauth_crypto import validate_encryption_key_at_startup
+        validate_encryption_key_at_startup(has_existing_credentials=False)
+    except Exception as exc:
+        raise ConfigurationError(f"OAuth encryption key invalid: {exc}") from exc
+
     return result
 
