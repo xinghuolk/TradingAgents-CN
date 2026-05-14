@@ -848,7 +848,87 @@ class Toolkit:
             if not end_date:
                 end_date = curr_date
 
+            def _try_financial_report_client_section() -> str:
+                try:
+                    from types import SimpleNamespace
+
+                    from tradingagents.dataflows.financial_reports import (
+                        FinancialReportPolicy,
+                        create_financial_report_adapter,
+                        format_annual_report_section,
+                        get_financial_report_client_config,
+                    )
+
+                    frc_config = get_financial_report_client_config()
+                    if not frc_config.enabled:
+                        return ""
+
+                    ticker_text = str(ticker).upper()
+                    ticker_digits = "".join(ch for ch in ticker_text if ch.isdigit())
+                    if is_hk or ticker_text.endswith(".HK"):
+                        normalized_market = "HK"
+                        normalized_ticker = ticker_text.replace(".HK", "").zfill(5)
+                    elif is_china or ticker_text.endswith((".SH", ".SZ")):
+                        normalized_market = "CN"
+                        normalized_ticker = ticker_text.split(".")[0]
+                    elif ticker_digits and len(ticker_digits) == 6:
+                        normalized_market = "CN"
+                        normalized_ticker = ticker_digits
+                    else:
+                        return ""
+
+                    def _one_line(value) -> str:
+                        return " ".join(str("" if value is None else value).split())
+
+                    adapter = create_financial_report_adapter(frc_config)
+                    result = adapter.get_annual_report_data(
+                        ticker=normalized_ticker,
+                        market=normalized_market,
+                        period_end=None,
+                        reference_date=curr_date or end_date,
+                    )
+                    if result.extraction is None:
+                        caveats = result.warnings + result.errors
+                        if not caveats:
+                            return ""
+                        return "## 年报权威数据（FinancialReportClient）\n" + "\n".join(
+                            f"- caveat: {_one_line(item)}" for item in caveats
+                        )
+
+                    policy = FinancialReportPolicy(allow_llm_models=frc_config.allow_llm_models)
+                    caveats = []
+                    display_fields = {}
+                    fields = getattr(result.extraction, "fields", {})
+                    if isinstance(fields, dict):
+                        for field_id, field in fields.items():
+                            decision = policy.decide(field=field, result=result.extraction)
+                            if decision.caveat:
+                                caveats.append(decision.caveat)
+                            if decision.can_display:
+                                display_fields[field_id] = field
+                    caveats.extend(result.warnings)
+                    caveats.extend(result.errors)
+                    display_extraction = SimpleNamespace(
+                        company=getattr(result.extraction, "company", normalized_ticker),
+                        market=getattr(result.extraction, "market", normalized_market),
+                        period_end=getattr(result.extraction, "period_end", None),
+                        catalog_version=getattr(result.extraction, "catalog_version", None),
+                        staleness=getattr(result.extraction, "staleness", None),
+                        fields=display_fields,
+                    )
+                    return format_annual_report_section(
+                        display_extraction,
+                        caveats,
+                        max_fields=12,
+                    )
+                except Exception as exc:
+                    logger.debug(f"[FinancialReportClient] fundamentals section unavailable: {exc}")
+                    return ""
+
             result_data = []
+            financial_report_section = _try_financial_report_client_section()
+            if financial_report_section:
+                result_data.append(financial_report_section)
 
             if is_china:
                 # 中国A股：基本面分析优化策略 - 只获取必要的当前价格和基本面数据
