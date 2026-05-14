@@ -60,6 +60,27 @@ def create_llm_by_provider(provider: str, model: str, backend_url: str, temperat
     logger.info(f"🔧 [创建LLM] provider={provider}, model={model}, url={backend_url}")
     logger.info(f"🔑 [API Key] 来源: {'数据库配置' if api_key else '环境变量'}")
 
+    # === 订阅式鉴权分支（Claude Code / Codex） ===
+    # 走这两个分支时 api_key/backend_url 被忽略，鉴权信息由 subscription_credentials 模块
+    # 从本机 Claude Code / Codex CLI 凭据中读取并自动刷新。
+    if provider.lower() == "claude_code":
+        from tradingagents.llm_adapters.claude_code_adapter import ChatClaudeCodeOAuth
+        return ChatClaudeCodeOAuth(
+            model=model,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            timeout=timeout,
+        )
+
+    if provider.lower() == "codex":
+        from tradingagents.llm_adapters.codex_adapter import ChatCodexOAuth
+        return ChatCodexOAuth(
+            model=model,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            timeout=timeout,
+        )
+
     if provider.lower() == "google":
         # 优先使用传入的 API Key，否则从环境变量读取
         google_api_key = api_key or os.getenv('GOOGLE_API_KEY')
