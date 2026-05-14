@@ -561,33 +561,35 @@ if config["llm_provider"] in ("claude_code", "codex"):
 
 ---
 
-### PR-3：前端 Web UI ⏸ **待开始**
+### PR-3：前端 Web UI ✅ **已完成**
 
-**计划范围**：
-- 大模型厂家管理页新增「订阅模式」分组（Claude Code / Codex 两张卡片）
-- OAuth 流程触发组件：
-  - Claude Code：「登录 Claude」按钮 → 弹窗调 `GET /api/oauth/authorize/claude_code` → 跳转 → 回调后 `postMessage` 关闭弹窗
-  - Codex：「登录 ChatGPT」按钮 → 调 `POST /api/oauth/authorize/codex` → 显示 user_code + 跳转链接 → 轮询 `POST /api/oauth/poll/codex` 直到 bound
-- 绑定状态卡片：调 `GET /api/oauth/status/{provider}` 显示有效期、上次刷新时间
-- 手动刷新按钮：调 `POST /api/oauth/refresh/{provider}`
-- 解绑按钮：调 `DELETE /api/oauth/unbind/{provider}`
-- 首次绑定弹合规免责声明（订阅条款 vs 程序化批量调用风险）
-- 大模型选择页让订阅 provider 像普通 provider 一样可选
+**合并状态**：PR #2 已合并到 `main`（merge commit `b6eb87a`，2026-05-14），分支 `feat/pr3-oauth-frontend` 已删除。13 commits，+3218/-11，13 文件。
 
-**已为 PR-3 准备好的后端 API**（PR-2 已稳定）：
-```
-GET    /api/oauth/status/{provider}           当前用户绑定状态
-GET    /api/oauth/authorize/claude_code       启动 PKCE，返回 authorize_url + state
-POST   /api/oauth/authorize/codex             启动 device-code，返回 user_code + verification_uri + interval
-GET    /api/oauth/callback/claude_code        PKCE 回调（无 JWT，state 即身份）
-POST   /api/oauth/poll/codex                  轮询 device-code 状态
-POST   /api/oauth/refresh/{provider}          手动刷新
-DELETE /api/oauth/unbind/{provider}           解绑
-```
+**实际交付**：
+- 「配置管理」新增「订阅授权」子菜单 + 双卡片面板 (Claude Code / Codex)
+- `useOAuthStore` (Pinia) 统一管理状态 + flow 编排（PKCE popup + device-code 轮询）
+- `ClaudeCodePkceDialog` + `CodexDeviceCodeDialog` 挂在 `App.vue` 作为全局 dialog；store 驱动显示
+- `SubscriptionAuthManagement.vue` + `SubscriptionProviderCard.vue`：状态卡（有效期/上次刷新/即将过期）、手动刷新、解绑
+- `LLMConfigDialog` 集成：注入 `claude_code` / `codex` 两个合成 provider；选中时隐藏 API Key/Base URL，显示绑定状态 + 「立即授权」/「管理订阅」入口；「管理订阅」会关闭 dialog 并跳到「订阅授权」tab
+- `scripts/smoke_test_pr3_ui.md` 人工端到端 checklist
 
-`{provider}` ∈ `claude_code` | `codex`
+**安全 / 并发**（review 阶段发现并修复）：
+- PKCE postMessage 验证 `event.source === pkceDialogPopup`，防止任意 cross-origin 页面伪造 `oauth-success`（spec §9 风险点）
+- 两个 flow 在 `await` 前抢占 dialog 标志，关闭 TOCTOU 窗口（快速双击不会泄漏 listener / timer）
+- 事件 listener 通过存储的引用精确移除；轮询 timer 在 cancel / 完成 / 过期所有路径都 `clearTimeout`
 
-**预估工作量**：~ 2 人日
+**显式 out-of-scope（用户决定，本地使用场景）**：
+- 首次绑定合规免责声明 modal（spec §1.2 移除；上线生产前再加：补 `consent_acknowledged_at` 字段 + `POST /api/oauth/consent/{provider}` 端点 + 前端 modal）
+- LLMConfig per-user 化（保持「LLMConfig 系统级 + OAuth per-user」组合）
+- i18n（项目中文优先，硬编码中文）
+
+**预估 vs 实际**：spec 估 ~2.5 人日；通过 subagent-driven development 单次 session 完成（10 个 task，每任务两阶段 review + 修复轮）。
+
+**最终评审**：
+- 第一轮：Task 2 / Task 8 各发现 3 个 important issue（re-entry guards、unawaited fetch、dialog-close-on-navigate 等），单独 fix commit 修复
+- 第二轮 cross-task review：又发现 2 个 important（postMessage source verification + TOCTOU）+ 2 个 minor（stale model fields），全部修复
+- 构建 ✅ pass；type-check 对新增文件零新错（pre-existing baseline 未触及）；lint 因本地 env 缺 peer dep `@rushstack/eslint-patch` 无法跑（与本 PR 无关）
+- 手工 smoke checklist 留待运行 dev server + 真实 OAuth credentials 走一遍
 
 ## 7. 待定问题
 
