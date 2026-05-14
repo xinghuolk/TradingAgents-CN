@@ -13,6 +13,10 @@ from tradingagents.utils.logging_init import get_logger
 logger = get_logger("agents.utils.memory")
 
 
+class UnsupportedEmbeddingError(RuntimeError):
+    """Raised when LLM provider cannot supply embeddings and no fallback is configured."""
+
+
 class ChromaDBManager:
     """单例ChromaDB管理器，避免并发创建集合的冲突"""
 
@@ -100,6 +104,22 @@ class FinancialSituationMemory:
     def __init__(self, name, config):
         self.config = config
         self.llm_provider = config.get("llm_provider", "openai").lower()
+
+        # OAuth subscription providers don't expose embedding APIs.
+        # Require an explicit EMBEDDING_PROVIDER env var, or raise so the
+        # caller can disable memory.
+        if self.llm_provider in ("claude_code", "codex"):
+            embedding_provider = os.environ.get("EMBEDDING_PROVIDER", "").strip()
+            if not embedding_provider:
+                raise UnsupportedEmbeddingError(
+                    f"LLM provider '{self.llm_provider}' uses OAuth and cannot "
+                    f"supply embeddings. Set EMBEDDING_PROVIDER=dashscope (or "
+                    f"openai / google / deepseek) with the corresponding API key, "
+                    f"or set memory_enabled=False in config."
+                )
+            # Substitute the embedding provider so the existing per-provider
+            # branches below pick it up.
+            self.llm_provider = embedding_provider.lower()
 
         # 配置向量缓存的长度限制（向量缓存默认启用长度检查）
         self.max_embedding_length = int(os.getenv('MAX_EMBEDDING_CONTENT_LENGTH', '50000'))  # 默认50K字符

@@ -362,6 +362,18 @@ async def create_database_indexes(db):
         await market_quotes.create_index([("amount", -1)])
         await market_quotes.create_index([("updated_at", -1)])
 
+        # user_oauth_credentials 的索引 (PR-2: Web OAuth subscription auth)
+        user_oauth = db["user_oauth_credentials"]
+        await user_oauth.create_index(
+            [("user_id", 1), ("provider", 1)],
+            unique=True,
+            name="uniq_user_provider",
+        )
+        await user_oauth.create_index(
+            [("access_token_expires_at", 1)],
+            name="expiry_scan",
+        )
+
         logger.info("✅ 数据库索引创建完成")
 
     except Exception as e:
@@ -438,6 +450,6 @@ close_db = close_database
 
 def get_database():
     """获取数据库实例"""
-    if db_manager.mongo_client is None:
+    if db_manager.mongo_db is None:
         raise RuntimeError("MongoDB客户端未初始化")
-    return db_manager.mongo_client.tradingagents
+    return db_manager.mongo_db

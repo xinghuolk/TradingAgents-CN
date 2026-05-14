@@ -78,6 +78,18 @@ def bridge_config_to_env():
                     logger.debug(f"  ⏭️  厂家 {provider.name} 未启用，跳过")
                     continue
 
+                # OAuth subscription providers don't use api_key bridging — the
+                # token is injected per-request from oauth_service.resolve in
+                # analysis_service. Skip to avoid leaking stale/placeholder
+                # values into env vars that downstream code might mistake for
+                # a real key.
+                if provider.name in ("claude_code", "codex"):
+                    logger.info(
+                        f"  ⏭️  跳过 OAuth 订阅厂家 {provider.name} 的 api_key 桥接 "
+                        f"(token 由 analysis_service 在请求时注入)"
+                    )
+                    continue
+
                 env_key = f"{provider.name.upper()}_API_KEY"
                 existing_env_value = os.getenv(env_key)
 
@@ -103,6 +115,16 @@ def bridge_config_to_env():
             # 后备方案：从 JSON 文件读取
             llm_configs = unified_config.get_llm_configs()
             for llm_config in llm_configs:
+                # OAuth subscription providers (claude_code, codex) don't use
+                # api_key bridging — the access_token is injected per-request
+                # by analysis_service from oauth_service.resolve.
+                if llm_config.provider in ("claude_code", "codex"):
+                    logger.info(
+                        f"  ⏭️  跳过 OAuth 订阅 provider {llm_config.provider} 的 api_key 桥接 "
+                        f"(token 由 analysis_service 在请求时注入)"
+                    )
+                    continue
+
                 # provider 现在是字符串类型，不再是枚举
                 env_key = f"{llm_config.provider.upper()}_API_KEY"
                 existing_env_value = os.getenv(env_key)

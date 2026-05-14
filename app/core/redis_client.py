@@ -4,6 +4,7 @@ Redis客户端配置和连接管理
 
 import redis.asyncio as redis
 import logging
+import socket
 from typing import Optional
 from .config import settings
 
@@ -12,6 +13,18 @@ logger = logging.getLogger(__name__)
 # 全局Redis连接池
 redis_pool: Optional[redis.ConnectionPool] = None
 redis_client: Optional[redis.Redis] = None
+
+
+def _socket_keepalive_options() -> dict[int, int]:
+    """Return TCP keepalive options supported by the current platform."""
+    options = {}
+    if hasattr(socket, "TCP_KEEPIDLE"):
+        options[socket.TCP_KEEPIDLE] = 60
+    if hasattr(socket, "TCP_KEEPINTVL"):
+        options[socket.TCP_KEEPINTVL] = 10
+    if hasattr(socket, "TCP_KEEPCNT"):
+        options[socket.TCP_KEEPCNT] = 3
+    return options
 
 
 async def init_redis():
@@ -26,11 +39,7 @@ async def init_redis():
             retry_on_timeout=settings.REDIS_RETRY_ON_TIMEOUT,
             decode_responses=True,
             socket_keepalive=True,  # 启用 TCP keepalive
-            socket_keepalive_options={
-                1: 60,  # TCP_KEEPIDLE: 60秒后开始发送keepalive探测
-                2: 10,  # TCP_KEEPINTVL: 每10秒发送一次探测
-                3: 3,   # TCP_KEEPCNT: 最多发送3次探测
-            },
+            socket_keepalive_options=_socket_keepalive_options(),
             health_check_interval=30,  # 每30秒检查一次连接健康状态
         )
 

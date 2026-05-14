@@ -24,6 +24,7 @@ dependencies = [
     # 认证和安全
     "PyJWT>=2.0.0",
     "bcrypt>=4.0.0",
+    "cryptography>=42.0",          # OAuth token encryption (PR-2)
 
     # 任务调度和异步
     "apscheduler>=3.10.0",

@@ -229,6 +229,12 @@ async def lifespan(app: FastAPI):
 
     await init_db()
 
+    # PR-2: Initialize the standalone redis_client module used by oauth routes
+    # (the existing db_manager has its own Redis, but app/core/redis_client.py's
+    # globals are also referenced by oauth_service, redis_progress_tracker, etc.)
+    from app.core.redis_client import init_redis as init_oauth_redis
+    await init_oauth_redis()
+
     #  配置桥接：将统一配置写入环境变量，供 TradingAgents 核心库使用
     try:
         from app.core.config_bridge import bridge_config_to_env
@@ -597,6 +603,14 @@ async def lifespan(app: FastAPI):
             logger.warning(f"UserService cleanup error: {e}")
 
         await close_db()
+
+        # PR-2: Close the standalone redis_client module connection
+        try:
+            from app.core.redis_client import close_redis as close_oauth_redis
+            await close_oauth_redis()
+        except Exception as e:
+            logger.warning(f"oauth redis close error: {e}")
+
         logger.info("TradingAgents FastAPI backend stopped")
 
 
@@ -728,6 +742,10 @@ app.include_router(financial_data.router, tags=["financial-data"])
 app.include_router(news_data.router, tags=["news-data"])
 app.include_router(social_media.router, tags=["social-media"])
 app.include_router(internal_messages.router, tags=["internal-messages"])
+
+# OAuth subscription auth (PR-2)
+from app.routers import oauth as oauth_router
+app.include_router(oauth_router.router, prefix="/api/oauth", tags=["oauth"])
 
 
 @app.get("/")
