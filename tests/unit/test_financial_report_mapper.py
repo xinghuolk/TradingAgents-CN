@@ -170,6 +170,87 @@ def test_partial_financial_report_update_rederives_existing_metric_inputs():
     assert merged.details["free_cash_flow"]["status"] == "derived"
 
 
+def test_partial_equity_primitives_do_not_rederive_total_equity():
+    extraction = FakeResult(fields={
+        "equity_attributable_to_owners": FakeField(
+            "equity_attributable_to_owners",
+            Decimal("900"),
+        ),
+        "minority_int": FakeField(
+            "minority_int",
+            None,
+            source=None,
+            raw_bucket="source_unavailable",
+            is_reliable=False,
+            is_present=False,
+        ),
+    })
+    base = {
+        "equity_attributable_to_owners": 700.0,
+        "minority_int": 100.0,
+        "total_equity": 800.0,
+        "_data_source": {
+            "equity_attributable_to_owners": "akshare",
+            "minority_int": "akshare",
+            "total_equity": "akshare",
+        },
+    }
+
+    merged = merge_financial_report_data(
+        financial_data=base,
+        extraction=extraction,
+        policy=FinancialReportPolicy(allow_llm_models=()),
+    )
+
+    assert merged.financial_data["equity_attributable_to_owners"] == 900.0
+    assert merged.financial_data["minority_int"] == 100.0
+    assert merged.financial_data["total_equity"] == 800.0
+    assert merged.financial_data["_data_source"]["total_equity"] == "akshare"
+    assert "total_equity" not in merged.details
+    assert merged.details["minority_int"]["status"] == "not_used"
+
+
+def test_partial_debt_primitives_do_not_rederive_interest_bearing_debt():
+    extraction = FakeResult(fields={
+        "st_borr": FakeField("st_borr", Decimal("12")),
+        "lt_borr": FakeField("lt_borr", Decimal("24")),
+        "bond_payable": FakeField(
+            "bond_payable",
+            None,
+            source=None,
+            raw_bucket="source_unavailable",
+            is_reliable=False,
+            is_present=False,
+        ),
+    })
+    base = {
+        "st_borr": 10.0,
+        "lt_borr": 20.0,
+        "bond_payable": 30.0,
+        "interest_bearing_debt": 60.0,
+        "_data_source": {
+            "st_borr": "akshare",
+            "lt_borr": "akshare",
+            "bond_payable": "akshare",
+            "interest_bearing_debt": "akshare",
+        },
+    }
+
+    merged = merge_financial_report_data(
+        financial_data=base,
+        extraction=extraction,
+        policy=FinancialReportPolicy(allow_llm_models=()),
+    )
+
+    assert merged.financial_data["st_borr"] == 12.0
+    assert merged.financial_data["lt_borr"] == 24.0
+    assert merged.financial_data["bond_payable"] == 30.0
+    assert merged.financial_data["interest_bearing_debt"] == 60.0
+    assert merged.financial_data["_data_source"]["interest_bearing_debt"] == "akshare"
+    assert "interest_bearing_debt" not in merged.details
+    assert merged.details["bond_payable"]["status"] == "not_used"
+
+
 def test_deepseek_llm_supplement_is_not_used_for_compute():
     extraction = FakeResult(
         llm_provider="deepseek",

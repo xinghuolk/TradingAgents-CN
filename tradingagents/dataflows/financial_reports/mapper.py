@@ -104,7 +104,7 @@ def _derive_aggregate_metrics(
     data_source = data.setdefault("_data_source", {})
 
     equity_inputs = {"equity_attributable_to_owners", "minority_int"}
-    if used_keys.intersection(equity_inputs):
+    if equity_inputs.issubset(used_keys):
         parent = _to_float(data.get("equity_attributable_to_owners"))
         minority = _to_float(data.get("minority_int"))
         if parent is not None and minority is not None:
@@ -119,7 +119,7 @@ def _derive_aggregate_metrics(
             }
 
     ibd_inputs = {"st_borr", "lt_borr", "bond_payable"}
-    if used_keys.intersection(ibd_inputs):
+    if ibd_inputs.issubset(used_keys):
         st = _to_float(data.get("st_borr"))
         lt = _to_float(data.get("lt_borr"))
         bond = _to_float(data.get("bond_payable"))
