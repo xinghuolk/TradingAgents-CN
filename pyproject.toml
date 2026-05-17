@@ -47,8 +47,7 @@ dependencies = [
     "yfinance>=0.2.63",
     "stockstats>=0.6.5",
     # Annual-report extraction (FinancialReportClient adapter consumer).
-    # Local editable install during development; replace with versioned dep
-    # when extractor is published.
+    # Source is pinned below until the extractor is published.
     "financial-report-llm-extractor",
 
     # AI和LLM
@@ -99,9 +98,8 @@ qianfan = ["qianfan>=0.4.12.3,<0.5"]
 tradingagents = "main:main"
 
 [tool.uv.sources]
-# Sibling checkout during development; replace with versioned dep when the
-# extractor is published. Path is relative to this pyproject.toml.
-financial-report-llm-extractor = { path = "../financial-report-llm-extractor", editable = true }
+# Replace with a versioned dependency after the extractor is published.
+financial-report-llm-extractor = { git = "https://github.com/xinghuolk/financial-report-llm-extractor.git", rev = "b03775925a5be22f31c4d67e90f88c5842ecaec6" }
 
 [tool.setuptools.packages.find]
 include = ["tradingagents*"]

@@ -857,15 +857,7 @@ wheels = [
 [[package]]
 name = "financial-report-llm-extractor"
 version = "0.1.0"
-source = { editable = "../financial-report-llm-extractor" }
-
-[package.metadata]
-requires-dist = [
-    { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.10" },
-    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8" },
-    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.6" },
-]
-provides-extras = ["dev"]
+source = { git = "https://github.com/xinghuolk/financial-report-llm-extractor.git?rev=b03775925a5be22f31c4d67e90f88c5842ecaec6#b03775925a5be22f31c4d67e90f88c5842ecaec6" }
 
 [[package]]
 name = "finnhub-python"
@@ -3900,7 +3892,7 @@ requires-dist = [
     { name = "eodhd", specifier = ">=1.0.32" },
     { name = "fastapi", specifier = ">=0.104.0" },
     { name = "feedparser", specifier = ">=6.0.11" },
-    { name = "financial-report-llm-extractor", editable = "../financial-report-llm-extractor" },
+    { name = "financial-report-llm-extractor", git = "https://github.com/xinghuolk/financial-report-llm-extractor.git?rev=b03775925a5be22f31c4d67e90f88c5842ecaec6" },
     { name = "finnhub-python", specifier = ">=2.4.23" },
     { name = "httpx", specifier = ">=0.24.0" },
     { name = "langchain-anthropic", specifier = ">=0.3.15" },
