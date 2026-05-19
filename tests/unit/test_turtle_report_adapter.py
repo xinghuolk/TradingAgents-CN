@@ -438,6 +438,8 @@ def test_report_adapter_does_not_derive_payout_from_mixed_currency_fields():
         ("USD", "US$", "yuan"),
         ("USD", "US$ million", "million"),
         ("CNY", "RMB million", "million"),
+        ("CNY", "hundred_million", "hundred_million"),
+        ("CNY", "hundred million", "hundred_million"),
     ],
 )
 def test_report_adapter_accepts_common_currency_unit_aliases(currency, unit, expected_unit):
@@ -456,3 +458,26 @@ def test_report_adapter_accepts_common_currency_unit_aliases(currency, unit, exp
     assert field.value.currency == currency
     assert field.value.unit == expected_unit
     assert field.reliability == "reliable"
+
+
+def test_report_adapter_rejects_million_shares_as_money_unit():
+    extraction = FakeExtraction(fields={
+        "share_count": FakeField(
+            "share_count",
+            Decimal("123"),
+            currency="HKD",
+            unit="million shares",
+        ),
+    })
+
+    facts = build_report_facts_from_extraction(
+        extraction=extraction,
+        allow_llm_models=(),
+        adapter_caveats=[],
+    )
+
+    field = facts.fields["share_count"]
+    assert field.value == Decimal("123")
+    assert not isinstance(field.value, MoneyAmount)
+    assert field.reliability == "display_only"
+    assert "unsupported unit million shares" in " ".join(facts.caveats)
