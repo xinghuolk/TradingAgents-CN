@@ -125,6 +125,51 @@ def test_compute_turtle_signals_degrades_without_buyback():
     assert "buyback_amount missing; treated as 0 for degraded calculation" in signals.caveats
 
 
+def test_compute_turtle_signals_keeps_hh_complete_without_buyback():
+    facts = base_facts()
+    market = TurtleMarketFacts(fields={key: value for key, value in facts.market.fields.items() if key != "buyback_amount"})
+    broken = TurtleFacts(context=facts.context, report=facts.report, market=market, status="complete")
+
+    signals = compute_turtle_signals(broken)
+
+    assert signals.results["R"].status == "degraded"
+    assert signals.results["GG"].status == "degraded"
+    assert signals.results["HH"].status == "complete"
+    assert signals.results["HH"].value == pytest.approx(0.0)
+    assert "buyback_amount" not in signals.results["HH"].missing_inputs
+
+
+def test_compute_turtle_signals_uses_reliable_market_fallback_when_report_fact_display_only():
+    signals = compute_turtle_signals(base_facts(
+        report_fields={
+            "net_profit": fact_value(
+                "net_profit",
+                MoneyAmount(999, "CNY", "hundred_million", "fixture", "report.net_profit"),
+                "report.net_profit",
+                reliability="display_only",
+            ),
+        },
+        market_fields={
+            "net_profit": money("net_profit", 100, "market.net_profit"),
+        },
+    ))
+
+    assert signals.results["R"].value == pytest.approx(5.0)
+    assert "net_profit" not in signals.results["R"].missing_inputs
+    assert "market.net_profit" in signals.results["R"].sources
+
+
+def test_compute_turtle_signals_uses_reliable_later_numeric_alias_when_first_alias_display_only():
+    signals = compute_turtle_signals(base_facts(market_fields={
+        "avg_payout_ratio_3y": fact_value("avg_payout_ratio_3y", 0.9, "market.stale_payout", reliability="display_only"),
+        "dividend_avg_payout_ratio_3y": number("dividend_avg_payout_ratio_3y", 0.5, "dividend_data.avg_payout_ratio_3y"),
+    }))
+
+    assert signals.results["payout_anchor"].value == pytest.approx(0.5)
+    assert "avg_payout_ratio_3y" not in signals.results["payout_anchor"].missing_inputs
+    assert "dividend_data.avg_payout_ratio_3y" in signals.results["payout_anchor"].sources
+
+
 def test_compute_turtle_signals_rejects_zero_market_cap():
     signals = compute_turtle_signals(base_facts(market_fields={
         "market_cap": money("market_cap", 0, "market.market_cap"),
@@ -147,6 +192,18 @@ def test_compute_turtle_signals_rejects_negative_market_cap():
     assert signals.results["net_cash_ratio"].value is None
     assert "market_cap" in signals.results["net_cash_ratio"].missing_inputs
     assert "market_cap must be positive" in signals.caveats
+
+
+def test_compute_turtle_signals_marks_ev_related_results_non_decisionable_without_market_cap():
+    facts = base_facts()
+    market = TurtleMarketFacts(fields={key: value for key, value in facts.market.fields.items() if key != "market_cap"})
+    broken = TurtleFacts(context=facts.context, report=facts.report, market=market, status="complete")
+
+    signals = compute_turtle_signals(broken)
+
+    assert signals.results["net_cash_ratio"].status == "non_decisionable"
+    assert signals.results["ev_switch"].status == "non_decisionable"
+    assert signals.results["cash_protection"].status == "non_decisionable"
 
 
 def test_compute_turtle_signals_preserves_unsupported_input_status():

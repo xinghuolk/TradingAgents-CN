@@ -12,6 +12,17 @@ def _field(facts: TurtleFacts, name: str) -> TurtleFactValue | None:
     return facts.report.fields.get(name) or facts.market.fields.get(name)
 
 
+def _field_candidates(facts: TurtleFacts, name: str) -> list[TurtleFactValue]:
+    candidates: list[TurtleFactValue] = []
+    report_fact = facts.report.fields.get(name)
+    market_fact = facts.market.fields.get(name)
+    if report_fact is not None:
+        candidates.append(report_fact)
+    if market_fact is not None and market_fact is not report_fact:
+        candidates.append(market_fact)
+    return candidates
+
+
 def _combined_caveats(facts: TurtleFacts) -> list[str]:
     return [*facts.caveats, *facts.report.caveats, *facts.market.caveats]
 
@@ -44,50 +55,68 @@ def _fx_rates(facts: TurtleFacts) -> dict[str, float]:
 
 
 def _money_hm(facts: TurtleFacts, name: str, caveats: list[str]) -> tuple[float | None, list[str], list[str]]:
-    fact = _field(facts, name)
-    if fact is None or not isinstance(fact.value, MoneyAmount):
-        return None, [], [name]
-    if not _is_reliable_fact(fact, name, caveats):
-        return None, [fact.source_reference], [name]
-    if fact.value.reliability != "reliable":
-        _append_caveat(caveats, f"{name} money unreliable: {fact.value.reliability}")
-        return None, [fact.source_reference], [name]
-    if isinstance(fact.value.value, bool) or not isinstance(fact.value.value, (int, float)):
-        _append_caveat(caveats, f"{name} invalid money value")
-        return None, [fact.source_reference], [name]
+    failed_sources: list[str] = []
+    for fact in _field_candidates(facts, name):
+        if not isinstance(fact.value, MoneyAmount):
+            failed_sources.append(fact.source_reference)
+            continue
+        if not _is_reliable_fact(fact, name, caveats):
+            failed_sources.append(fact.source_reference)
+            continue
+        if fact.value.reliability != "reliable":
+            _append_caveat(caveats, f"{name} money unreliable: {fact.value.reliability}")
+            failed_sources.append(fact.source_reference)
+            continue
+        if isinstance(fact.value.value, bool) or not isinstance(fact.value.value, (int, float)):
+            _append_caveat(caveats, f"{name} invalid money value")
+            failed_sources.append(fact.source_reference)
+            continue
 
-    try:
-        amount = fact.value.to_hundred_million(target_currency="CNY", fx_rates=_fx_rates(facts))
-    except (TypeError, ValueError, OverflowError) as exc:
-        _append_caveat(caveats, str(exc))
-        return None, [fact.source_reference], [name]
+        try:
+            amount = fact.value.to_hundred_million(target_currency="CNY", fx_rates=_fx_rates(facts))
+        except (TypeError, ValueError, OverflowError) as exc:
+            _append_caveat(caveats, str(exc))
+            failed_sources.append(fact.source_reference)
+            continue
 
-    if not math.isfinite(amount.value):
-        _append_caveat(caveats, f"{name} invalid money value")
-        return None, [fact.source_reference], [name]
-    return float(amount.value), [amount.source_reference], []
+        if not math.isfinite(amount.value):
+            _append_caveat(caveats, f"{name} invalid money value")
+            failed_sources.append(fact.source_reference)
+            continue
+        return float(amount.value), [amount.source_reference], []
+
+    return None, failed_sources, [name]
 
 
 def _number(facts: TurtleFacts, name: str, caveats: list[str]) -> tuple[float | None, list[str], list[str]]:
-    fact = _field(facts, name)
-    if fact is None or isinstance(fact.value, bool) or not isinstance(fact.value, (int, float)):
-        return None, [], [name]
-    if not _is_reliable_fact(fact, name, caveats):
-        return None, [fact.source_reference], [name]
+    failed_sources: list[str] = []
+    for fact in _field_candidates(facts, name):
+        if isinstance(fact.value, bool) or not isinstance(fact.value, (int, float)):
+            failed_sources.append(fact.source_reference)
+            continue
+        if not _is_reliable_fact(fact, name, caveats):
+            failed_sources.append(fact.source_reference)
+            continue
 
-    value = float(fact.value)
-    if not math.isfinite(value):
-        _append_caveat(caveats, f"{name} invalid numeric value")
-        return None, [fact.source_reference], [name]
-    return value, [fact.source_reference], []
+        value = float(fact.value)
+        if not math.isfinite(value):
+            _append_caveat(caveats, f"{name} invalid numeric value")
+            failed_sources.append(fact.source_reference)
+            continue
+        return value, [fact.source_reference], []
+
+    return None, failed_sources, [name]
 
 
 def _number_alias(facts: TurtleFacts, caveats: list[str], *names: str) -> tuple[float | None, list[str], list[str]]:
+    failed_sources: list[str] = []
     for name in names:
-        fact = _field(facts, name)
-        if fact is not None:
-            return _number(facts, name, caveats)
-    return None, [], [names[0]]
+        if _field_candidates(facts, name):
+            value, sources, missing = _number(facts, name, caveats)
+            if not missing:
+                return value, sources, missing
+            failed_sources = _merge_sources(failed_sources, sources)
+    return None, failed_sources, [names[0]]
 
 
 def _merge_sources(*source_groups: Iterable[str]) -> list[str]:
@@ -281,14 +310,12 @@ def compute_turtle_signals(facts: TurtleFacts) -> TurtleComputedSignals:
         status=gg_status,
     )
 
-    hh_missing = _merge_missing(results["R"].missing_inputs, results["GG"].missing_inputs)
     hh_critical_missing = _merge_missing(r_critical_missing, gg_critical_missing)
+    hh_missing = list(hh_critical_missing)
     hh_value = None if r_value is None or gg_value is None else r_value - gg_value
     hh_status: TurtleStatus = (
         "non_decisionable"
         if hh_critical_missing
-        else "degraded"
-        if results["R"].status == "degraded" or results["GG"].status == "degraded"
         else "complete"
     )
     results["HH"] = _result(
@@ -311,6 +338,13 @@ def compute_turtle_signals(facts: TurtleFacts) -> TurtleComputedSignals:
         net_cash_substitution = f"({_fmt(cash)} - {_fmt(debt)}) / {_fmt(market_cap)} * 100"
     elif not net_cash_missing:
         net_cash_missing = ["market_cap"]
+    net_cash_status: TurtleStatus = (
+        "non_decisionable"
+        if "market_cap" in net_cash_missing
+        else "degraded"
+        if net_cash_missing
+        else "complete"
+    )
     results["net_cash_ratio"] = _result(
         name="net_cash_ratio",
         formula="net_cash_ratio = (cash - interest_bearing_debt) / market_cap * 100",
@@ -319,11 +353,18 @@ def compute_turtle_signals(facts: TurtleFacts) -> TurtleComputedSignals:
         unit="percent",
         sources=net_cash_sources,
         missing_inputs=net_cash_missing,
-        status="degraded" if net_cash_missing else "complete",
+        status=net_cash_status,
     )
 
     ev_missing = list(results["net_cash_ratio"].missing_inputs)
     ev_value = None if ev_missing else (1.0 if net_cash_ratio > 40 else 0.0)  # type: ignore[operator]
+    ev_status: TurtleStatus = (
+        "non_decisionable"
+        if "market_cap" in ev_missing
+        else "degraded"
+        if ev_missing
+        else "complete"
+    )
     results["ev_switch"] = _result(
         name="ev_switch",
         formula="ev_switch = 1.0 if net_cash_ratio > 40 else 0.0",
@@ -332,11 +373,18 @@ def compute_turtle_signals(facts: TurtleFacts) -> TurtleComputedSignals:
         unit="flag",
         sources=results["net_cash_ratio"].sources,
         missing_inputs=ev_missing,
-        status="degraded" if ev_missing else "complete",
+        status=ev_status,
     )
 
     protection_missing = list(results["net_cash_ratio"].missing_inputs)
     protection_value = None if protection_missing else _target_cash_protection(net_cash_ratio)  # type: ignore[arg-type]
+    protection_status: TurtleStatus = (
+        "non_decisionable"
+        if "market_cap" in protection_missing
+        else "degraded"
+        if protection_missing
+        else "complete"
+    )
     results["cash_protection"] = _result(
         name="cash_protection",
         formula="cash_protection = target discount from net_cash_ratio bands",
@@ -345,7 +393,7 @@ def compute_turtle_signals(facts: TurtleFacts) -> TurtleComputedSignals:
         unit="percent",
         sources=results["net_cash_ratio"].sources,
         missing_inputs=protection_missing,
-        status="degraded" if protection_missing else "complete",
+        status=protection_status,
     )
 
     critical_non_decisionable = results["R"].status == "non_decisionable" or results["GG"].status == "non_decisionable"
