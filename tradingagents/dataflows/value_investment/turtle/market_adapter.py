@@ -102,6 +102,26 @@ def _fetch_hk_market_data(ticker: str) -> dict[str, Any]:
     }
 
 
+def _fetch_hk_dividend_data(ticker: str) -> dict[str, Any] | None:
+    try:
+        from tradingagents.dataflows.providers.hk.hk_stock import get_hk_dividend_data
+
+        return get_hk_dividend_data(ticker)
+    except Exception as exc:
+        logger.warning("Failed to fetch HK dividend data for %s: %s", ticker, exc)
+        return None
+
+
+def _fetch_hk_buyback_data(ticker: str) -> dict[str, Any] | None:
+    try:
+        from tradingagents.dataflows.providers.hk.hk_stock import get_hk_buyback_data
+
+        return get_hk_buyback_data(ticker)
+    except Exception as exc:
+        logger.warning("Failed to fetch HK buyback data for %s: %s", ticker, exc)
+        return None
+
+
 def _fetch_turtle_market_data(ticker: str, market: str) -> dict[str, Any]:
     if _is_hk_market(market):
         return _fetch_hk_market_data(ticker)
@@ -109,6 +129,24 @@ def _fetch_turtle_market_data(ticker: str, market: str) -> dict[str, Any]:
     from tradingagents.tools.value_investment_tool import _fetch_market_data_structured
 
     return _fetch_market_data_structured(ticker, market)
+
+
+def _fetch_turtle_dividend_data(ticker: str, market: str) -> dict[str, Any] | None:
+    if _is_hk_market(market):
+        return _fetch_hk_dividend_data(ticker)
+
+    from tradingagents.tools.value_investment_tool import _fetch_dividend_data_sync
+
+    return _fetch_dividend_data_sync(ticker, market)
+
+
+def _fetch_turtle_buyback_data(ticker: str, market: str) -> dict[str, Any] | None:
+    if _is_hk_market(market):
+        return _fetch_hk_buyback_data(ticker)
+
+    from tradingagents.tools.value_investment_tool import _fetch_buyback_data_sync
+
+    return _fetch_buyback_data_sync(ticker, market)
 
 
 def _fetch_turtle_industry(ticker: str, market: str, market_data: dict[str, Any] | None) -> str | None:
@@ -308,11 +346,6 @@ def build_market_facts(
 
 def get_turtle_market_facts(ticker: str, market: str, holding_channel: str | None = None) -> TurtleMarketFacts:
     """Fetch non-PDF market inputs and adapt them to Turtle facts."""
-    from tradingagents.tools.value_investment_tool import (
-        _fetch_buyback_data_sync,
-        _fetch_dividend_data_sync,
-    )
-
     market_data = _fetch_turtle_market_data(ticker, market)
 
     return build_market_facts(
@@ -320,7 +353,7 @@ def get_turtle_market_facts(ticker: str, market: str, holding_channel: str | Non
         market=market,
         holding_channel=holding_channel,
         market_data=market_data,
-        dividend_data=_fetch_dividend_data_sync(ticker, market),
-        buyback_data=_fetch_buyback_data_sync(ticker, market),
+        dividend_data=_fetch_turtle_dividend_data(ticker, market),
+        buyback_data=_fetch_turtle_buyback_data(ticker, market),
         industry=_fetch_turtle_industry(ticker, market, market_data),
     )

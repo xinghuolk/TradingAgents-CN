@@ -54,7 +54,37 @@ def _fx_rates(facts: TurtleFacts) -> dict[str, float]:
     return rates
 
 
-def _money_hm(facts: TurtleFacts, name: str, caveats: list[str]) -> tuple[float | None, list[str], list[str]]:
+def _money_fact_currencies(facts: TurtleFacts) -> set[str]:
+    currencies: set[str] = set()
+    for fields in (facts.report.fields, facts.market.fields):
+        for fact in fields.values():
+            if not isinstance(fact.value, MoneyAmount):
+                continue
+            if fact.reliability != "reliable" or fact.value.reliability != "reliable":
+                continue
+            if isinstance(fact.value.value, bool) or not isinstance(fact.value.value, (int, float)):
+                continue
+            if not math.isfinite(float(fact.value.value)):
+                continue
+            currencies.add(fact.value.currency.upper())
+    return currencies
+
+
+def _money_target_currency(facts: TurtleFacts) -> str:
+    if _fx_rates(facts):
+        return "CNY"
+    currencies = _money_fact_currencies(facts)
+    if len(currencies) == 1:
+        return next(iter(currencies))
+    return "CNY"
+
+
+def _money_hm(
+    facts: TurtleFacts,
+    name: str,
+    caveats: list[str],
+    target_currency: str,
+) -> tuple[float | None, list[str], list[str]]:
     failed_sources: list[str] = []
     for fact in _field_candidates(facts, name):
         if not isinstance(fact.value, MoneyAmount):
@@ -73,7 +103,7 @@ def _money_hm(facts: TurtleFacts, name: str, caveats: list[str]) -> tuple[float 
             continue
 
         try:
-            amount = fact.value.to_hundred_million(target_currency="CNY", fx_rates=_fx_rates(facts))
+            amount = fact.value.to_hundred_million(target_currency=target_currency, fx_rates=_fx_rates(facts))
         except (TypeError, ValueError, OverflowError) as exc:
             _append_caveat(caveats, str(exc))
             failed_sources.append(fact.source_reference)
@@ -204,19 +234,21 @@ def _buyback_input(
 def compute_turtle_signals(facts: TurtleFacts) -> TurtleComputedSignals:
     results: dict[str, FormulaResult] = {}
     caveats = _combined_caveats(facts)
+    target_currency = _money_target_currency(facts)
+    money_unit = f"hundred_million {target_currency}"
 
     if facts.status == "unsupported":
         return TurtleComputedSignals(status="unsupported", results=results, caveats=caveats)
 
-    net_profit, net_profit_sources, missing_net_profit = _money_hm(facts, "net_profit", caveats)
-    ocf, ocf_sources, missing_ocf = _money_hm(facts, "operating_cash_flow", caveats)
-    capex, capex_sources, missing_capex = _money_hm(facts, "capex", caveats)
-    market_cap, market_cap_sources, missing_market_cap = _money_hm(facts, "market_cap", caveats)
+    net_profit, net_profit_sources, missing_net_profit = _money_hm(facts, "net_profit", caveats, target_currency)
+    ocf, ocf_sources, missing_ocf = _money_hm(facts, "operating_cash_flow", caveats, target_currency)
+    capex, capex_sources, missing_capex = _money_hm(facts, "capex", caveats, target_currency)
+    market_cap, market_cap_sources, missing_market_cap = _money_hm(facts, "market_cap", caveats, target_currency)
     market_cap, missing_market_cap = _validate_positive_market_cap(market_cap, missing_market_cap, caveats)
-    buyback, buyback_sources, missing_buyback = _money_hm(facts, "buyback_amount", caveats)
+    buyback, buyback_sources, missing_buyback = _money_hm(facts, "buyback_amount", caveats, target_currency)
     buyback_for_formula, degraded_buyback_missing, buyback_degraded = _buyback_input(buyback, missing_buyback, caveats)
-    cash, cash_sources, missing_cash = _money_hm(facts, "cash", caveats)
-    debt, debt_sources, missing_debt = _money_hm(facts, "interest_bearing_debt", caveats)
+    cash, cash_sources, missing_cash = _money_hm(facts, "cash", caveats, target_currency)
+    debt, debt_sources, missing_debt = _money_hm(facts, "interest_bearing_debt", caveats, target_currency)
     payout, payout_sources, missing_payout = _number_alias(
         facts,
         caveats,
@@ -252,7 +284,7 @@ def compute_turtle_signals(facts: TurtleFacts) -> TurtleComputedSignals:
             else f"{_fmt(ocf)} - abs({_fmt(capex)})"
         ),
         value=owner_earnings,
-        unit="hundred_million CNY",
+        unit=money_unit,
         sources=owner_sources,
         missing_inputs=owner_missing,
         status="non_decisionable" if owner_missing else "complete",

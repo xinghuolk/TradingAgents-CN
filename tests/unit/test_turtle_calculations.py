@@ -297,6 +297,32 @@ def test_compute_turtle_signals_converts_hk_money_with_report_fx_rates():
     assert any("FX HKD:CNY=0.92" in source for source in signals.results["R"].sources)
 
 
+def test_compute_turtle_signals_uses_common_hkd_currency_without_fx_rates():
+    hkd_report = {
+        "net_profit": money("net_profit", 100, "report.net_profit", currency="HKD"),
+        "operating_cash_flow": money("operating_cash_flow", 120, "report.ocf", currency="HKD"),
+        "capex": money("capex", 20, "report.capex", currency="HKD"),
+        "cash": money("cash", 500, "report.cash", currency="HKD"),
+        "interest_bearing_debt": money("interest_bearing_debt", 50, "report.debt", currency="HKD"),
+    }
+    hkd_market = {
+        "market_cap": money("market_cap", 1000, "market.market_cap", currency="HKD"),
+        "buyback_amount": money("buyback_amount", 10, "market.buyback", currency="HKD"),
+    }
+
+    signals = compute_turtle_signals(base_facts(
+        market="HK",
+        report_fields=hkd_report,
+        market_fields=hkd_market,
+    ))
+
+    assert signals.status == "complete"
+    assert signals.results["R"].value == pytest.approx(5.0)
+    assert signals.results["GG"].value == pytest.approx(5.0)
+    assert signals.results["owner_earnings"].unit == "hundred_million HKD"
+    assert "FX rate required for HKD:CNY" not in signals.caveats
+
+
 def test_compute_turtle_signals_is_non_decisionable_when_hk_fx_rate_missing():
     signals = compute_turtle_signals(base_facts(
         market="HK",

@@ -51,6 +51,42 @@ def test_get_turtle_market_facts_routes_hk_to_hk_market_provider(monkeypatch):
     assert "market_cap missing" not in " ".join(facts.caveats)
 
 
+def test_get_turtle_market_facts_routes_hk_actions_to_hk_providers(monkeypatch):
+    def reject_legacy_hk_action_fetch(ticker, market):
+        raise AssertionError("HK action facts must not use the A-share dividend/buyback fetchers")
+
+    monkeypatch.setattr(
+        "tradingagents.tools.value_investment_tool._fetch_dividend_data_sync",
+        reject_legacy_hk_action_fetch,
+    )
+    monkeypatch.setattr(
+        "tradingagents.tools.value_investment_tool._fetch_buyback_data_sync",
+        reject_legacy_hk_action_fetch,
+    )
+    monkeypatch.setattr(
+        "tradingagents.dataflows.providers.hk.hk_stock.get_hk_stock_info",
+        lambda ticker: {"market_cap": 2_000_000_000_000, "price": 400.0},
+    )
+    monkeypatch.setattr(
+        "tradingagents.dataflows.providers.hk.hk_stock.get_hk_dividend_data",
+        lambda ticker: {"avg_payout_ratio_3y": 0.35, "records": [{"year": 2025}]},
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "tradingagents.dataflows.providers.hk.hk_stock.get_hk_buyback_data",
+        lambda ticker: {"total_cancelled_amount": 4_000_000_000, "records": [{"year": 2025}]},
+        raising=False,
+    )
+
+    facts = get_turtle_market_facts("0700.HK", "HK", "stock_connect")
+
+    assert facts.fields["dividend_avg_payout_ratio_3y"].value == 0.35
+    assert facts.fields["buyback_amount"].value.value == 4_000_000_000
+    assert facts.fields["buyback_amount"].value.currency == "HKD"
+    assert "avg_payout_ratio_3y missing" not in " ".join(facts.caveats)
+    assert "buyback_amount missing" not in " ".join(facts.caveats)
+
+
 def test_build_market_facts_marks_missing_market_cap_as_caveat():
     facts = build_market_facts(
         ticker="600519",
