@@ -2120,6 +2120,41 @@ class Toolkit:
 
     @staticmethod
     @tool
+    @log_tool_call(tool_name="prepare_turtle_analysis", log_args=True)
+    def prepare_turtle_analysis(
+        ticker: Annotated[str, "股票代码（支持A股、港股）"],
+        market: Annotated[str, "市场类型：A=A股, HK=港股"],
+        trade_date: Annotated[str, "交易日期，格式 yyyy-mm-dd"],
+        company_name: Annotated[str, "公司名称"] = "",
+        holding_channel: Annotated[str | None, "持仓渠道，可选"] = None,
+    ) -> str:
+        """
+        准备 Turtle v0.15 价值分析事实与计算信号。
+
+        该工具只采集事实并执行确定性公式计算；最终报告由价值分析师在
+        无绑定工具的 LLM 调用中生成。
+        """
+        logger.info(f"📊 [Turtle准备工具] 准备分析: {ticker} ({market})")
+
+        try:
+            from tradingagents.tools.turtle_analysis_tool import prepare_turtle_analysis as _prepare_turtle
+
+            return _prepare_turtle.invoke(
+                {
+                    "ticker": ticker,
+                    "market": market,
+                    "trade_date": trade_date,
+                    "company_name": company_name,
+                    "holding_channel": holding_channel,
+                }
+            )
+        except Exception as e:
+            error_msg = f"Turtle价值分析准备工具执行失败: {str(e)}"
+            logger.error(f"❌ [Turtle准备工具] {error_msg}")
+            return error_msg
+
+    @staticmethod
+    @tool
     @log_tool_call(tool_name="get_value_investment_analysis", log_args=True)
     def get_value_investment_analysis(
         ticker: Annotated[str, "股票代码（支持A股、港股）"],

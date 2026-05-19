@@ -23,7 +23,7 @@ def test_should_continue_value_routes_to_tool_when_tool_call_exists():
                 content="",
                 tool_calls=[
                     {
-                        "name": "get_value_investment_analysis",
+                        "name": "prepare_turtle_analysis",
                         "args": {"ticker": "000001", "market": "A"},
                         "id": "call_value",
                         "type": "tool_call",
@@ -55,7 +55,7 @@ def test_should_continue_value_routes_pending_tool_call_at_count_cap():
                 content="",
                 tool_calls=[
                     {
-                        "name": "get_value_investment_analysis",
+                        "name": "prepare_turtle_analysis",
                         "args": {"ticker": "000001", "market": "A"},
                         "id": "call_value",
                         "type": "tool_call",
@@ -77,7 +77,7 @@ def test_should_continue_value_stops_after_executed_tool_call_cap():
                 content="",
                 tool_calls=[
                     {
-                        "name": "get_value_investment_analysis",
+                        "name": "prepare_turtle_analysis",
                         "args": {"ticker": "000001", "market": "A"},
                         "id": "call_value",
                         "type": "tool_call",
@@ -86,14 +86,14 @@ def test_should_continue_value_stops_after_executed_tool_call_cap():
             ),
             ToolMessage(
                 content="value analysis result",
-                name="get_value_investment_analysis",
+                name="prepare_turtle_analysis",
                 tool_call_id="call_value",
             ),
             AIMessage(
                 content="",
                 tool_calls=[
                     {
-                        "name": "get_value_investment_analysis",
+                        "name": "prepare_turtle_analysis",
                         "args": {"ticker": "000001", "market": "A"},
                         "id": "call_value_retry",
                         "type": "tool_call",
