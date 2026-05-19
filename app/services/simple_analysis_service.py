@@ -1532,6 +1532,7 @@ class SimpleAnalysisService:
                     'sentiment_report',
                     'news_report',
                     'fundamentals_report',
+                    'value_report',
                     'investment_plan',
                     'trader_investment_plan',
                     'final_trade_decision'
@@ -2405,6 +2406,7 @@ class SimpleAnalysisService:
                         'sentiment_report',
                         'news_report',
                         'fundamentals_report',
+                        'value_report',
                         'investment_plan',
                         'trader_investment_plan',
                         'final_trade_decision'
@@ -2790,6 +2792,11 @@ class SimpleAnalysisService:
                     'filename': 'fundamentals_report.md',
                     'title': f'{stock_symbol} 基本面分析报告',
                     'state_key': 'fundamentals_report'
+                },
+                'value_report': {
+                    'filename': 'value_report.md',
+                    'title': '价值投资分析',
+                    'state_key': 'value_report'
                 },
                 'investment_plan': {
                     'filename': 'investment_plan.md',
