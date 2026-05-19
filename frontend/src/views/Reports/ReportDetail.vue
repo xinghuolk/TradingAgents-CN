@@ -747,6 +747,7 @@ const formatAnalysts = (analysts: string[]) => {
   const analystNameMap: Record<string, string> = {
     'market': '市场分析师',
     'fundamentals': '基本面分析师',
+    'value': '价值投资分析师',
     'news': '新闻分析师',
     'social': '社媒分析师',
     'sentiment': '情绪分析师',
