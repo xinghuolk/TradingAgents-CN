@@ -44,16 +44,28 @@ def _turtle_field_name(field_id: str) -> str:
 
 
 def _field_unit(field: Any) -> MoneyUnit | None:
-    raw = str(getattr(field, "unit", "") or "").strip().lower()
-    if raw in {"yuan", "rmb", "cny"}:
+    raw = str(getattr(field, "unit", "") or "").strip()
+    lowered = raw.lower()
+    compact = lowered.replace(" ", "")
+
+    if lowered in {"yuan", "rmb", "cny", "hkd", "hk$", "usd", "us$"} or raw in {
+        "港元",
+        "港币",
+        "美元",
+        "人民币",
+    }:
         return "yuan"
-    if raw in {"thousand", "rmb'000", "000", "千元"}:
+    if lowered in {"thousand", "rmb'000", "hkd'000", "usd'000", "000", "千元"}:
         return "thousand"
-    if raw in {"ten_thousand", "ten thousand", "万元"}:
-        return "ten_thousand"
-    if raw in {"million", "百万", "百万元"}:
+    if compact in {"rmb000", "hkd000", "usd000"}:
+        return "thousand"
+    if "million" in lowered or raw in {"百万", "百万元"}:
         return "million"
-    if raw in {"hundred_million", "hundred million", "亿元"}:
+    if raw in {"万元"}:
+        return "ten_thousand"
+    if lowered in {"ten_thousand", "ten thousand"}:
+        return "ten_thousand"
+    if lowered in {"hundred_million", "hundred million"} or raw in {"亿元"}:
         return "hundred_million"
     return None
 

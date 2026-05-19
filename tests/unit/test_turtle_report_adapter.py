@@ -1,6 +1,8 @@
 from dataclasses import dataclass
 from decimal import Decimal
 
+import pytest
+
 from tradingagents.dataflows.value_investment.turtle.report_adapter import (
     build_report_facts_from_extraction,
     get_turtle_report_facts,
@@ -422,3 +424,35 @@ def test_report_adapter_does_not_derive_payout_from_mixed_currency_fields():
 
     assert "dividend_avg_payout_ratio_3y" not in facts.fields
     assert "report payout proxy skipped: currency mismatch" in facts.caveats
+
+
+@pytest.mark.parametrize(
+    ("currency", "unit", "expected_unit"),
+    [
+        ("HKD", "HKD", "yuan"),
+        ("HKD", "HK$", "yuan"),
+        ("HKD", "港元", "yuan"),
+        ("HKD", "HK$ million", "million"),
+        ("HKD", "HKD'000", "thousand"),
+        ("USD", "USD", "yuan"),
+        ("USD", "US$", "yuan"),
+        ("USD", "US$ million", "million"),
+        ("CNY", "RMB million", "million"),
+    ],
+)
+def test_report_adapter_accepts_common_currency_unit_aliases(currency, unit, expected_unit):
+    extraction = FakeExtraction(fields={
+        "net_profit": FakeField("net_profit", Decimal("123"), currency=currency, unit=unit),
+    })
+
+    facts = build_report_facts_from_extraction(
+        extraction=extraction,
+        allow_llm_models=(),
+        adapter_caveats=[],
+    )
+
+    field = facts.fields["net_profit"]
+    assert isinstance(field.value, MoneyAmount)
+    assert field.value.currency == currency
+    assert field.value.unit == expected_unit
+    assert field.reliability == "reliable"
