@@ -89,6 +89,17 @@ def test_should_continue_value_stops_after_executed_tool_call_cap():
                 name="get_value_investment_analysis",
                 tool_call_id="call_value",
             ),
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "get_value_investment_analysis",
+                        "args": {"ticker": "000001", "market": "A"},
+                        "id": "call_value_retry",
+                        "type": "tool_call",
+                    }
+                ],
+            ),
         ],
         "value_report": "",
         "value_tool_call_count": 1,
