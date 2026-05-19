@@ -54,10 +54,21 @@ def _fx_rates(facts: TurtleFacts) -> dict[str, float]:
     return rates
 
 
-def _money_fact_currencies(facts: TurtleFacts) -> set[str]:
+FORMULA_MONEY_FIELDS = (
+    "net_profit",
+    "operating_cash_flow",
+    "capex",
+    "cash",
+    "interest_bearing_debt",
+    "market_cap",
+    "buyback_amount",
+)
+
+
+def _money_fact_currencies(facts: TurtleFacts, names: Iterable[str] = FORMULA_MONEY_FIELDS) -> set[str]:
     currencies: set[str] = set()
-    for fields in (facts.report.fields, facts.market.fields):
-        for fact in fields.values():
+    for name in names:
+        for fact in _field_candidates(facts, name):
             if not isinstance(fact.value, MoneyAmount):
                 continue
             if fact.reliability != "reliable" or fact.value.reliability != "reliable":
@@ -67,12 +78,11 @@ def _money_fact_currencies(facts: TurtleFacts) -> set[str]:
             if not math.isfinite(float(fact.value.value)):
                 continue
             currencies.add(fact.value.currency.upper())
+            break
     return currencies
 
 
 def _money_target_currency(facts: TurtleFacts) -> str:
-    if _fx_rates(facts):
-        return "CNY"
     currencies = _money_fact_currencies(facts)
     if len(currencies) == 1:
         return next(iter(currencies))
