@@ -344,6 +344,31 @@ def test_report_adapter_replaces_display_only_payout_with_reliable_proxy():
     assert payout.caveat == "single-year report payout proxy; not a 3-year average"
 
 
+def test_report_adapter_replaces_reliable_non_numeric_payout_with_proxy():
+    extraction = FakeExtraction(fields={
+        "dividend_avg_payout_ratio_3y": FakeField(
+            "dividend_avg_payout_ratio_3y",
+            "35%",
+            currency="",
+            unit="",
+            is_reliable=True,
+        ),
+        "net_profit": FakeField("net_profit", Decimal("100"), currency="HKD", unit="million"),
+        "dividends_paid": FakeField("dividends_paid", Decimal("-35"), currency="HKD", unit="million"),
+    })
+
+    facts = build_report_facts_from_extraction(
+        extraction=extraction,
+        allow_llm_models=(),
+        adapter_caveats=[],
+    )
+
+    payout = facts.fields["dividend_avg_payout_ratio_3y"]
+    assert payout.value == 0.35
+    assert payout.reliability == "reliable"
+    assert payout.caveat == "single-year report payout proxy; not a 3-year average"
+
+
 def test_report_adapter_skips_non_finite_derived_payout_ratio():
     extraction = FakeExtraction(fields={
         "net_profit": FakeField("net_profit", Decimal("1e-308"), currency="HKD", unit="million"),

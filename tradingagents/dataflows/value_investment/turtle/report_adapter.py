@@ -164,12 +164,19 @@ def _reliable_money_field(
     return field
 
 
+def _is_reliable_numeric_field(field: TurtleFactValue | None) -> bool:
+    if field is None or field.reliability != "reliable":
+        return False
+    if isinstance(field.value, bool) or not isinstance(field.value, (int, float)):
+        return False
+    return isfinite(float(field.value))
+
+
 def _derive_report_payout_proxy(
     fields: dict[str, TurtleFactValue],
     caveats: list[str],
 ) -> None:
-    existing_payout = fields.get("dividend_avg_payout_ratio_3y")
-    if existing_payout is not None and existing_payout.reliability == "reliable":
+    if _is_reliable_numeric_field(fields.get("dividend_avg_payout_ratio_3y")):
         return
 
     dividend = _reliable_money_field(fields, "dividends_paid")
