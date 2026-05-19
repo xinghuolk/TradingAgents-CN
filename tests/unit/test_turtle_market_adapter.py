@@ -1,6 +1,7 @@
 from tradingagents.dataflows.value_investment.turtle.market_adapter import (
     build_market_facts,
     default_tax_rate,
+    get_turtle_market_facts,
 )
 
 
@@ -9,6 +10,45 @@ def test_default_tax_rate_by_holding_channel():
     assert default_tax_rate("HK", "stock_connect") == 0.20
     assert default_tax_rate("HK", "direct_h_share") == 0.28
     assert default_tax_rate("US", "w8ben") == 0.10
+
+
+def test_get_turtle_market_facts_routes_hk_to_hk_market_provider(monkeypatch):
+    def reject_legacy_a_share_market_fetch(ticker, market):
+        raise AssertionError("HK market facts must not use the A-share market fetcher")
+
+    monkeypatch.setattr(
+        "tradingagents.tools.value_investment_tool._fetch_market_data_structured",
+        reject_legacy_a_share_market_fetch,
+    )
+    monkeypatch.setattr(
+        "tradingagents.tools.value_investment_tool._fetch_dividend_data_sync",
+        lambda ticker, market: {"avg_payout_ratio_3y": 0.45, "records": [{"year": 2025}]},
+    )
+    monkeypatch.setattr(
+        "tradingagents.tools.value_investment_tool._fetch_buyback_data_sync",
+        lambda ticker, market: {"total_cancelled_amount": 1_000_000, "records": [{"year": 2025}]},
+    )
+    monkeypatch.setattr(
+        "tradingagents.tools.value_investment_tool._get_industry_dynamic",
+        lambda ticker, market: "legacy-industry",
+    )
+    monkeypatch.setattr(
+        "tradingagents.dataflows.providers.hk.hk_stock.get_hk_stock_info",
+        lambda ticker: {
+            "market_cap": 2_000_000_000_000,
+            "price": 400.0,
+            "industry": "互联网",
+            "source": "yfinance_hk",
+        },
+    )
+
+    facts = get_turtle_market_facts("0700.HK", "HK", "stock_connect")
+
+    assert facts.fields["market_cap"].value.value == 2_000_000_000_000
+    assert facts.fields["market_cap"].value.currency == "HKD"
+    assert facts.fields["close_price"].value == 400.0
+    assert facts.fields["industry"].value == "互联网"
+    assert "market_cap missing" not in " ".join(facts.caveats)
 
 
 def test_build_market_facts_marks_missing_market_cap_as_caveat():

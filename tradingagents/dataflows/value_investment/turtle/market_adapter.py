@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 from math import isfinite
 from typing import Any
@@ -9,12 +10,17 @@ from typing import Any
 from .facts import MoneyAmount, TurtleFactValue, TurtleMarketFacts, default_holding_channel
 
 
+logger = logging.getLogger(__name__)
 SOURCE_LABEL = "market-adapter"
 DEFAULT_CHANNEL_CAVEAT = "tax_rate uses default holding_channel until UI/API exposes channel selection"
 
 
 def _normalize_market(market: str) -> str:
     return (market or "").strip().upper()
+
+
+def _is_hk_market(market: str) -> bool:
+    return _normalize_market(market) in {"HK", "HKG"}
 
 
 def _is_numeric(value: Any) -> bool:
@@ -56,7 +62,65 @@ def _append_caveat(caveats: list[str], caveat: str) -> None:
 
 
 def _currency_for_market(market: str) -> str:
-    return "HKD" if _normalize_market(market) in {"HK", "HKG"} else "CNY"
+    return "HKD" if _is_hk_market(market) else "CNY"
+
+
+def _first_present(data: dict[str, Any], keys: tuple[str, ...]) -> Any:
+    for key in keys:
+        value = data.get(key)
+        if value is not None:
+            return value
+    return None
+
+
+def _fetch_hk_market_data(ticker: str) -> dict[str, Any]:
+    """Fetch HK quote facts from the HK provider and map them to Turtle inputs."""
+    try:
+        from tradingagents.dataflows.providers.hk.hk_stock import get_hk_stock_info
+
+        info = get_hk_stock_info(ticker) or {}
+    except Exception as exc:
+        logger.warning("Failed to fetch HK market data for %s: %s", ticker, exc)
+        return {}
+
+    return {
+        "market_cap": _first_present(info, ("market_cap", "marketCap")),
+        "close_price": _first_present(
+            info,
+            (
+                "close_price",
+                "price",
+                "current_price",
+                "currentPrice",
+                "regularMarketPrice",
+                "regular_market_price",
+            ),
+        ),
+        "total_shares": _first_present(info, ("total_shares", "shares_outstanding", "sharesOutstanding")),
+        "industry": info.get("industry"),
+        "source": info.get("source"),
+    }
+
+
+def _fetch_turtle_market_data(ticker: str, market: str) -> dict[str, Any]:
+    if _is_hk_market(market):
+        return _fetch_hk_market_data(ticker)
+
+    from tradingagents.tools.value_investment_tool import _fetch_market_data_structured
+
+    return _fetch_market_data_structured(ticker, market)
+
+
+def _fetch_turtle_industry(ticker: str, market: str, market_data: dict[str, Any] | None) -> str | None:
+    industry = (market_data or {}).get("industry")
+    if industry:
+        return industry
+    if _is_hk_market(market):
+        return None
+
+    from tradingagents.tools.value_investment_tool import _get_industry_dynamic
+
+    return _get_industry_dynamic(ticker, market)
 
 
 def _env_rf_rate(market: str) -> float | None:
@@ -247,16 +311,16 @@ def get_turtle_market_facts(ticker: str, market: str, holding_channel: str | Non
     from tradingagents.tools.value_investment_tool import (
         _fetch_buyback_data_sync,
         _fetch_dividend_data_sync,
-        _fetch_market_data_structured,
-        _get_industry_dynamic,
     )
+
+    market_data = _fetch_turtle_market_data(ticker, market)
 
     return build_market_facts(
         ticker=ticker,
         market=market,
         holding_channel=holding_channel,
-        market_data=_fetch_market_data_structured(ticker, market),
+        market_data=market_data,
         dividend_data=_fetch_dividend_data_sync(ticker, market),
         buyback_data=_fetch_buyback_data_sync(ticker, market),
-        industry=_get_industry_dynamic(ticker, market),
+        industry=_fetch_turtle_industry(ticker, market, market_data),
     )
