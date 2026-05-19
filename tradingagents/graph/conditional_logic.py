@@ -199,6 +199,40 @@ class ConditionalLogic:
         logger.info(f"🔀 [条件判断] ✅ 无tool_calls，返回: Msg Clear Fundamentals")
         return "Msg Clear Fundamentals"
 
+    def should_continue_value(self, state: AgentState):
+        """Determine if value investment analysis should continue."""
+        from tradingagents.utils.logging_init import get_logger
+        logger = get_logger("agents")
+
+        messages = state["messages"]
+        last_message = messages[-1]
+
+        tool_call_count = state.get("value_tool_call_count", 0)
+        max_tool_calls = 1
+        value_report = state.get("value_report", "")
+
+        logger.info(f"🔀 [条件判断] should_continue_value")
+        logger.info(f"🔀 [条件判断] - 消息数量: {len(messages)}")
+        logger.info(f"🔀 [条件判断] - 报告长度: {len(value_report)}")
+        logger.info(f"🔧 [死循环修复] - 工具调用次数: {tool_call_count}/{max_tool_calls}")
+
+        if value_report and len(value_report) > 100:
+            logger.info("🔀 [条件判断] ✅ 价值投资报告已完成，返回: Msg Clear Value")
+            return "Msg Clear Value"
+
+        if hasattr(last_message, "tool_calls") and last_message.tool_calls:
+            if tool_call_count >= max_tool_calls:
+                logger.warning(
+                    f"🔧 [死循环修复] 价值投资工具调用次数已达上限({tool_call_count}/{max_tool_calls})，强制结束"
+                )
+                return "Msg Clear Value"
+
+            logger.info("🔀 [条件判断] 🔧 检测到价值投资工具调用，返回: tools_value")
+            return "tools_value"
+
+        logger.info("🔀 [条件判断] ✅ 无tool_calls，返回: Msg Clear Value")
+        return "Msg Clear Value"
+
     def should_continue_debate(self, state: AgentState) -> str:
         """Determine if debate should continue."""
         current_count = state["investment_debate_state"]["count"]
