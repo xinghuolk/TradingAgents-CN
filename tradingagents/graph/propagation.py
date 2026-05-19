@@ -49,6 +49,8 @@ class Propagator:
             "fundamentals_report": "",
             "sentiment_report": "",
             "news_report": "",
+            "value_report": "",
+            "value_tool_call_count": 0,
         }
 
     def get_graph_args(self, use_progress_callback: bool = False) -> Dict[str, Any]:

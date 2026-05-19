@@ -24,6 +24,12 @@ export const ANALYSTS: Analyst[] = [
     icon: 'DataAnalysis'
   },
   {
+    id: 'value',
+    name: '价值投资分析师',
+    description: '基于穿透收益率、分红回购和现金健康的实验性价值指标分析',
+    icon: 'Money'
+  },
+  {
     id: 'news',
     name: '新闻分析师',
     description: '分析相关新闻、公告和市场事件的影响',
@@ -62,6 +68,7 @@ export const isValidAnalyst = (name: string): boolean => {
 export const ANALYST_NAME_TO_ID_MAP: Record<string, string> = {
   '市场分析师': 'market',
   '基本面分析师': 'fundamentals',
+  '价值投资分析师': 'value',
   '新闻分析师': 'news',
   '社媒分析师': 'social'
 }

@@ -15,6 +15,8 @@ def create_trader(llm, memory):
         sentiment_report = state["sentiment_report"]
         news_report = state["news_report"]
         fundamentals_report = state["fundamentals_report"]
+        value_report = state.get("value_report", "")
+        value_report_section = f"\n价值投资分析：{value_report}" if value_report else ""
 
         # 使用统一的股票类型检测
         from tradingagents.utils.stock_utils import StockUtils
@@ -32,9 +34,13 @@ def create_trader(llm, memory):
         logger.debug(f"💰 [DEBUG] 货币符号: {currency_symbol}")
         logger.debug(f"💰 [DEBUG] 市场详情: 中国A股={is_china}, 港股={is_hk}, 美股={is_us}")
         logger.debug(f"💰 [DEBUG] 基本面报告长度: {len(fundamentals_report)}")
+        logger.debug(f"💰 [DEBUG] 价值投资报告长度: {len(value_report)}")
         logger.debug(f"💰 [DEBUG] 基本面报告前200字符: {fundamentals_report[:200]}...")
 
-        curr_situation = f"{market_research_report}\n\n{sentiment_report}\n\n{news_report}\n\n{fundamentals_report}"
+        curr_situation = (
+            f"{market_research_report}\n\n{sentiment_report}\n\n{news_report}"
+            f"\n\n{fundamentals_report}{value_report_section}"
+        )
 
         # 检查memory是否可用
         if memory is not None:

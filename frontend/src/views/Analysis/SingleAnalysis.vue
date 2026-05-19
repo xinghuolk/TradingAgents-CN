@@ -1262,11 +1262,12 @@ const getAnalysisReports = (data: any) => {
 
   // 定义报告映射（按照完整的分析流程顺序）
   const reportMappings = [
-    // 分析师团队 (4个)
+    // 分析师团队 (5个)
     { key: 'market_report', title: '📈 市场技术分析', category: '分析师团队' },
     { key: 'sentiment_report', title: '💭 市场情绪分析', category: '分析师团队' },
     { key: 'news_report', title: '📰 新闻事件分析', category: '分析师团队' },
     { key: 'fundamentals_report', title: '💰 基本面分析', category: '分析师团队' },
+    { key: 'value_report', title: '💎 价值投资分析', category: '分析师团队' },
 
     // 研究团队 (3个)
     { key: 'bull_researcher', title: '🐂 多头研究员', category: '研究团队' },
@@ -1318,6 +1319,7 @@ const getReportIcon = (title: string) => {
   const iconMap: Record<string, string> = {
     '📈 市场技术分析': '📈',
     '💰 基本面分析': '💰',
+    '💎 价值投资分析': '💎',
     '📰 新闻事件分析': '📰',
     '💭 市场情绪分析': '💭',
     '📋 投资建议': '📋',
@@ -1339,6 +1341,7 @@ const getReportDescription = (title: string) => {
   const descMap: Record<string, string> = {
     '📈 市场技术分析': '技术指标、价格趋势、支撑阻力位分析',
     '💰 基本面分析': '财务数据、估值水平、盈利能力分析',
+    '💎 价值投资分析': '穿透收益率、分红回购和现金健康指标分析',
     '📰 新闻事件分析': '相关新闻事件、市场动态影响分析',
     '💭 市场情绪分析': '投资者情绪、社交媒体情绪指标',
     '📋 投资建议': '具体投资策略、仓位管理建议',

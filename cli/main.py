@@ -161,6 +161,7 @@ class MessageBuffer:
             "Social Analyst": "pending",
             "News Analyst": "pending",
             "Fundamentals Analyst": "pending",
+            "Value Analyst": "pending",
             # Research Team
             "Bull Researcher": "pending",
             "Bear Researcher": "pending",
@@ -180,6 +181,7 @@ class MessageBuffer:
             "sentiment_report": None,
             "news_report": None,
             "fundamentals_report": None,
+            "value_report": None,
             "investment_plan": None,
             "trader_investment_plan": None,
             "final_trade_decision": None,
@@ -221,6 +223,7 @@ class MessageBuffer:
                 "sentiment_report": "Social Sentiment",
                 "news_report": "News Analysis",
                 "fundamentals_report": "Fundamentals Analysis",
+                "value_report": "Value Analysis",
                 "investment_plan": "Research Team Decision",
                 "trader_investment_plan": "Trading Team Plan",
                 "final_trade_decision": "Portfolio Management Decision",
@@ -243,6 +246,7 @@ class MessageBuffer:
                 "sentiment_report",
                 "news_report",
                 "fundamentals_report",
+                "value_report",
             ]
         ):
             report_parts.append("## Analyst Team Reports")
@@ -261,6 +265,10 @@ class MessageBuffer:
             if self.report_sections["fundamentals_report"]:
                 report_parts.append(
                     f"### Fundamentals Analysis\n{self.report_sections['fundamentals_report']}"
+                )
+            if self.report_sections["value_report"]:
+                report_parts.append(
+                    f"### Value Analysis\n{self.report_sections['value_report']}"
                 )
 
         # Research Team Reports
@@ -346,6 +354,7 @@ def update_display(layout, spinner_text=None):
             "Social Analyst",
             "News Analyst",
             "Fundamentals Analyst",
+            "Value Analyst",
         ],
         "Research Team": ["Bull Researcher", "Bear Researcher", "Research Manager"],
         "Trading Team": ["Trader"],
@@ -805,6 +814,17 @@ def display_complete_report(final_state):
             )
         )
 
+    # Value Analyst Report
+    if final_state.get("value_report"):
+        analyst_reports.append(
+            Panel(
+                Markdown(final_state["value_report"]),
+                title="💎 价值投资分析",
+                border_style="magenta",
+                padding=(1, 2),
+            )
+        )
+
     if analyst_reports:
         console.print(
             Panel(
@@ -1256,6 +1276,7 @@ def run_analysis():
         analysis_steps = {
             "market_report": "📈 市场分析师",
             "fundamentals_report": "📊 基本面分析师",
+            "value_report": "💎 价值投资分析师",
             "technical_report": "🔍 技术分析师",
             "sentiment_report": "💭 情感分析师",
             "final_report": "🤖 信号处理器"
@@ -1373,6 +1394,29 @@ def run_analysis():
                     message_buffer.update_agent_status(
                         "Fundamentals Analyst", "completed"
                     )
+                    if any(
+                        getattr(analyst, "value", analyst) == "value"
+                        for analyst in selections["analysts"]
+                    ):
+                        message_buffer.update_agent_status(
+                            "Value Analyst", "in_progress"
+                        )
+                    else:
+                        # Set all research team members to in_progress
+                        update_research_team_status("in_progress")
+
+                if "value_report" in chunk and chunk["value_report"]:
+                    if "value_report" not in completed_analysts:
+                        ui.show_success("💎 价值投资分析完成")
+                        completed_analysts.add("value_report")
+                        logger.info(f"首次显示价值投资分析完成提示，已完成分析师: {completed_analysts}")
+                    else:
+                        logger.debug(f"跳过重复的价值投资分析完成提示，已完成分析师: {completed_analysts}")
+
+                    message_buffer.update_report_section(
+                        "value_report", chunk["value_report"]
+                    )
+                    message_buffer.update_agent_status("Value Analyst", "completed")
                     # Set all research team members to in_progress
                     update_research_team_status("in_progress")
 
