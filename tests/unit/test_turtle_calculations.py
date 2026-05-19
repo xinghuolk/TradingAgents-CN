@@ -125,6 +125,33 @@ def test_compute_turtle_signals_degrades_without_buyback():
     assert "buyback_amount missing; treated as 0 for degraded calculation" in signals.caveats
 
 
+def test_compute_turtle_signals_degrades_when_only_buyback_currency_needs_missing_fx():
+    hkd_report = {
+        "net_profit": money("net_profit", 100, "report.net_profit", currency="HKD"),
+        "operating_cash_flow": money("operating_cash_flow", 120, "report.ocf", currency="HKD"),
+        "capex": money("capex", 20, "report.capex", currency="HKD"),
+        "cash": money("cash", 500, "report.cash", currency="HKD"),
+        "interest_bearing_debt": money("interest_bearing_debt", 50, "report.debt", currency="HKD"),
+    }
+    market_fields = {
+        "market_cap": money("market_cap", 1000, "market.market_cap", currency="HKD"),
+        "buyback_amount": money("buyback_amount", 10, "market.buyback", currency="CNY"),
+    }
+
+    signals = compute_turtle_signals(base_facts(
+        market="HK",
+        report_fields=hkd_report,
+        market_fields=market_fields,
+    ))
+
+    assert signals.status == "degraded"
+    assert signals.results["R"].status == "degraded"
+    assert signals.results["R"].value == pytest.approx(4.0)
+    assert signals.results["GG"].value == pytest.approx(4.0)
+    assert "buyback_amount" in signals.results["R"].missing_inputs
+    assert "FX rate required for CNY:HKD" in signals.caveats
+
+
 def test_compute_turtle_signals_keeps_hh_complete_without_buyback():
     facts = base_facts()
     market = TurtleMarketFacts(fields={key: value for key, value in facts.market.fields.items() if key != "buyback_amount"})
@@ -231,6 +258,30 @@ def test_compute_turtle_signals_treats_money_conversion_failure_as_missing():
     assert signals.status == "non_decisionable"
     assert signals.results["R"].value is None
     assert "net_profit" in signals.results["R"].missing_inputs
+
+
+def test_compute_turtle_signals_target_currency_ignores_invalid_first_money_candidate():
+    signals = compute_turtle_signals(base_facts(
+        market="HK",
+        report_fields={
+            "net_profit": money("net_profit", 100, "report.invalid_net_profit", currency="CNY", unit="billion"),
+            "operating_cash_flow": money("operating_cash_flow", 120, "report.ocf", currency="HKD"),
+            "capex": money("capex", 20, "report.capex", currency="HKD"),
+            "cash": money("cash", 500, "report.cash", currency="HKD"),
+            "interest_bearing_debt": money("interest_bearing_debt", 50, "report.debt", currency="HKD"),
+        },
+        market_fields={
+            "net_profit": money("net_profit", 100, "market.net_profit", currency="HKD"),
+            "market_cap": money("market_cap", 1000, "market.market_cap", currency="HKD"),
+            "buyback_amount": money("buyback_amount", 10, "market.buyback", currency="HKD"),
+        },
+    ))
+
+    assert signals.status == "complete"
+    assert signals.results["R"].value == pytest.approx(5.0)
+    assert "market.net_profit" in signals.results["R"].sources
+    assert "Unsupported money unit: billion" in signals.caveats
+    assert "FX rate required" not in " ".join(signals.caveats)
 
 
 def test_compute_turtle_signals_rejects_bool_money_value():

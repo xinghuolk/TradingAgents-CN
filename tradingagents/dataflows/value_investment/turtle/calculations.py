@@ -64,8 +64,17 @@ FORMULA_MONEY_FIELDS = (
     "buyback_amount",
 )
 
+TARGET_CURRENCY_MONEY_FIELDS = (
+    "net_profit",
+    "operating_cash_flow",
+    "capex",
+    "cash",
+    "interest_bearing_debt",
+    "market_cap",
+)
 
-def _money_fact_currencies(facts: TurtleFacts, names: Iterable[str] = FORMULA_MONEY_FIELDS) -> set[str]:
+
+def _money_fact_currencies(facts: TurtleFacts, names: Iterable[str] = TARGET_CURRENCY_MONEY_FIELDS) -> set[str]:
     currencies: set[str] = set()
     for name in names:
         for fact in _field_candidates(facts, name):
@@ -76,6 +85,12 @@ def _money_fact_currencies(facts: TurtleFacts, names: Iterable[str] = FORMULA_MO
             if isinstance(fact.value.value, bool) or not isinstance(fact.value.value, (int, float)):
                 continue
             if not math.isfinite(float(fact.value.value)):
+                continue
+            try:
+                amount = fact.value.to_hundred_million(target_currency=fact.value.currency, fx_rates={})
+            except (TypeError, ValueError, OverflowError):
+                continue
+            if not math.isfinite(amount.value):
                 continue
             currencies.add(fact.value.currency.upper())
             break
@@ -244,6 +259,7 @@ def _buyback_input(
 def compute_turtle_signals(facts: TurtleFacts) -> TurtleComputedSignals:
     results: dict[str, FormulaResult] = {}
     caveats = _combined_caveats(facts)
+    has_input_caveats = bool(caveats)
     target_currency = _money_target_currency(facts)
     money_unit = f"hundred_million {target_currency}"
 
@@ -441,7 +457,7 @@ def compute_turtle_signals(facts: TurtleFacts) -> TurtleComputedSignals:
     critical_non_decisionable = results["R"].status == "non_decisionable" or results["GG"].status == "non_decisionable"
     if critical_non_decisionable or facts.status == "non_decisionable":
         status: TurtleStatus = "non_decisionable"
-    elif facts.status == "degraded" or caveats or any(result.status == "degraded" for result in results.values()):
+    elif facts.status == "degraded" or has_input_caveats or any(result.status == "degraded" for result in results.values()):
         status = "degraded"
     else:
         status = "complete"
