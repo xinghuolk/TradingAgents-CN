@@ -18,6 +18,13 @@ from .facts import (
 )
 
 
+TURTLE_FIELD_ALIASES = {
+    "capital_expenditures": "capex",
+    "cash_and_equivalents": "cash",
+    "money_cap": "cash",
+}
+
+
 def _normalize_market(market: str) -> str:
     normalized = market.strip().upper()
     return "CN" if normalized == "A" else normalized
@@ -27,6 +34,10 @@ def _field_reference(field: Any) -> str:
     field_id = str(getattr(field, "field_id", "unknown") or "unknown")
     page = getattr(field, "evidence_page", None)
     return f"{field_id} p.{page}" if page is not None else field_id
+
+
+def _turtle_field_name(field_id: str) -> str:
+    return TURTLE_FIELD_ALIASES.get(field_id, field_id)
 
 
 def _field_unit(field: Any) -> MoneyUnit | None:
@@ -168,8 +179,9 @@ def build_report_facts_from_extraction(
         caveat = decision.caveat
         if stale_extraction:
             caveat = _merge_caveats(caveat, "stale extraction is display-only by policy")
-        adapted[field_id], degradation_caveat = _adapt_value(
-            field_id=field_id,
+        turtle_field_id = _turtle_field_name(field_id)
+        adapted[turtle_field_id], degradation_caveat = _adapt_value(
+            field_id=turtle_field_id,
             field=field,
             source_label=decision.source_label,
             reliability=reliability,

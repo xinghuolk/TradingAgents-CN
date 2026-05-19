@@ -5,6 +5,14 @@ from tradingagents.dataflows.value_investment.turtle.report_adapter import (
     build_report_facts_from_extraction,
     get_turtle_report_facts,
 )
+from tradingagents.dataflows.value_investment.turtle.calculations import compute_turtle_signals
+from tradingagents.dataflows.value_investment.turtle.facts import (
+    MoneyAmount,
+    TurtleFactValue,
+    TurtleFacts,
+    TurtleMarketFacts,
+    TurtleRunContext,
+)
 
 
 @dataclass(frozen=True)
@@ -107,6 +115,69 @@ def test_stale_extraction_fields_are_display_only_even_when_reliable():
     assert facts.fields["net_profit"].reliability == "display_only"
     assert facts.fields["net_profit"].value.reliability == "display_only"
     assert "stale extraction is display-only by policy" in facts.caveats
+
+
+def test_public_catalog_field_names_are_normalized_for_turtle_calculations():
+    extraction = FakeExtraction(fields={
+        "net_profit": FakeField("net_profit", Decimal("10000000000"), unit="亿元"),
+        "operating_cash_flow": FakeField("operating_cash_flow", Decimal("12000000000"), unit="亿元"),
+        "capital_expenditures": FakeField("capital_expenditures", Decimal("2000000000"), unit="亿元"),
+        "cash_and_equivalents": FakeField("cash_and_equivalents", Decimal("50000000000"), unit="亿元"),
+        "interest_bearing_debt": FakeField("interest_bearing_debt", Decimal("5000000000"), unit="亿元"),
+    })
+
+    report = build_report_facts_from_extraction(
+        extraction=extraction,
+        allow_llm_models=(),
+        adapter_caveats=[],
+    )
+
+    assert "capex" in report.fields
+    assert "cash" in report.fields
+    assert "capital_expenditures" not in report.fields
+    assert "cash_and_equivalents" not in report.fields
+
+    facts = TurtleFacts(
+        context=TurtleRunContext.for_ticker(
+            ticker="600519",
+            market="A",
+            trade_date="2026-05-19",
+            company_name="贵州茅台",
+        ),
+        report=report,
+        market=TurtleMarketFacts(fields={
+            "market_cap": TurtleFactValue(
+                name="market_cap",
+                value=MoneyAmount(200000000000, "CNY", "yuan", "fixture", "market.market_cap"),
+                source_label="fixture",
+                source_reference="market.market_cap",
+            ),
+            "dividend_avg_payout_ratio_3y": TurtleFactValue(
+                name="dividend_avg_payout_ratio_3y",
+                value=0.5,
+                source_label="fixture",
+                source_reference="market.dividend",
+            ),
+            "tax_rate": TurtleFactValue(
+                name="tax_rate",
+                value=0.0,
+                source_label="fixture",
+                source_reference="market.tax",
+            ),
+            "buyback_amount": TurtleFactValue(
+                name="buyback_amount",
+                value=MoneyAmount(0, "CNY", "yuan", "fixture", "market.buyback"),
+                source_label="fixture",
+                source_reference="market.buyback",
+            ),
+        }),
+        status="complete",
+    )
+
+    signals = compute_turtle_signals(facts)
+
+    assert signals.results["owner_earnings"].missing_inputs == []
+    assert signals.results["net_cash_ratio"].missing_inputs == []
 
 
 def test_unsupported_unit_and_missing_currency_become_display_only():
