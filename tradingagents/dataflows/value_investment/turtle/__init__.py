@@ -12,6 +12,7 @@ from .facts import (
     default_holding_channel,
     infer_turtle_period_end,
 )
+from .report_adapter import build_report_facts_from_extraction, get_turtle_report_facts
 
 __all__ = [
     "FormulaResult",
@@ -22,6 +23,8 @@ __all__ = [
     "TurtleMarketFacts",
     "TurtleReportFacts",
     "TurtleRunContext",
+    "build_report_facts_from_extraction",
     "default_holding_channel",
+    "get_turtle_report_facts",
     "infer_turtle_period_end",
 ]
