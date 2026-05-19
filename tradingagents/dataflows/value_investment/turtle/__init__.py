@@ -1,5 +1,6 @@
 """Turtle v0.15 value-investment flow helpers."""
 
+from .calculations import compute_turtle_signals
 from .facts import (
     FormulaResult,
     MoneyAmount,
@@ -26,6 +27,7 @@ __all__ = [
     "TurtleRunContext",
     "build_market_facts",
     "build_report_facts_from_extraction",
+    "compute_turtle_signals",
     "default_holding_channel",
     "default_tax_rate",
     "get_turtle_market_facts",
