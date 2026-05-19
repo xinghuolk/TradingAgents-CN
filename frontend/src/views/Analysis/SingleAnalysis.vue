@@ -1262,11 +1262,12 @@ const getAnalysisReports = (data: any) => {
 
   // 定义报告映射（按照完整的分析流程顺序）
   const reportMappings = [
-    // 分析师团队 (4个)
+    // 分析师团队 (5个)
     { key: 'market_report', title: '📈 市场技术分析', category: '分析师团队' },
     { key: 'sentiment_report', title: '💭 市场情绪分析', category: '分析师团队' },
     { key: 'news_report', title: '📰 新闻事件分析', category: '分析师团队' },
     { key: 'fundamentals_report', title: '💰 基本面分析', category: '分析师团队' },
+    { key: 'value_report', title: '💎 价值投资分析', category: '分析师团队' },
 
     // 研究团队 (3个)
     { key: 'bull_researcher', title: '🐂 多头研究员', category: '研究团队' },
