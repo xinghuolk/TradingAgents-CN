@@ -1,7 +1,7 @@
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
-from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_core.tools import tool
 from langgraph.prebuilt import ToolNode
 
@@ -48,7 +48,7 @@ def test_should_continue_value_stops_when_report_exists():
     assert ConditionalLogic().should_continue_value(state) == "Msg Clear Value"
 
 
-def test_should_continue_value_stops_at_tool_call_cap():
+def test_should_continue_value_routes_pending_tool_call_at_count_cap():
     state = {
         "messages": [
             AIMessage(
@@ -62,6 +62,33 @@ def test_should_continue_value_stops_at_tool_call_cap():
                     }
                 ],
             )
+        ],
+        "value_report": "",
+        "value_tool_call_count": 1,
+    }
+
+    assert ConditionalLogic().should_continue_value(state) == "tools_value"
+
+
+def test_should_continue_value_stops_after_executed_tool_call_cap():
+    state = {
+        "messages": [
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "get_value_investment_analysis",
+                        "args": {"ticker": "000001", "market": "A"},
+                        "id": "call_value",
+                        "type": "tool_call",
+                    }
+                ],
+            ),
+            ToolMessage(
+                content="value analysis result",
+                name="get_value_investment_analysis",
+                tool_call_id="call_value",
+            ),
         ],
         "value_report": "",
         "value_tool_call_count": 1,

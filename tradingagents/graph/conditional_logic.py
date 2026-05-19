@@ -201,6 +201,7 @@ class ConditionalLogic:
 
     def should_continue_value(self, state: AgentState):
         """Determine if value investment analysis should continue."""
+        from langchain_core.messages import ToolMessage
         from tradingagents.utils.logging_init import get_logger
         logger = get_logger("agents")
 
@@ -208,6 +209,9 @@ class ConditionalLogic:
         last_message = messages[-1]
 
         tool_call_count = state.get("value_tool_call_count", 0)
+        executed_tool_call_count = sum(
+            1 for message in messages if isinstance(message, ToolMessage)
+        )
         max_tool_calls = 1
         value_report = state.get("value_report", "")
 
@@ -215,15 +219,16 @@ class ConditionalLogic:
         logger.info(f"🔀 [条件判断] - 消息数量: {len(messages)}")
         logger.info(f"🔀 [条件判断] - 报告长度: {len(value_report)}")
         logger.info(f"🔧 [死循环修复] - 工具调用次数: {tool_call_count}/{max_tool_calls}")
+        logger.info(f"🔧 [死循环修复] - 已执行工具调用次数: {executed_tool_call_count}/{max_tool_calls}")
 
         if value_report and len(value_report) > 100:
             logger.info("🔀 [条件判断] ✅ 价值投资报告已完成，返回: Msg Clear Value")
             return "Msg Clear Value"
 
         if hasattr(last_message, "tool_calls") and last_message.tool_calls:
-            if tool_call_count >= max_tool_calls:
+            if executed_tool_call_count >= max_tool_calls:
                 logger.warning(
-                    f"🔧 [死循环修复] 价值投资工具调用次数已达上限({tool_call_count}/{max_tool_calls})，强制结束"
+                    f"🔧 [死循环修复] 价值投资工具调用次数已达上限({executed_tool_call_count}/{max_tool_calls})，强制结束"
                 )
                 return "Msg Clear Value"
 
