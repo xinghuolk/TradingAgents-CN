@@ -153,6 +153,10 @@ def build_report_facts_from_extraction(
     source_fields = raw_fields if isinstance(raw_fields, dict) else {}
     adapted: dict[str, TurtleFactValue] = {}
     caveats = list(adapter_caveats)
+    staleness = getattr(extraction, "staleness", None)
+    stale_extraction = bool(getattr(staleness, "is_stale", False))
+    if stale_extraction:
+        _append_caveat(caveats, "stale extraction is display-only by policy")
 
     for field_id, field in source_fields.items():
         decision = policy.decide(field=field, result=extraction)
@@ -160,13 +164,16 @@ def build_report_facts_from_extraction(
         if not decision.can_compute and not decision.can_display:
             continue
 
-        reliability = "reliable" if decision.can_compute else "display_only"
+        reliability = "reliable" if decision.can_compute and not stale_extraction else "display_only"
+        caveat = decision.caveat
+        if stale_extraction:
+            caveat = _merge_caveats(caveat, "stale extraction is display-only by policy")
         adapted[field_id], degradation_caveat = _adapt_value(
             field_id=field_id,
             field=field,
             source_label=decision.source_label,
             reliability=reliability,
-            caveat=decision.caveat,
+            caveat=caveat,
         )
         _append_caveat(caveats, degradation_caveat)
 

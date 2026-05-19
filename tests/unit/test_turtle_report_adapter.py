@@ -90,6 +90,25 @@ def test_missing_extraction_returns_caveat_only_facts():
     assert facts.caveats == ["annual-report extraction missing"]
 
 
+def test_stale_extraction_fields_are_display_only_even_when_reliable():
+    extraction = FakeExtraction(
+        staleness=FakeStaleness(is_fresh=False, is_stale=True),
+        fields={
+            "net_profit": FakeField("net_profit", Decimal("10000000000"), unit="万元"),
+        },
+    )
+
+    facts = build_report_facts_from_extraction(
+        extraction=extraction,
+        allow_llm_models=(),
+        adapter_caveats=["annual-report extraction stale"],
+    )
+
+    assert facts.fields["net_profit"].reliability == "display_only"
+    assert facts.fields["net_profit"].value.reliability == "display_only"
+    assert "stale extraction is display-only by policy" in facts.caveats
+
+
 def test_unsupported_unit_and_missing_currency_become_display_only():
     extraction = FakeExtraction(fields={
         "revenue": FakeField("revenue", Decimal("123"), unit="shares"),
