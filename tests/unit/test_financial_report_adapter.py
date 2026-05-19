@@ -164,7 +164,9 @@ def test_create_adapter_does_not_probe_report_collector_for_provider_only(monkey
 
 
 def test_adapter_degrades_when_extractor_not_installed(monkeypatch):
-    monkeypatch.delitem(sys.modules, "financial_report_llm_extractor.client", raising=False)
+    import tradingagents.dataflows.financial_reports.adapter as adapter_module
+
+    monkeypatch.setattr(adapter_module, "_load_extractor_client", lambda: None)
     adapter = FinancialReportAdapter(config=FinancialReportClientConfig(
         enabled=True,
         cache_only=True,

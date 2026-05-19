@@ -20,14 +20,17 @@ FIELD_TO_KEY = {
     "net_profit": "net_profits",
     "operating_cash_flow": "operating_cash_flow",
     "capital_expenditures": "capex",
-    "total_equity": "total_equity",
-    "cash_and_equivalents": "cash_and_equivalents",
     "money_cap": "cash_and_equivalents",
-    "interest_bearing_debt": "interest_bearing_debt",
-    "current_assets": "current_assets",
-    "current_liabilities": "current_liabilities",
+    "cash": "cash_and_equivalents",
+    "total_cur_assets": "current_assets",
+    "total_cur_liab": "current_liabilities",
     "total_assets": "total_assets",
     "total_liabilities": "total_liabilities",
+    "equity_attributable_to_owners": "equity_attributable_to_owners",
+    "minority_int": "minority_int",
+    "st_borr": "st_borr",
+    "lt_borr": "lt_borr",
+    "bond_payable": "bond_payable",
 }
 
 
@@ -90,6 +93,46 @@ def _record_detail(
         "source": source_label,
         "caveat": caveat,
     }
+
+
+def _derive_aggregate_metrics(
+    data: dict[str, Any], details: dict[str, dict[str, Any]], used_keys: set[str]
+) -> None:
+    """Compose aggregate keys (total_equity, interest_bearing_debt) from primitive
+    catalog fields. Both require ALL primitive components to be present and numeric
+    — partial composition would silently mislead downstream consumers."""
+    data_source = data.setdefault("_data_source", {})
+
+    equity_inputs = {"equity_attributable_to_owners", "minority_int"}
+    if equity_inputs.issubset(used_keys):
+        parent = _to_float(data.get("equity_attributable_to_owners"))
+        minority = _to_float(data.get("minority_int"))
+        if parent is not None and minority is not None:
+            data["total_equity"] = parent + minority
+            data_source["total_equity"] = "financial-report-client:derived"
+            details["total_equity"] = {
+                "target_key": "total_equity",
+                "status": "derived",
+                "value": data["total_equity"],
+                "source": "financial-report-client:derived",
+                "caveat": None,
+            }
+
+    ibd_inputs = {"st_borr", "lt_borr", "bond_payable"}
+    if ibd_inputs.issubset(used_keys):
+        st = _to_float(data.get("st_borr"))
+        lt = _to_float(data.get("lt_borr"))
+        bond = _to_float(data.get("bond_payable"))
+        if st is not None and lt is not None and bond is not None:
+            data["interest_bearing_debt"] = st + lt + bond
+            data_source["interest_bearing_debt"] = "financial-report-client:derived"
+            details["interest_bearing_debt"] = {
+                "target_key": "interest_bearing_debt",
+                "status": "derived",
+                "value": data["interest_bearing_debt"],
+                "source": "financial-report-client:derived",
+                "caveat": None,
+            }
 
 
 def _derive_metrics(data: dict[str, Any], details: dict[str, dict[str, Any]], used_keys: set[str]) -> None:
@@ -192,6 +235,7 @@ def merge_financial_report_data(
             caveat=decision.caveat,
         )
 
+    _derive_aggregate_metrics(merged, details, used_keys)
     _derive_metrics(merged, details, used_keys)
     merged["_supplemented_details"].update(details)
     merged["_financial_report_client"] = {

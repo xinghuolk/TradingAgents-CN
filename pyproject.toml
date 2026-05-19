@@ -46,6 +46,9 @@ dependencies = [
     "tushare>=1.4.21",
     "yfinance>=0.2.63",
     "stockstats>=0.6.5",
+    # Annual-report extraction (FinancialReportClient adapter consumer).
+    # Source is pinned below until the extractor is published.
+    "financial-report-llm-extractor",
 
     # AI和LLM
     "chainlit>=2.5.5",
@@ -93,6 +96,10 @@ qianfan = ["qianfan>=0.4.12.3,<0.5"]
 
 [project.scripts]
 tradingagents = "main:main"
+
+[tool.uv.sources]
+# Replace with a versioned dependency after the extractor is published.
+financial-report-llm-extractor = { git = "https://github.com/xinghuolk/financial-report-llm-extractor.git", rev = "b03775925a5be22f31c4d67e90f88c5842ecaec6" }
 
 [tool.setuptools.packages.find]
 include = ["tradingagents*"]
