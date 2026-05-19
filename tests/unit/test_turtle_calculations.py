@@ -371,6 +371,44 @@ def test_compute_turtle_signals_uses_common_hkd_currency_without_fx_rates():
     assert "FX rate required for HKD:CNY" not in signals.caveats
 
 
+def test_compute_turtle_signals_keeps_r_gg_complete_when_only_net_cash_currency_mixed():
+    hkd_report = {
+        "net_profit": money("net_profit", 100, "report.net_profit", currency="HKD"),
+        "operating_cash_flow": money("operating_cash_flow", 120, "report.ocf", currency="HKD"),
+        "capex": money("capex", 20, "report.capex", currency="HKD"),
+        "cash": money("cash", 500, "report.cash", currency="CNY"),
+        "interest_bearing_debt": money("interest_bearing_debt", 50, "report.debt", currency="CNY"),
+    }
+    hkd_market = {
+        "market_cap": money("market_cap", 1000, "market.market_cap", currency="HKD"),
+        "buyback_amount": money("buyback_amount", 10, "market.buyback", currency="HKD"),
+    }
+
+    signals = compute_turtle_signals(base_facts(
+        market="HK",
+        report_fields=hkd_report,
+        market_fields=hkd_market,
+    ))
+
+    assert signals.status == "degraded"
+    assert signals.results["R"].status == "complete"
+    assert signals.results["R"].value == pytest.approx(5.0)
+    assert signals.results["GG"].status == "complete"
+    assert signals.results["GG"].value == pytest.approx(5.0)
+    assert "market_cap" not in signals.results["R"].missing_inputs
+    assert "cash" not in signals.results["R"].missing_inputs
+    assert "interest_bearing_debt" not in signals.results["R"].missing_inputs
+    assert "market_cap" not in signals.results["GG"].missing_inputs
+    assert "cash" not in signals.results["GG"].missing_inputs
+    assert "interest_bearing_debt" not in signals.results["GG"].missing_inputs
+    assert signals.results["net_cash_ratio"].status == "non_decisionable"
+    assert signals.results["net_cash_ratio"].value is None
+    assert "market_cap" in signals.results["net_cash_ratio"].missing_inputs
+    assert signals.results["ev_switch"].status == "non_decisionable"
+    assert signals.results["cash_protection"].status == "non_decisionable"
+    assert "FX rate required for HKD:CNY" in signals.caveats
+
+
 def test_compute_turtle_signals_ignores_unrelated_money_field_currency_for_hkd_native_calculation():
     hkd_report = {
         "net_profit": money("net_profit", 100, "report.net_profit", currency="HKD"),
