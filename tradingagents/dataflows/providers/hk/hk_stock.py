@@ -517,4 +517,3 @@ def get_hk_stock_info(symbol: str) -> Dict:
     """
     provider = get_hk_stock_provider()
     return provider.get_stock_info(symbol)
-
