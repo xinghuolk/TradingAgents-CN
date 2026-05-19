@@ -297,3 +297,61 @@ def test_get_turtle_report_facts_passes_turtle_period_end_to_adapter(monkeypatch
     assert facts.metadata["period_end"] == "2025-12-31"
     assert "annual-report extraction stale" in facts.caveats
     assert "adapter timeout" in facts.caveats
+
+
+def test_report_adapter_derives_caveated_single_year_payout_proxy():
+    extraction = FakeExtraction(fields={
+        "net_profit": FakeField("net_profit", Decimal("100"), currency="HKD", unit="million"),
+        "dividends_paid": FakeField("dividends_paid", Decimal("-35"), currency="HKD", unit="million"),
+    })
+
+    facts = build_report_facts_from_extraction(
+        extraction=extraction,
+        allow_llm_models=(),
+        adapter_caveats=[],
+    )
+
+    payout = facts.fields["dividend_avg_payout_ratio_3y"]
+    assert payout.value == 0.35
+    assert payout.source_reference == "dividends_paid p.7; net_profit p.7"
+    assert payout.caveat == "single-year report payout proxy; not a 3-year average"
+    assert "single-year report payout proxy; not a 3-year average" in facts.caveats
+
+
+def test_report_adapter_does_not_derive_payout_from_unreliable_dividend_field():
+    extraction = FakeExtraction(fields={
+        "net_profit": FakeField("net_profit", Decimal("100"), currency="HKD", unit="million"),
+        "dividends_paid": FakeField(
+            "dividends_paid",
+            Decimal("-35"),
+            currency="HKD",
+            unit="million",
+            is_reliable=False,
+            source="llm",
+            confidence="llm_supplement",
+        ),
+    })
+
+    facts = build_report_facts_from_extraction(
+        extraction=extraction,
+        allow_llm_models=(),
+        adapter_caveats=[],
+    )
+
+    assert "dividend_avg_payout_ratio_3y" not in facts.fields
+
+
+def test_report_adapter_does_not_derive_payout_from_mixed_currency_fields():
+    extraction = FakeExtraction(fields={
+        "net_profit": FakeField("net_profit", Decimal("100"), currency="HKD", unit="million"),
+        "dividends_paid": FakeField("dividends_paid", Decimal("-35"), currency="CNY", unit="million"),
+    })
+
+    facts = build_report_facts_from_extraction(
+        extraction=extraction,
+        allow_llm_models=(),
+        adapter_caveats=[],
+    )
+
+    assert "dividend_avg_payout_ratio_3y" not in facts.fields
+    assert "report payout proxy skipped: currency mismatch" in facts.caveats

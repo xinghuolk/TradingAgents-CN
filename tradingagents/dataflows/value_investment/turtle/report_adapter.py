@@ -22,7 +22,10 @@ TURTLE_FIELD_ALIASES = {
     "capital_expenditures": "capex",
     "cash_and_equivalents": "cash",
     "money_cap": "cash",
+    "dividends_paid": "dividends_paid",
 }
+
+PAYOUT_PROXY_CAVEAT = "single-year report payout proxy; not a 3-year average"
 
 
 def _normalize_market(market: str) -> str:
@@ -149,6 +152,66 @@ def _append_caveat(caveats: list[str], caveat: str | None) -> None:
         caveats.append(caveat)
 
 
+def _reliable_money_field(
+    fields: dict[str, TurtleFactValue],
+    name: str,
+) -> TurtleFactValue | None:
+    field = fields.get(name)
+    if field is None or field.reliability != "reliable":
+        return None
+    if not isinstance(field.value, MoneyAmount) or field.value.reliability != "reliable":
+        return None
+    return field
+
+
+def _derive_report_payout_proxy(
+    fields: dict[str, TurtleFactValue],
+    caveats: list[str],
+) -> None:
+    if "dividend_avg_payout_ratio_3y" in fields:
+        return
+
+    dividend = _reliable_money_field(fields, "dividends_paid")
+    profit = _reliable_money_field(fields, "net_profit")
+    if dividend is None or profit is None:
+        return
+
+    dividend_money = dividend.value
+    profit_money = profit.value
+    if dividend_money.currency.upper() != profit_money.currency.upper():
+        _append_caveat(caveats, "report payout proxy skipped: currency mismatch")
+        return
+
+    try:
+        dividend_amount = abs(float(
+            dividend_money.to_hundred_million(
+                target_currency=dividend_money.currency,
+            ).value
+        ))
+        profit_amount = float(
+            profit_money.to_hundred_million(
+                target_currency=profit_money.currency,
+            ).value
+        )
+    except (TypeError, ValueError, OverflowError):
+        _append_caveat(caveats, "report payout proxy skipped: invalid money value")
+        return
+
+    if profit_amount <= 0:
+        _append_caveat(caveats, "report payout proxy skipped: non-positive net_profit")
+        return
+
+    fields["dividend_avg_payout_ratio_3y"] = TurtleFactValue(
+        name="dividend_avg_payout_ratio_3y",
+        value=round(dividend_amount / profit_amount, 12),
+        source_label="financial-report-client",
+        source_reference=f"{dividend.source_reference}; {profit.source_reference}",
+        reliability="reliable",
+        caveat=PAYOUT_PROXY_CAVEAT,
+    )
+    _append_caveat(caveats, PAYOUT_PROXY_CAVEAT)
+
+
 def build_report_facts_from_extraction(
     *,
     extraction: Any | None,
@@ -188,6 +251,8 @@ def build_report_facts_from_extraction(
             caveat=caveat,
         )
         _append_caveat(caveats, degradation_caveat)
+
+    _derive_report_payout_proxy(adapted, caveats)
 
     metadata = {
         "company": getattr(extraction, "company", None),
