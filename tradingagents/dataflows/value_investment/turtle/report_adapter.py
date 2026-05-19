@@ -168,7 +168,8 @@ def _derive_report_payout_proxy(
     fields: dict[str, TurtleFactValue],
     caveats: list[str],
 ) -> None:
-    if "dividend_avg_payout_ratio_3y" in fields:
+    existing_payout = fields.get("dividend_avg_payout_ratio_3y")
+    if existing_payout is not None and existing_payout.reliability == "reliable":
         return
 
     dividend = _reliable_money_field(fields, "dividends_paid")
@@ -201,9 +202,14 @@ def _derive_report_payout_proxy(
         _append_caveat(caveats, "report payout proxy skipped: non-positive net_profit")
         return
 
+    ratio = dividend_amount / profit_amount
+    if not isfinite(ratio):
+        _append_caveat(caveats, "report payout proxy skipped: invalid payout ratio")
+        return
+
     fields["dividend_avg_payout_ratio_3y"] = TurtleFactValue(
         name="dividend_avg_payout_ratio_3y",
-        value=round(dividend_amount / profit_amount, 12),
+        value=round(ratio, 12),
         source_label="financial-report-client",
         source_reference=f"{dividend.source_reference}; {profit.source_reference}",
         reliability="reliable",
