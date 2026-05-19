@@ -208,6 +208,8 @@ class ConditionalLogic:
         messages = state["messages"]
         last_message = messages[-1]
 
+        # value_tool_call_count is incremented when the analyst emits a tool call.
+        # Cap enforcement must use ToolMessage count so the pending call can run.
         tool_call_count = state.get("value_tool_call_count", 0)
         executed_tool_call_count = sum(
             1 for message in messages if isinstance(message, ToolMessage)
