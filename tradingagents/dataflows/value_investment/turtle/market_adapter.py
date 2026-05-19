@@ -1,0 +1,250 @@
+"""Adapt non-report market inputs into Turtle market facts."""
+
+from __future__ import annotations
+
+import os
+from math import isfinite
+from typing import Any
+
+from .facts import MoneyAmount, TurtleFactValue, TurtleMarketFacts, default_holding_channel
+
+
+SOURCE_LABEL = "market-adapter"
+DEFAULT_CHANNEL_CAVEAT = "tax_rate uses default holding_channel until UI/API exposes channel selection"
+
+
+def _normalize_market(market: str) -> str:
+    return (market or "").strip().upper()
+
+
+def _is_numeric(value: Any) -> bool:
+    if isinstance(value, bool):
+        return False
+    try:
+        return isfinite(float(value))
+    except (TypeError, ValueError):
+        return False
+
+
+def _numeric_value(value: Any) -> float | None:
+    if not _is_numeric(value):
+        return None
+    return float(value)
+
+
+def _field(
+    name: str,
+    value: Any,
+    source_reference: str,
+    *,
+    caveat: str | None = None,
+    reliability: str = "reliable",
+) -> TurtleFactValue:
+    return TurtleFactValue(
+        name=name,
+        value=value,
+        source_label=SOURCE_LABEL,
+        source_reference=source_reference,
+        reliability=reliability,
+        caveat=caveat,
+    )
+
+
+def _append_caveat(caveats: list[str], caveat: str) -> None:
+    if caveat not in caveats:
+        caveats.append(caveat)
+
+
+def _currency_for_market(market: str) -> str:
+    return "HKD" if _normalize_market(market) in {"HK", "HKG"} else "CNY"
+
+
+def _env_rf_rate(market: str) -> float | None:
+    normalized = _normalize_market(market)
+    keys = ["TURTLE_RF_RATE_HK"] if normalized in {"HK", "HKG"} else ["TURTLE_RF_RATE_CN", "TURTLE_RF_RATE_A"]
+    saw_invalid = False
+    for key in keys:
+        value = os.getenv(key)
+        if value is None:
+            continue
+        if _is_numeric(value):
+            return float(value)
+        saw_invalid = True
+    if saw_invalid:
+        raise ValueError("rf_rate invalid")
+    return None
+
+
+def default_tax_rate(market: str, holding_channel: str) -> float:
+    """Return default dividend withholding tax by market and holding channel."""
+    normalized_market = _normalize_market(market)
+    normalized_channel = (holding_channel or "").strip().lower()
+
+    if normalized_market in {"A", "CN", "CHINA"} and normalized_channel == "long_term_domestic":
+        return 0.0
+    if normalized_market in {"HK", "HKG"}:
+        if normalized_channel == "direct_h_share":
+            return 0.28
+        return 0.20
+    if normalized_market in {"US", "USA"} and normalized_channel == "w8ben":
+        return 0.10
+    return 0.0
+
+
+def _is_known_tax_rate_combination(market: str, holding_channel: str) -> bool:
+    normalized_market = _normalize_market(market)
+    normalized_channel = (holding_channel or "").strip().lower()
+
+    if normalized_market in {"A", "CN", "CHINA"}:
+        return normalized_channel == "long_term_domestic"
+    if normalized_market in {"HK", "HKG"}:
+        return normalized_channel in {"stock_connect", "direct_h_share"}
+    if normalized_market in {"US", "USA"}:
+        return normalized_channel == "w8ben"
+    return False
+
+
+def build_market_facts(
+    *,
+    ticker: str,
+    market: str,
+    holding_channel: str | None,
+    market_data: dict[str, Any] | None,
+    dividend_data: dict[str, Any] | None,
+    buyback_data: dict[str, Any] | None,
+    industry: str | None,
+    rf_rate: float | None = None,
+) -> TurtleMarketFacts:
+    """Build Turtle market facts from structured non-PDF inputs."""
+    fields: dict[str, TurtleFactValue] = {}
+    caveats: list[str] = []
+    safe_market_data = market_data or {}
+    currency = _currency_for_market(market)
+    active_channel = holding_channel or default_holding_channel(market)
+
+    has_market_cap = "market_cap" in safe_market_data and safe_market_data.get("market_cap") is not None
+    market_cap = _numeric_value(safe_market_data.get("market_cap"))
+    if market_cap is not None and market_cap > 0:
+        fields["market_cap"] = _field(
+            "market_cap",
+            MoneyAmount(
+                value=market_cap,
+                currency=currency,
+                unit="yuan",
+                source_label=SOURCE_LABEL,
+                source_reference="market_data.market_cap",
+            ),
+            "market_data.market_cap",
+        )
+    elif has_market_cap:
+        _append_caveat(caveats, "market_cap invalid")
+    else:
+        _append_caveat(caveats, "market_cap missing")
+
+    close_price = safe_market_data.get("close_price")
+    if _is_numeric(close_price):
+        fields["close_price"] = _field("close_price", float(close_price), "market_data.close_price")
+
+    tax_rate_known = _is_known_tax_rate_combination(market, active_channel)
+    tax_rate_unknown_caveat = None
+    tax_rate_reliability = "reliable"
+    if not tax_rate_known:
+        tax_rate_unknown_caveat = f"tax_rate unknown for {market}:{active_channel}"
+        tax_rate_reliability = "display_only"
+        _append_caveat(caveats, tax_rate_unknown_caveat)
+
+    fields["tax_rate"] = _field(
+        "tax_rate",
+        default_tax_rate(market, active_channel),
+        "holding_channel.default_tax_rate",
+        caveat=tax_rate_unknown_caveat or DEFAULT_CHANNEL_CAVEAT,
+        reliability=tax_rate_reliability,
+    )
+    _append_caveat(caveats, DEFAULT_CHANNEL_CAVEAT)
+    fields["holding_channel"] = _field("holding_channel", active_channel, "holding_channel")
+
+    try:
+        active_rf_rate = rf_rate if rf_rate is not None else _env_rf_rate(market)
+    except ValueError:
+        active_rf_rate = None
+        _append_caveat(caveats, "rf_rate invalid")
+    if _is_numeric(active_rf_rate):
+        fields["rf_rate"] = _field("rf_rate", float(active_rf_rate), "rf_rate")
+    elif "rf_rate invalid" not in caveats:
+        _append_caveat(caveats, "rf_rate missing")
+
+    if industry:
+        fields["industry"] = _field("industry", industry, "industry")
+
+    if dividend_data is None:
+        _append_caveat(caveats, "dividend data missing")
+    else:
+        avg_payout_ratio = dividend_data.get("avg_payout_ratio_3y")
+        if _is_numeric(avg_payout_ratio):
+            fields["dividend_avg_payout_ratio_3y"] = _field(
+                "dividend_avg_payout_ratio_3y",
+                float(avg_payout_ratio),
+                "dividend_data.avg_payout_ratio_3y",
+            )
+        else:
+            _append_caveat(caveats, "avg_payout_ratio_3y missing")
+
+        dividend_records = dividend_data.get("records")
+        if "records" in dividend_data and dividend_records is not None:
+            fields["dividend_records"] = _field(
+                "dividend_records",
+                list(dividend_records),
+                "dividend_data.records",
+            )
+        else:
+            _append_caveat(caveats, "dividend records missing")
+
+    if buyback_data is None:
+        _append_caveat(caveats, "buyback data missing")
+    else:
+        has_buyback_amount = "total_cancelled_amount" in buyback_data and buyback_data.get("total_cancelled_amount") is not None
+        buyback_amount = _numeric_value(buyback_data.get("total_cancelled_amount"))
+        if buyback_amount is not None and buyback_amount >= 0:
+            fields["buyback_amount"] = _field(
+                "buyback_amount",
+                MoneyAmount(
+                    value=buyback_amount,
+                    currency=currency,
+                    unit="yuan",
+                    source_label=SOURCE_LABEL,
+                    source_reference="buyback_data.total_cancelled_amount",
+                ),
+                "buyback_data.total_cancelled_amount",
+            )
+        elif has_buyback_amount:
+            _append_caveat(caveats, "buyback_amount invalid")
+        else:
+            _append_caveat(caveats, "buyback_amount missing")
+        if "records" in buyback_data:
+            fields["buyback_records"] = _field(
+                "buyback_records",
+                list(buyback_data.get("records") or []),
+                "buyback_data.records",
+            )
+
+    return TurtleMarketFacts(fields=fields, caveats=caveats)
+
+
+def get_turtle_market_facts(ticker: str, market: str, holding_channel: str | None = None) -> TurtleMarketFacts:
+    """Fetch non-PDF market inputs and adapt them to Turtle facts."""
+    from tradingagents.tools.value_investment_tool import (
+        _fetch_buyback_data_sync,
+        _fetch_dividend_data_sync,
+        _fetch_market_data_structured,
+        _get_industry_dynamic,
+    )
+
+    return build_market_facts(
+        ticker=ticker,
+        market=market,
+        holding_channel=holding_channel,
+        market_data=_fetch_market_data_structured(ticker, market),
+        dividend_data=_fetch_dividend_data_sync(ticker, market),
+        buyback_data=_fetch_buyback_data_sync(ticker, market),
+        industry=_get_industry_dynamic(ticker, market),
+    )
