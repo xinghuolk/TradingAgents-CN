@@ -102,26 +102,6 @@ def _fetch_hk_market_data(ticker: str) -> dict[str, Any]:
     }
 
 
-def _fetch_hk_dividend_data(ticker: str) -> dict[str, Any] | None:
-    try:
-        from tradingagents.dataflows.providers.hk.hk_stock import get_hk_dividend_data
-
-        return get_hk_dividend_data(ticker)
-    except Exception as exc:
-        logger.warning("Failed to fetch HK dividend data for %s: %s", ticker, exc)
-        return None
-
-
-def _fetch_hk_buyback_data(ticker: str) -> dict[str, Any] | None:
-    try:
-        from tradingagents.dataflows.providers.hk.hk_stock import get_hk_buyback_data
-
-        return get_hk_buyback_data(ticker)
-    except Exception as exc:
-        logger.warning("Failed to fetch HK buyback data for %s: %s", ticker, exc)
-        return None
-
-
 def _fetch_turtle_market_data(ticker: str, market: str) -> dict[str, Any]:
     if _is_hk_market(market):
         return _fetch_hk_market_data(ticker)
@@ -133,7 +113,7 @@ def _fetch_turtle_market_data(ticker: str, market: str) -> dict[str, Any]:
 
 def _fetch_turtle_dividend_data(ticker: str, market: str) -> dict[str, Any] | None:
     if _is_hk_market(market):
-        return _fetch_hk_dividend_data(ticker)
+        return None
 
     from tradingagents.tools.value_investment_tool import _fetch_dividend_data_sync
 
@@ -142,7 +122,7 @@ def _fetch_turtle_dividend_data(ticker: str, market: str) -> dict[str, Any] | No
 
 def _fetch_turtle_buyback_data(ticker: str, market: str) -> dict[str, Any] | None:
     if _is_hk_market(market):
-        return _fetch_hk_buyback_data(ticker)
+        return None
 
     from tradingagents.tools.value_investment_tool import _fetch_buyback_data_sync
 

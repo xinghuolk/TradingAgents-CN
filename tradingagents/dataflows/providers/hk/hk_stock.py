@@ -144,8 +144,6 @@ class HKStockProvider:
                     'market_cap': info.get('marketCap'),
                     'price': info.get('currentPrice', info.get('regularMarketPrice')),
                     'shares_outstanding': info.get('sharesOutstanding'),
-                    'payout_ratio': self._normalize_ratio(info.get('payoutRatio')),
-                    'dividend_rate': info.get('dividendRate'),
                     'sector': info.get('sector'),
                     'industry': info.get('industry'),
                     'source': 'yfinance_hk'
@@ -169,86 +167,6 @@ class HKStockProvider:
                 'source': 'unknown',
                 'error': str(e)
             }
-
-    def get_dividend_data(self, symbol: str) -> Optional[Dict[str, Any]]:
-        """获取港股分红数据。"""
-        try:
-            symbol = self._normalize_hk_symbol(symbol)
-            logger.info(f"🇭🇰 获取港股分红数据: {symbol}")
-
-            self._wait_for_rate_limit()
-
-            ticker = yf.Ticker(symbol)
-            info = ticker.info or {}
-            payout_ratio = self._normalize_ratio(info.get('payoutRatio'))
-            records = self._dividend_records(ticker)
-
-            if payout_ratio is None and not records:
-                return None
-
-            return {
-                'records': records,
-                'avg_payout_ratio_3y': payout_ratio,
-                'total_dividend_years': len([r for r in records if r.get('cash_dividend', 0) > 0]),
-                'consecutive_years': self._calculate_consecutive_years(records),
-                'source': 'yfinance_hk',
-            }
-        except Exception as e:
-            logger.error(f"❌ 获取港股分红数据失败: {e}")
-            return None
-
-    def get_buyback_data(self, symbol: str) -> Optional[Dict[str, Any]]:
-        """获取港股回购数据。"""
-        try:
-            symbol = self._normalize_hk_symbol(symbol)
-            logger.info(f"🇭🇰 获取港股回购数据: {symbol}")
-
-            self._wait_for_rate_limit()
-
-            ticker = yf.Ticker(symbol)
-            cashflow = getattr(ticker, 'cashflow', None)
-            if cashflow is None or getattr(cashflow, 'empty', True):
-                return None
-
-            repurchase_row = self._cashflow_row(
-                cashflow,
-                (
-                    'Repurchase Of Capital Stock',
-                    'Repurchase Of Stock',
-                    'Common Stock Repurchased',
-                ),
-            )
-            if repurchase_row is None:
-                return None
-
-            records = []
-            for column, value in repurchase_row.items():
-                if pd.isna(value):
-                    continue
-                amount = abs(float(value))
-                if amount <= 0:
-                    continue
-                records.append({
-                    'year': self._year_from_cashflow_column(column),
-                    'amount': amount,
-                    'is_cancelled': True,
-                    'source': 'yfinance_hk_cashflow',
-                })
-
-            records.sort(key=lambda item: item.get('year') or 0, reverse=True)
-            if not records:
-                return None
-
-            return {
-                'total_cancelled_amount': sum(record['amount'] for record in records),
-                'latest_year_amount': records[0]['amount'],
-                'records': records,
-                'has_active_buyback': False,
-                'source': 'yfinance_hk_cashflow',
-            }
-        except Exception as e:
-            logger.error(f"❌ 获取港股回购数据失败: {e}")
-            return None
 
     def get_real_time_price(self, symbol: str) -> Optional[Dict]:
         """
@@ -319,68 +237,6 @@ class HKStockProvider:
             return f"{normalized_code}.HK"
 
         return symbol
-
-    def _normalize_ratio(self, value) -> Optional[float]:
-        if value is None or isinstance(value, bool):
-            return None
-        try:
-            ratio = float(value)
-        except (TypeError, ValueError):
-            return None
-        if not np.isfinite(ratio) or ratio < 0:
-            return None
-        if ratio > 1:
-            ratio = ratio / 100
-        return ratio
-
-    def _dividend_records(self, ticker) -> list[Dict[str, Any]]:
-        try:
-            dividends = ticker.dividends
-        except Exception as e:
-            logger.warning(f"⚠️ 港股分红记录获取失败: {e}")
-            return []
-
-        if dividends is None or getattr(dividends, 'empty', True):
-            return []
-
-        grouped = dividends.groupby(dividends.index.year).sum().sort_index(ascending=False)
-        records = []
-        for year, cash_dividend in grouped.items():
-            records.append({
-                'year': int(year),
-                'cash_dividend': float(cash_dividend),
-                'source': 'yfinance_hk_dividends',
-            })
-        return records
-
-    def _cashflow_row(self, cashflow: pd.DataFrame, row_names: tuple[str, ...]):
-        for row_name in row_names:
-            if row_name in cashflow.index:
-                return cashflow.loc[row_name]
-        return None
-
-    def _year_from_cashflow_column(self, column) -> Optional[int]:
-        if hasattr(column, 'year'):
-            return int(column.year)
-        try:
-            return int(pd.to_datetime(column).year)
-        except Exception:
-            return None
-
-    def _calculate_consecutive_years(self, records: list[Dict[str, Any]]) -> int:
-        years = sorted(
-            [record['year'] for record in records if record.get('cash_dividend', 0) > 0 and record.get('year')],
-            reverse=True,
-        )
-        if not years:
-            return 0
-        consecutive = 1
-        for i in range(1, len(years)):
-            if years[i - 1] - years[i] == 1:
-                consecutive += 1
-            else:
-                break
-        return consecutive
 
     def format_stock_data(self, symbol: str, data: pd.DataFrame, start_date: str, end_date: str) -> str:
         """
@@ -662,30 +518,3 @@ def get_hk_stock_info(symbol: str) -> Dict:
     provider = get_hk_stock_provider()
     return provider.get_stock_info(symbol)
 
-
-def get_hk_dividend_data(symbol: str) -> Optional[Dict[str, Any]]:
-    """
-    获取港股分红数据的便捷函数
-
-    Args:
-        symbol: 港股代码
-
-    Returns:
-        Dict: 港股分红数据
-    """
-    provider = get_hk_stock_provider()
-    return provider.get_dividend_data(symbol)
-
-
-def get_hk_buyback_data(symbol: str) -> Optional[Dict[str, Any]]:
-    """
-    获取港股回购数据的便捷函数
-
-    Args:
-        symbol: 港股代码
-
-    Returns:
-        Dict: 港股回购数据
-    """
-    provider = get_hk_stock_provider()
-    return provider.get_buyback_data(symbol)
