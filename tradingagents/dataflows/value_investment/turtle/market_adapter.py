@@ -180,7 +180,15 @@ def build_market_facts(
         _append_caveat(caveats, "dividend data missing")
     else:
         avg_payout_ratio = dividend_data.get("avg_payout_ratio_3y")
-        if _is_numeric(avg_payout_ratio):
+        dividend_records = dividend_data.get("records")
+        has_dividend_records = "records" in dividend_data and dividend_records is not None
+        dividend_record_list = list(dividend_records) if has_dividend_records else None
+        legacy_empty_dividend_default = (
+            has_dividend_records
+            and dividend_record_list == []
+            and _numeric_value(avg_payout_ratio) == 0
+        )
+        if _is_numeric(avg_payout_ratio) and not legacy_empty_dividend_default:
             fields["dividend_avg_payout_ratio_3y"] = _field(
                 "dividend_avg_payout_ratio_3y",
                 float(avg_payout_ratio),
@@ -189,11 +197,10 @@ def build_market_facts(
         else:
             _append_caveat(caveats, "avg_payout_ratio_3y missing")
 
-        dividend_records = dividend_data.get("records")
-        if "records" in dividend_data and dividend_records is not None:
+        if has_dividend_records:
             fields["dividend_records"] = _field(
                 "dividend_records",
-                list(dividend_records),
+                dividend_record_list,
                 "dividend_data.records",
             )
         else:
@@ -204,7 +211,11 @@ def build_market_facts(
     else:
         has_buyback_amount = "total_cancelled_amount" in buyback_data and buyback_data.get("total_cancelled_amount") is not None
         buyback_amount = _numeric_value(buyback_data.get("total_cancelled_amount"))
-        if buyback_amount is not None and buyback_amount >= 0:
+        buyback_records = buyback_data.get("records")
+        has_buyback_records = "records" in buyback_data and buyback_records is not None
+        buyback_record_list = list(buyback_records or []) if has_buyback_records else None
+        legacy_empty_buyback_default = has_buyback_records and buyback_record_list == [] and buyback_amount == 0
+        if buyback_amount is not None and buyback_amount >= 0 and not legacy_empty_buyback_default:
             fields["buyback_amount"] = _field(
                 "buyback_amount",
                 MoneyAmount(
@@ -217,13 +228,14 @@ def build_market_facts(
                 "buyback_data.total_cancelled_amount",
             )
         elif has_buyback_amount:
-            _append_caveat(caveats, "buyback_amount invalid")
+            caveat = "buyback_amount missing" if legacy_empty_buyback_default else "buyback_amount invalid"
+            _append_caveat(caveats, caveat)
         else:
             _append_caveat(caveats, "buyback_amount missing")
-        if "records" in buyback_data:
+        if has_buyback_records:
             fields["buyback_records"] = _field(
                 "buyback_records",
-                list(buyback_data.get("records") or []),
+                buyback_record_list,
                 "buyback_data.records",
             )
 

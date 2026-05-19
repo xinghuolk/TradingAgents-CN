@@ -43,6 +43,69 @@ def test_build_market_facts_preserves_buyback_missing_instead_of_zero_when_unver
     assert "buyback_amount" not in facts.fields
 
 
+def test_build_market_facts_treats_legacy_empty_dividend_zero_as_missing():
+    facts = build_market_facts(
+        ticker="600519",
+        market="A",
+        holding_channel="long_term_domestic",
+        market_data={"market_cap": 200_000_000_000, "close_price": 1500.0},
+        dividend_data={
+            "avg_payout_ratio_3y": 0,
+            "records": [],
+            "consecutive_years": 0,
+            "total_dividend_years": 0,
+        },
+        buyback_data={"total_cancelled_amount": 1_000_000, "records": [{"year": 2025}]},
+        industry="白酒",
+        rf_rate=0.025,
+    )
+
+    assert "avg_payout_ratio_3y missing" in " ".join(facts.caveats)
+    assert "dividend_avg_payout_ratio_3y" not in facts.fields
+    assert facts.fields["dividend_records"].value == []
+
+
+def test_build_market_facts_treats_legacy_empty_buyback_zero_as_missing():
+    facts = build_market_facts(
+        ticker="600519",
+        market="A",
+        holding_channel="long_term_domestic",
+        market_data={"market_cap": 200_000_000_000, "close_price": 1500.0},
+        dividend_data={"avg_payout_ratio_3y": 0.45, "records": [{"year": 2025}]},
+        buyback_data={
+            "total_cancelled_amount": 0,
+            "latest_year_amount": 0,
+            "has_active_buyback": False,
+            "records": [],
+        },
+        industry="白酒",
+        rf_rate=0.025,
+    )
+
+    assert "buyback_amount missing" in " ".join(facts.caveats)
+    assert "buyback_amount" not in facts.fields
+    assert facts.fields["buyback_records"].value == []
+
+
+def test_build_market_facts_preserves_verified_zero_buyback_when_records_exist():
+    facts = build_market_facts(
+        ticker="600519",
+        market="A",
+        holding_channel="long_term_domestic",
+        market_data={"market_cap": 200_000_000_000, "close_price": 1500.0},
+        dividend_data={"avg_payout_ratio_3y": 0.45, "records": [{"year": 2025}]},
+        buyback_data={
+            "total_cancelled_amount": 0,
+            "records": [{"year": 2025, "amount": 0, "is_cancelled": True}],
+        },
+        industry="白酒",
+        rf_rate=0.025,
+    )
+
+    assert "buyback_amount missing" not in " ".join(facts.caveats)
+    assert facts.fields["buyback_amount"].value.value == 0
+
+
 def test_build_market_facts_marks_partial_dividend_data_as_caveats():
     facts = build_market_facts(
         ticker="00001",
