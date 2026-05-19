@@ -55,9 +55,6 @@ def test_get_turtle_market_facts_does_not_promote_hk_yfinance_actions(monkeypatc
     def reject_legacy_hk_action_fetch(ticker, market):
         raise AssertionError("HK action facts must not use the A-share dividend/buyback fetchers")
 
-    def reject_hk_action_provider(ticker):
-        raise AssertionError("HK yfinance action facts must not be promoted to Turtle facts")
-
     monkeypatch.setattr(
         "tradingagents.tools.value_investment_tool._fetch_dividend_data_sync",
         reject_legacy_hk_action_fetch,
@@ -72,12 +69,12 @@ def test_get_turtle_market_facts_does_not_promote_hk_yfinance_actions(monkeypatc
     )
     monkeypatch.setattr(
         "tradingagents.dataflows.providers.hk.hk_stock.get_hk_dividend_data",
-        reject_hk_action_provider,
+        lambda ticker: {"avg_payout_ratio_3y": 0.35, "records": [{"year": 2025}]},
         raising=False,
     )
     monkeypatch.setattr(
         "tradingagents.dataflows.providers.hk.hk_stock.get_hk_buyback_data",
-        reject_hk_action_provider,
+        lambda ticker: {"total_cancelled_amount": 4_000_000_000, "records": [{"year": 2025}]},
         raising=False,
     )
 
