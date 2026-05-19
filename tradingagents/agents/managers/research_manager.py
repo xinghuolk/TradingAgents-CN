@@ -67,7 +67,7 @@ def create_research_manager(llm, memory):
 
 基本面分析：{fundamentals_report}
 
-价值投资分析：{value_report}
+{value_report_section}
 
 以下是辩论：
 辩论历史：

@@ -113,7 +113,7 @@ def create_bear_researcher(llm, memory):
 社交媒体情绪报告：{sentiment_report}
 最新世界事务新闻：{news_report}
 公司基本面报告：{fundamentals_report}
-价值投资分析：{value_report}
+{value_report_section}
 辩论对话历史：{history}
 最后的看涨论点：{current_response}
 类似情况的反思和经验教训：{past_memory_str}
