@@ -55,9 +55,9 @@ def _field_unit(field: Any) -> MoneyUnit | None:
         "人民币",
     }:
         return "yuan"
-    if lowered in {"thousand", "rmb'000", "hkd'000", "usd'000", "000", "千元"}:
+    if lowered in {"thousand", "rmb'000", "hkd'000", "hk$'000", "usd'000", "us$'000", "000", "千元"}:
         return "thousand"
-    if compact in {"rmb000", "hkd000", "usd000"}:
+    if compact in {"rmb000", "hkd000", "hk$000", "usd000", "us$000"}:
         return "thousand"
     if lowered in {"hundred_million", "hundred million"} or raw in {"亿元"}:
         return "hundred_million"
