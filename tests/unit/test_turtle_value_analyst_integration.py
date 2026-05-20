@@ -97,6 +97,52 @@ class RecordingLLM:
         return AIMessage(content="plain turtle report")
 
 
+class ToolCallPromptRecordingLLM:
+    def __init__(self):
+        self.bound_tools = []
+        self.tool_call_prompts = []
+
+    def bind_tools(self, tools):
+        self.bound_tools.append(tools)
+
+        def invoke_bound(prompt):
+            self.tool_call_prompts.append(prompt)
+            return AIMessage(content="bound turtle prompt")
+
+        return invoke_bound
+
+
+def test_value_analyst_tool_call_prompt_uses_turtle_v015_framing(monkeypatch):
+    monkeypatch.setattr(
+        "tradingagents.agents.analysts.value_analyst._get_company_name",
+        lambda ticker, market_info: "贵州茅台",
+    )
+
+    llm = ToolCallPromptRecordingLLM()
+    toolkit = SimpleNamespace(prepare_turtle_analysis=lambda **kwargs: "{}")
+    analyst = create_value_analyst(llm, toolkit)
+
+    analyst(
+        {
+            "messages": [HumanMessage(content="analyze 600519")],
+            "trade_date": "2026-05-19",
+            "company_of_interest": "600519",
+            "value_tool_call_count": 0,
+        }
+    )
+
+    assert len(llm.bound_tools) == 1
+    assert len(llm.tool_call_prompts) == 1
+    prompt_text = str(llm.tool_call_prompts[0])
+    assert "Turtle v0.15" in prompt_text
+    assert "TurtleFacts" in prompt_text
+    assert "TurtleComputedSignals" in prompt_text
+    assert "M / R / GG / HH" in prompt_text
+    assert "5维健康评分" not in prompt_text
+    assert "健康标签" not in prompt_text
+    assert "适合长期持有" not in prompt_text
+
+
 def test_value_analyst_uses_plain_llm_after_prepare_turtle_analysis_tool_message(monkeypatch):
     from tradingagents.tools import turtle_analysis_tool
 
