@@ -142,6 +142,8 @@ class HKStockProvider:
                     'currency': info.get('currency', 'HKD'),
                     'exchange': info.get('exchange', 'HKG'),
                     'market_cap': info.get('marketCap'),
+                    'price': info.get('currentPrice', info.get('regularMarketPrice')),
+                    'shares_outstanding': info.get('sharesOutstanding'),
                     'sector': info.get('sector'),
                     'industry': info.get('industry'),
                     'source': 'yfinance_hk'

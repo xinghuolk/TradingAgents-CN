@@ -379,8 +379,8 @@ class TradingAgentsGraph:
             ),
             "value": ToolNode(
                 [
-                    # 价值投资分析工具（穿透回报率模型）
-                    self.toolkit.get_value_investment_analysis,
+                    # Turtle价值分析准备工具（事实采集 + 确定性公式）
+                    self.toolkit.prepare_turtle_analysis,
                 ]
             ),
         }
