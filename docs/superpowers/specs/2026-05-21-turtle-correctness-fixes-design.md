@@ -490,7 +490,7 @@ PR 必须满足：
 | `tradingagents/dataflows/value_investment/turtle/decision.py` | 删 redaction 全部；prompt 加 `abs(capex)` 说明 |
 | `tradingagents/tools/turtle_analysis_tool.py` | `holding_channel` 直传不走 context；`status` 改用 `merge_status` 聚合；`company_name` 签名对齐 `str = ""` |
 | `tradingagents/agents/utils/agent_states.py` | `AgentState` TypedDict 新增 `value_turtle_payload` 字段 |
-| `tradingagents/agents/analysts/value_analyst.py` | 所有 return 路径补 `value_turtle_payload`（除 unsupported 等无 payload 路径——参见 §6.4） |
+| `tradingagents/agents/analysts/value_analyst.py` | 所有写入 `value_report` 的 return 路径补 `value_turtle_payload`；unsupported 路径返回 `""`；ToolNode 中间态不写 key（参见 §6.3 / §6.5） |
 | `tradingagents/graph/propagation.py` | InitialState 加 `"value_turtle_payload": ""` |
 | `tradingagents/graph/trading_graph.py` | **可选**：`_log_state` 写日志时附 `value_turtle_payload`（plan 阶段决定） |
 | `app/services/simple_analysis_service.py` | 持久化配置新增 `value_turtle_payload`；持久化循环加 "内容非空" 短路 |
