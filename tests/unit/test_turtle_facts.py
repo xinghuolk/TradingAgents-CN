@@ -10,6 +10,7 @@ from tradingagents.dataflows.value_investment.turtle.facts import (
     TurtleReportFacts,
     TurtleRunContext,
     infer_turtle_period_end,
+    merge_status,
 )
 
 
@@ -143,9 +144,6 @@ def test_turtle_fact_serializers_return_defensive_copies():
     assert signals.results["R"].missing_inputs == ["input 1"]
     assert signals.veto_reasons == ["veto"]
     assert signals.caveats == ["signal caveat"]
-
-
-from tradingagents.dataflows.value_investment.turtle.facts import merge_status
 
 
 class TestMergeStatus:
