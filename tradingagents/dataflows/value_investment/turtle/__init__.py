@@ -13,6 +13,7 @@ from .facts import (
     TurtleRunContext,
     default_holding_channel,
     infer_turtle_period_end,
+    merge_status,
 )
 from .formatting import facts_to_markdown, signals_to_markdown
 from .market_adapter import build_market_facts, default_tax_rate, get_turtle_market_facts
@@ -38,5 +39,6 @@ __all__ = [
     "get_turtle_market_facts",
     "get_turtle_report_facts",
     "infer_turtle_period_end",
+    "merge_status",
     "signals_to_markdown",
 ]
