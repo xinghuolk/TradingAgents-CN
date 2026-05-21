@@ -354,4 +354,9 @@ def get_turtle_report_facts(
 
     metadata = dict(facts.metadata)
     metadata["period_end"] = period_end
-    return TurtleReportFacts(fields=facts.fields, metadata=metadata, caveats=facts.caveats)
+    return TurtleReportFacts(
+        fields=facts.fields,
+        metadata=metadata,
+        caveats=facts.caveats,
+        status=facts.status,
+    )

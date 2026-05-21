@@ -492,6 +492,37 @@ def test_report_adapter_rejects_million_shares_as_money_unit():
     assert "unsupported unit million shares" in " ".join(facts.caveats)
 
 
+class TestGetTurtleReportFactsPreservesStatusOnPeriodEndFallback:
+    """Regression: get_turtle_report_facts 在 period_end 缺失而重建 TurtleReportFacts 时
+    必须保留 status 字段；否则 non_decisionable / degraded 会被静默 upgrade 到 complete。"""
+
+    def test_extraction_none_preserves_non_decisionable_status(self):
+        class FakeAdapterMissingPeriodEnd:
+            def get_annual_report_data(self, **kwargs):
+                return FakeAdapterResult(
+                    available=False,
+                    company=kwargs["ticker"],
+                    market=kwargs["market"],
+                    period_end=kwargs["period_end"],
+                    extraction=None,  # → build_report_facts 返回 status="non_decisionable"
+                    warnings=[],
+                    errors=[],
+                )
+
+        facts = get_turtle_report_facts(
+            ticker="600519",
+            market="A",
+            trade_date="2026-04-01",
+            adapter=FakeAdapterMissingPeriodEnd(),
+            allow_llm_models=(),
+        )
+
+        # extraction=None → facts.metadata 的 period_end 是 None → 触发 metadata 重建路径
+        # 重建后 status 必须仍是 non_decisionable，不能被默认值 complete 覆盖
+        assert facts.status == "non_decisionable"
+        assert facts.metadata["period_end"] == "2025-12-31"
+
+
 class TestReportAdapterStatus:
     def test_none_extraction_is_non_decisionable(self):
         facts = build_report_facts_from_extraction(
