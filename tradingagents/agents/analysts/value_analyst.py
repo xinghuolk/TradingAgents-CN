@@ -162,10 +162,12 @@ def _plain_turtle_report_prompt(company_name: str, ticker: str, payload: str) ->
             fields=_fact_fields_from_payload(report_payload),
             metadata=dict(report_metadata),
             caveats=list(_required_list(report_payload, "caveats")),
+            status=_required_status(report_payload, "status"),
         ),
         market=TurtleMarketFacts(
             fields=_fact_fields_from_payload(market_payload),
             caveats=list(_required_list(market_payload, "caveats")),
+            status=_required_status(market_payload, "status"),
         ),
         status=_required_status(facts_payload, "status"),
         caveats=list(_required_list(facts_payload, "caveats")),
