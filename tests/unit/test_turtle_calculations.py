@@ -494,3 +494,34 @@ def test_compute_turtle_signals_is_non_decisionable_when_hk_fx_rate_missing():
     assert signals.results["R"].value is None
     assert "net_profit" in signals.results["R"].missing_inputs
     assert "FX rate required for HKD:CNY" in signals.caveats
+
+
+class TestEvSwitchAndCashProtectionNonDecisionable:
+    """A.5: 当 net_cash_ratio 缺输入时，ev_switch / cash_protection 应为 non_decisionable，不再有 degraded 中间态。"""
+
+    def _facts_missing_cash(self):
+        """构造 facts：market_cap 完整，但 cash / debt 缺失。"""
+        facts = base_facts()
+        report_without_cash = TurtleReportFacts(
+            fields={k: v for k, v in facts.report.fields.items() if k not in ("cash", "interest_bearing_debt")},
+            metadata=facts.report.metadata,
+        )
+        return TurtleFacts(context=facts.context, report=report_without_cash, market=facts.market, status="complete")
+
+    def test_ev_switch_non_decisionable_when_cash_missing(self):
+        facts = self._facts_missing_cash()
+        signals = compute_turtle_signals(facts)
+        assert signals.results["ev_switch"].status == "non_decisionable"
+        assert signals.results["ev_switch"].value is None
+
+    def test_cash_protection_non_decisionable_when_cash_missing(self):
+        facts = self._facts_missing_cash()
+        signals = compute_turtle_signals(facts)
+        assert signals.results["cash_protection"].status == "non_decisionable"
+        assert signals.results["cash_protection"].value is None
+
+    def test_net_cash_ratio_non_decisionable_when_cash_missing(self):
+        facts = self._facts_missing_cash()
+        signals = compute_turtle_signals(facts)
+        assert signals.results["net_cash_ratio"].status == "non_decisionable"
+        assert signals.results["net_cash_ratio"].value is None
