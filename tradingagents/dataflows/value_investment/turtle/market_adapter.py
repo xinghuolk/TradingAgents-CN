@@ -13,6 +13,9 @@ from .facts import MoneyAmount, TurtleFactValue, TurtleMarketFacts, TurtleStatus
 logger = logging.getLogger(__name__)
 SOURCE_LABEL = "market-adapter"
 
+# "内置常量字段"：仅有这些字段不算实际外部数据采集成功（adapter status 派生白名单）
+_BUILTIN_FIELDS = frozenset({"tax_rate", "holding_channel", "rf_rate"})
+
 
 def _normalize_market(market: str) -> str:
     return (market or "").strip().upper()
@@ -330,7 +333,6 @@ def build_market_facts(
                 "buyback_data.records",
             )
 
-    _BUILTIN_FIELDS = frozenset({"tax_rate", "holding_channel", "rf_rate"})
     external_fields = {k: v for k, v in fields.items() if k not in _BUILTIN_FIELDS}
 
     if not external_fields:
