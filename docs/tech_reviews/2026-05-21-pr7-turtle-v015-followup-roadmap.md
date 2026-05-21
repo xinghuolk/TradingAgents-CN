@@ -130,7 +130,7 @@ start  ─────┤      （可并行）                ├── Spec 4 (
 
 ## 7. 当前进度
 
-- **当前焦点**：Spec 1 已通过用户审阅（commit `63f92b2` → `4544627` 第二轮 finding 处理；commit `281fd06` meta-review 引入；当前 working 状态更新中）。下一步：调用 `superpowers:writing-plans` 生成 Spec 1 的实施 plan
+- **当前焦点**：Spec 1 已通过用户审阅，meta-review findings 已通过 commit `722bca1` 处理（roadmap 全量更新 + 两份历史 review 加 supersedes 注）。下一步：调用 `superpowers:writing-plans` 生成 Spec 1 的实施 plan
 - **已就绪**：
   - 三份评审文档 + 路线图 + meta-review（`docs/tech_reviews/2026-05-21-*`）
   - Spec 1 设计文档（`docs/superpowers/specs/2026-05-21-turtle-correctness-fixes-design.md`，🟢）

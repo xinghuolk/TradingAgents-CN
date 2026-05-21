@@ -11,6 +11,8 @@
 
 ## Summary
 
+> **Status (2026-05-21 后置补注)**：本 meta-review 的全部 11 项 findings 已通过 commit `722bca1` 处理——roadmap 全量更新（Spec 1 状态 🟢、范围对齐、超 superseded 选项移除），两份 review 顶部加范围说明并对 A.1 / A.5 / B.3 / D.3 / redaction / immutability / facts.status 等条目加 supersedes 注。本文保留为审计记录。
+
 The three 2026-05-21 tech review documents are useful as the original PR #7 review record. They identify the important correctness, source-traceability, and observability gaps that later became Spec 1.
 
 They should not be treated as current execution instructions without updates. The latest Spec 1 has resolved several open design choices, added stricter payload persistence semantics, and corrected the backend propagation model. The roadmap in particular is stale enough to mislead implementation planning.
