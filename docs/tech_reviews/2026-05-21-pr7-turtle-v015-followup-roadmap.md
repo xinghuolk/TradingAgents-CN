@@ -61,7 +61,7 @@ start  ─────┤      （可并行）                ├── Spec 4 (
 
 | Spec | 状态 | Spec 文档 | Plan 文档 | PR | 备注 |
 |------|------|----------|-----------|-----|------|
-| Spec 1：correctness-fixes | 🟢 | `docs/superpowers/specs/2026-05-21-turtle-correctness-fixes-design.md` | — | — | spec 已通过用户审阅；plan 待写 |
+| Spec 1：correctness-fixes | 🔵 | `docs/superpowers/specs/2026-05-21-turtle-correctness-fixes-design.md` | `docs/superpowers/plans/2026-05-21-turtle-correctness-fixes.md` | — | spec + plan 已通过用户审阅；准备进入 subagent-driven 实施 |
 | Spec 2：model-recalibration | ⬜ | — | — | — | |
 | Spec 3：cross-currency-fx | ⬜ | — | — | — | |
 | Spec 4：turtle-data-view-frontend | ⬜ | — | — | — | 阻塞于 Spec 1 backend 部分 |
@@ -130,7 +130,7 @@ start  ─────┤      （可并行）                ├── Spec 4 (
 
 ## 7. 当前进度
 
-- **当前焦点**：Spec 1 已通过用户审阅，meta-review findings 已通过 commit `722bca1` 处理（roadmap 全量更新 + 两份历史 review 加 supersedes 注）。下一步：调用 `superpowers:writing-plans` 生成 Spec 1 的实施 plan
+- **当前焦点**：Spec 1 plan 已写出（`docs/superpowers/plans/2026-05-21-turtle-correctness-fixes.md`，15 tasks × 5 phases，TDD 节奏）。下一步：调用 `superpowers:subagent-driven-development` 按 task 顺序派 subagent 实施
 - **已就绪**：
   - 三份评审文档 + 路线图 + meta-review（`docs/tech_reviews/2026-05-21-*`）
   - Spec 1 设计文档（`docs/superpowers/specs/2026-05-21-turtle-correctness-fixes-design.md`，🟢）
