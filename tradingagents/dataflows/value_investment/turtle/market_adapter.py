@@ -202,9 +202,9 @@ def build_market_facts(
     safe_market_data = market_data or {}
     currency = _currency_for_market(market)
 
-    channel_is_explicit = bool(holding_channel and holding_channel.strip())
-    active_channel = (holding_channel.strip() if channel_is_explicit else None) \
-                     or default_holding_channel(market)
+    stripped_channel = holding_channel.strip() if holding_channel else ""
+    channel_is_explicit = bool(stripped_channel)
+    active_channel = stripped_channel or default_holding_channel(market)
 
     has_market_cap = "market_cap" in safe_market_data and safe_market_data.get("market_cap") is not None
     market_cap = _numeric_value(safe_market_data.get("market_cap"))
