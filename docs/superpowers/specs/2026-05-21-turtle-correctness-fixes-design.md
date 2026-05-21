@@ -25,6 +25,7 @@
 | 计算 A.5 | 删 `ev_switch` / `cash_protection` 不可达 degraded 分支 | 删代码 |
 | 计算 A.6 | 在 decision prompt 加 `abs(capex)` 说明 | 文档 |
 | 计算 B.1 | 默认 `holding_channel` 时 `tax_rate.reliability = display_only` | 语义修复 |
+| 计算 B.1（附） | 显式 `holding_channel` 时停止追加 `DEFAULT_CHANNEL_CAVEAT` | 语义修复 |
 | 计算 B.3 | payout proxy 重命名 + 降级 + 修复 key 撞车 | 语义修复 |
 | D 章 | backend 透传 `value_turtle_payload`（原样 JSON） | 数据流扩展 |
 
@@ -158,13 +159,36 @@ elif not channel_is_explicit:
 else:
     tax_rate_reliability = "reliable"
     tax_rate_caveat = None
+
+# tax_rate 字段写入（caveat 已携带必要说明）
+fields["tax_rate"] = _field(
+    "tax_rate",
+    default_tax_rate(market, active_channel),
+    "holding_channel.default_tax_rate",
+    caveat=tax_rate_caveat,
+    reliability=tax_rate_reliability,
+)
+
+# ⚠️ 关键修改（B.1 附）：删掉原 market_adapter.py:245 的无条件
+# `_append_caveat(caveats, DEFAULT_CHANNEL_CAVEAT)`。理由：
+# - 显式 channel 时不该有这条 caveat（否则 market.status 永远 degraded）
+# - 默认 channel 时，tax_rate_caveat 本身已经携带等价说明，无需在 adapter 级
+#   caveats 列表里重复
+# 同时 DEFAULT_CHANNEL_CAVEAT 常量可以删除（最后一处使用消失）。
 ```
 
-**下游效果**（自动）：
+**下游效果**（fail-fast 真实链路，澄清 §3 决策 1 的实现）：
 
-- `_is_reliable_fact(tax_rate, ...)` skip → `missing_tax = ["tax_rate"]`
-- R/GG critical_missing 含 `tax_rate` → `non_decisionable`
-- signals.status 经 `critical_non_decisionable` 判定为 `non_decisionable`
+- 默认 channel 时 `tax_rate.reliability == "display_only"`
+- `compute_turtle_signals._is_reliable_fact(tax_rate, ...)`（`calculations.py:35-39`）判定不可靠 → 写入 calculations 内部的 caveats → skip
+- `missing_tax = ["tax_rate"]`
+- R / GG `critical_missing` 含 `"tax_rate"` → R/GG status = `non_decisionable`
+- signals 顶层 status 经 `critical_non_decisionable` 判定为 `non_decisionable`
+
+**注意路径分层**：fail-fast 是经 **calculations 层** 的 reliability filter 落实的，**不是**经 `facts.status` 直接派生。按 §4.3 规则，display_only 字段只把 `market.status` 推到 `degraded`；non_decisionable 由 signals 层最终决定。两条路径职责分明：
+
+- `facts.status`：表示"数据采集结果是否有阴影"——caveat / display_only 即 `degraded`
+- `signals.status`：表示"基于这套数据公式能不能决策"——critical 字段不可靠即 `non_decisionable`
 
 ### 5.2 B.3：payout proxy 重命名 + 降级 + 修复撞车
 
@@ -199,6 +223,10 @@ else:
    if _is_reliable_numeric_field(fields.get(PAYOUT_PROXY_FIELD)):
        return
    ```
+   **注**：因为新 proxy 的 `reliability="display_only"`，`_is_reliable_numeric_field`
+   永远返回 False，这条早返实际上不会触发。逻辑上无害（最多被多算一次，结果一致），
+   保留它仅为防御性编程。可在 plan 阶段决定是否改为 `fields.get(PAYOUT_PROXY_FIELD)
+   is not None` 的存在性检查，或直接删除。Spec 暂保留以减少改动面。
 
 4. `calculations.py:292-297` 的 `_number_alias` **保持原状**——`dividend_avg_payout_ratio_3y` 仍是合法的 fallback 候选（market adapter 真 3 年数据），不删。proxy 改名后自然不再被 `_number_alias` 拾起。
 
@@ -210,7 +238,24 @@ else:
 
 ## 6. Backend Payload 透传链路
 
-### 6.1 LangGraph state 新字段
+### 6.1 LangGraph state schema 扩展
+
+`tradingagents/agents/utils/agent_states.py:67` 的 `AgentState` TypedDict 在 `value_report` 旁新增：
+
+```python
+class AgentState(MessagesState):
+    ...
+    value_report: Annotated[str, "Report from the Value Investment Analyst"]
+    value_turtle_payload: Annotated[
+        str,
+        "Raw {facts, signals} JSON payload produced by prepare_turtle_analysis",
+    ]
+    ...
+```
+
+**重要**：LangGraph TypedDict 是 reducer 派生的 state schema 来源，不在这里加字段会导致后续节点读 `state["value_turtle_payload"]` 时类型契约不全，工具链各处类型检查失稳。这是 spec 必改项。
+
+### 6.2 LangGraph InitialState 新字段
 
 `tradingagents/graph/propagation.py:52` InitialState 平行新增：
 
@@ -232,26 +277,47 @@ else:
 
 ### 6.3 LangGraph 透传
 
-`tradingagents/graph/trading_graph.py:870` 附近：
+**无需额外改动**。`trading_graph.py:388` 的 `propagate()` 直接返回 LangGraph 自动传播的 `final_state`；只要 `AgentState`（§6.1）与 InitialState（§6.2）都包含 `value_turtle_payload` 字段，state 自动透传到 `final_state` 给下游消费者。
+
+可选附加（plan 阶段决定是否做）：`trading_graph.py:861` 的 `_log_state` 写日志文件时同步把 `value_turtle_payload` 加进去（便于事后排查）。这是日志增强，不影响主流程：
 
 ```python
+# trading_graph.py:861-870 附近的 _log_state（可选）
 "value_report": final_state.get("value_report", ""),
-"value_turtle_payload": final_state.get("value_turtle_payload", ""),
+"value_turtle_payload": final_state.get("value_turtle_payload", ""),  # ← 可选
 ```
 
 ### 6.4 持久化
 
-`app/services/simple_analysis_service.py:2796` 附近新增条目：
+`app/services/simple_analysis_service.py:2796` 附近的 `report_modules` 字典新增条目：
 
 ```python
 'value_turtle_payload': {
     'filename': 'value_turtle_payload.json',
-    'content_type': 'application/json',
+    'title': '价值投资 Turtle payload',
     'state_key': 'value_turtle_payload',
 },
 ```
 
-持久化层在 `state_key` 对应值为空串时跳过写文件（与现有 report 字段行为一致）。
+**关于空 payload 的处理**：核查现状（`simple_analysis_service.py:2829-2849`）发现现有循环 **不跳过空串**——它只检查 `if state_key in state`，空内容仍会写 0 字节文件。
+
+**Spec 1 选用的方案：在 `value_analyst_node` 不返回空 payload**——美股 unsupported 等无 payload 路径直接返回不含 `value_turtle_payload` 键的 dict（LangGraph 会保留 InitialState 默认空串）。再在 `simple_analysis_service.py:2832` 的检查里加上"内容非空"短路：
+
+```python
+# simple_analysis_service.py:2829-2832 改动
+for module_key, module_info in report_modules.items():
+    try:
+        state_key = module_info['state_key']
+        if state_key not in state:
+            continue
+        module_content = state[state_key]
+        if isinstance(module_content, str) and not module_content.strip():
+            # 空字符串跳过——避免 value_turtle_payload 在 US/异常路径下落 0 字节
+            continue
+        ...
+```
+
+注意：这个空串跳过改动对所有 report module 生效（包括 `value_report` 自身），是普遍性改进，无副作用——原本写 0 字节 markdown 也是 noise。
 
 ### 6.5 不属于 Spec 1 的部分
 
@@ -261,6 +327,14 @@ else:
 - 以上全部留给 Spec 4 实施时一起设计 API + 前端 tab
 
 理由：`report_fields` 是 markdown 报告白名单，被 `reports` dict 渲染、`summary` 拼接消费。把 JSON payload 混进去会污染 markdown viewer、summary 文案、key_points 兜底逻辑。
+
+**Spec 4 前端如何读 payload（边界澄清）**：
+
+- Spec 1 阶段：`value_turtle_payload.json` 落在与 `value_report.md` 同目录（`{reports_dir}/value_turtle_payload.json`），但**前端没有路径直接拉取**。
+- Spec 4 阶段：建议新增 GET `/api/analysis/{id}/turtle-payload` 端点，从 MongoDB 的 analysis 文档或磁盘 reports 目录读取并返回 JSON。**不**让前端绕过 API 直读静态文件——保持鉴权、CORS、版本化控制的统一入口。
+- 备选：若 Spec 4 评估认为新建端点成本高，可扩展现有 `/api/analysis/{id}/result` 在 response 顶层加 `turtle_payload` 字段（与 `reports` dict 平行），从 MongoDB / 磁盘按 id 读取并附加。
+
+Spec 4 brainstorming 时再定具体方案；Spec 1 只承诺"落盘存在 + state 链路可见"。
 
 ### 6.6 数据流总览
 
@@ -392,14 +466,15 @@ PR 必须满足：
 |------|---------|
 | `tradingagents/dataflows/value_investment/turtle/facts.py` | 加 `_STATUS_RANK` / `merge_status`；`TurtleReportFacts` / `TurtleMarketFacts` 加 `status` 字段；`to_dict` 同步序列化 status |
 | `tradingagents/dataflows/value_investment/turtle/report_adapter.py` | `PAYOUT_PROXY_FIELD` 常量；`_derive_report_payout_proxy` 改用新 key 且 reliability=display_only；`build_report_facts_from_extraction` 末尾派生 status |
-| `tradingagents/dataflows/value_investment/turtle/market_adapter.py` | `build_market_facts` 区分 `channel_is_explicit`，默认 channel 时 tax_rate display_only；末尾派生 status |
+| `tradingagents/dataflows/value_investment/turtle/market_adapter.py` | `build_market_facts` 区分 `channel_is_explicit`，默认 channel 时 tax_rate display_only；删除无条件 `_append_caveat(caveats, DEFAULT_CHANNEL_CAVEAT)`（line 245）；可移除常量；末尾派生 status |
 | `tradingagents/dataflows/value_investment/turtle/calculations.py` | 删 A.4 三处死代码 + A.5 两处 degraded 分支；alias chain 不动 |
 | `tradingagents/dataflows/value_investment/turtle/decision.py` | 删 redaction 全部；prompt 加 `abs(capex)` 说明 |
 | `tradingagents/tools/turtle_analysis_tool.py` | `holding_channel` 直传不走 context；`status` 改用 `merge_status` 聚合；`company_name` 签名对齐 `str = ""` |
-| `tradingagents/agents/analysts/value_analyst.py` | 所有 return 路径补 `value_turtle_payload` |
+| `tradingagents/agents/utils/agent_states.py` | `AgentState` TypedDict 新增 `value_turtle_payload` 字段 |
+| `tradingagents/agents/analysts/value_analyst.py` | 所有 return 路径补 `value_turtle_payload`（除 unsupported 等无 payload 路径——参见 §6.4） |
 | `tradingagents/graph/propagation.py` | InitialState 加 `"value_turtle_payload": ""` |
-| `tradingagents/graph/trading_graph.py` | propagator 输出加 `value_turtle_payload` |
-| `app/services/simple_analysis_service.py` | 持久化配置新增 `value_turtle_payload.json` |
+| `tradingagents/graph/trading_graph.py` | **可选**：`_log_state` 写日志时附 `value_turtle_payload`（plan 阶段决定） |
+| `app/services/simple_analysis_service.py` | 持久化配置新增 `value_turtle_payload`；持久化循环加 "内容非空" 短路 |
 | `scripts/smoke_test_turtle_value.py` | 新增 `--holding-channel` 参数 |
 | `tests/unit/test_turtle_*.py` | 多文件改动 + 新增（详见 §8.2） |
 | `tests/unit/test_value_analyst_payload_propagation.py` | 新建 |
