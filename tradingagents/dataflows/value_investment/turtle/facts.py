@@ -147,6 +147,7 @@ class TurtleReportFacts:
     fields: dict[str, TurtleFactValue] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
     caveats: list[str] = field(default_factory=list)
+    status: TurtleStatus = "complete"
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "fields", _copy_dict(self.fields))
@@ -158,6 +159,7 @@ class TurtleReportFacts:
             "fields": {key: value.to_dict() for key, value in self.fields.items()},
             "metadata": _copy_dict(self.metadata),
             "caveats": _copy_list(self.caveats),
+            "status": self.status,
         }
 
 

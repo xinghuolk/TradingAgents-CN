@@ -164,3 +164,19 @@ class TestMergeStatus:
         # 多参数 + 乱序也是最严重
         assert merge_status("unsupported", "complete", "degraded") == "unsupported"
         assert merge_status("degraded", "complete", "non_decisionable") == "non_decisionable"
+
+
+class TestTurtleReportFactsStatus:
+    def test_status_defaults_to_complete(self):
+        facts = TurtleReportFacts()
+        assert facts.status == "complete"
+
+    def test_status_can_be_set(self):
+        facts = TurtleReportFacts(status="degraded")
+        assert facts.status == "degraded"
+
+    def test_to_dict_includes_status(self):
+        facts = TurtleReportFacts(status="non_decisionable", caveats=["x"])
+        d = facts.to_dict()
+        assert d["status"] == "non_decisionable"
+        assert d["caveats"] == ["x"]
