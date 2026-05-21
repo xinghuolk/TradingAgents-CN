@@ -180,3 +180,19 @@ class TestTurtleReportFactsStatus:
         d = facts.to_dict()
         assert d["status"] == "non_decisionable"
         assert d["caveats"] == ["x"]
+
+
+class TestTurtleMarketFactsStatus:
+    def test_status_defaults_to_complete(self):
+        facts = TurtleMarketFacts()
+        assert facts.status == "complete"
+
+    def test_status_can_be_set(self):
+        facts = TurtleMarketFacts(status="non_decisionable")
+        assert facts.status == "non_decisionable"
+
+    def test_to_dict_includes_status(self):
+        facts = TurtleMarketFacts(status="degraded", caveats=["y"])
+        d = facts.to_dict()
+        assert d["status"] == "degraded"
+        assert d["caveats"] == ["y"]
