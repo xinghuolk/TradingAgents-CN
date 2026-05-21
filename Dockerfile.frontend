@@ -4,10 +4,13 @@
 # 构建阶段：使用Node.js 22.x（与项目开发环境一致）
 FROM node:22-alpine AS build
 
-ENV NODE_ENV=production
+ARG NPM_REGISTRY=https://registry.npmmirror.com
+
+ENV NODE_ENV=production \
+    COREPACK_NPM_REGISTRY=${NPM_REGISTRY}
 WORKDIR /app/frontend
 
-# 启用Corepack并使用Yarn 1.22.22（项目使用的包管理器）
+# 启用Corepack并使用Yarn 1.22.22（项目使用的包管理器），Corepack/Yarn 默认走国内 npm 镜像
 RUN corepack enable && corepack prepare yarn@1.22.22 --activate
 
 # 复制package.json、yarn.lock和.yarnrc（配置国内镜像源）
