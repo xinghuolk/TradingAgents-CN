@@ -50,6 +50,7 @@ class Propagator:
             "sentiment_report": "",
             "news_report": "",
             "value_report": "",
+            "value_turtle_payload": "",
             "value_tool_call_count": 0,
         }
 
