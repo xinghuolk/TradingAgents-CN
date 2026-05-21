@@ -278,67 +278,49 @@ def test_non_decisionable_report_is_deterministic():
     assert build_non_decisionable_report(facts, signals) == expected
 
 
-def test_non_decisionable_report_redacts_broader_recommendation_language_from_source_text():
-    context = TurtleRunContext.for_ticker(
-        ticker="600519",
-        market="A",
-        trade_date="2026-05-19",
-        company_name="建议增持买进buy贵州茅台",
-    )
-    facts = TurtleFacts(
-        context=context,
-        report=TurtleReportFacts(
-            fields={
-                "note": TurtleFactValue(
-                    name="note",
-                    value="维持推荐",
-                    source_label="fixture",
-                    source_reference="fixture",
-                )
-            },
-            caveats=["建议加仓看涨"],
-        ),
-        market=TurtleMarketFacts(caveats=["强烈看多做多"]),
-        status="non_decisionable",
-        caveats=["建议减仓outperform"],
-    )
-    signals = TurtleComputedSignals(
-        status="non_decisionable",
-        results={
-            "建议买入holdR": FormulaResult(
-                "建议买入holdR",
-                "建议加仓公式",
-                "维持推荐代入式",
-                None,
-                "percent",
-                [],
-                missing_inputs=["建议卖出market_cap", "增持source", "跑赢大市sell"],
+class TestNonDecisionableReportPreservesIdentifiers:
+    """综合评审 2.1：identifier 名含 buy/hold/sell 子串不被脱敏。"""
+
+    def _build_inputs(self):
+        ctx = TurtleRunContext(
+            ticker="600519", market="A", trade_date="2026-05-19",
+            period_end="2025-12-31", holding_channel="long_term_domestic",
+            company_name="X",
+        )
+        facts = TurtleFacts(
+            context=ctx,
+            report=TurtleReportFacts(),
+            market=TurtleMarketFacts(),
+            status="non_decisionable",
+            caveats=[],
+        )
+        results = {
+            "R": FormulaResult(
+                name="R", formula="...", substitution="...",
+                value=None, unit="percent",
+                sources=[], missing_inputs=["buyback_amount", "shareholder_return"],
                 status="non_decisionable",
-            )
-        },
-        veto_reasons=["看多但缺数据hold"],
-        caveats=["减仓风险"],
-    )
+            ),
+        }
+        signals = TurtleComputedSignals(
+            status="non_decisionable", results=results,
+            veto_reasons=[], caveats=[],
+        )
+        return facts, signals
 
-    report = build_non_decisionable_report(facts, signals)
+    def test_buyback_amount_not_mangled(self):
+        facts, signals = self._build_inputs()
+        report = build_non_decisionable_report(facts, signals)
+        assert "buyback_amount" in report
+        assert "[已省略]back_amount" not in report
 
-    forbidden_terms = [
-        "买入",
-        "持有",
-        "卖出",
-        "增持",
-        "加仓",
-        "推荐",
-        "看多",
-        "减仓",
-        "买进",
-        "看涨",
-        "做多",
-        "跑赢大市",
-        "buy",
-        "hold",
-        "sell",
-        "outperform",
-    ]
-    for term in forbidden_terms:
-        assert term not in report
+    def test_shareholder_return_not_mangled(self):
+        facts, signals = self._build_inputs()
+        report = build_non_decisionable_report(facts, signals)
+        assert "shareholder_return" in report
+        assert "share[已省略]er_return" not in report
+
+    def test_redaction_token_absent(self):
+        facts, signals = self._build_inputs()
+        report = build_non_decisionable_report(facts, signals)
+        assert "[已省略]" not in report

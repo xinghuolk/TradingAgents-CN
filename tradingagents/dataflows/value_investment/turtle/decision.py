@@ -2,40 +2,8 @@
 
 from __future__ import annotations
 
-import re
-
 from .facts import FormulaResult, TurtleComputedSignals, TurtleFacts
 from .formatting import facts_to_markdown, signals_to_markdown
-
-
-_SOURCE_TEXT_REDACTIONS = (
-    "跑赢大市",
-    "outperform",
-    "买入",
-    "买进",
-    "持有",
-    "卖出",
-    "增持",
-    "加仓",
-    "推荐",
-    "看多",
-    "看涨",
-    "做多",
-    "减仓",
-    "建议",
-    "维持",
-    "强烈",
-    "buy",
-    "hold",
-    "sell",
-)
-
-
-def _safe_non_decision_text(value: object) -> str:
-    text = str(value)
-    for word in _SOURCE_TEXT_REDACTIONS:
-        text = re.sub(re.escape(word), "[已省略]", text, flags=re.IGNORECASE)
-    return text
 
 
 def _unique_strings(values: list[str]) -> list[str]:
@@ -66,11 +34,7 @@ def _formula_status_lines(results: dict[str, FormulaResult]) -> list[str]:
         result = results[name]
         missing = ", ".join(result.missing_inputs) if result.missing_inputs else "无"
         lines.append(
-            "- "
-            f"{_safe_non_decision_text(name)}: "
-            f"status={_safe_non_decision_text(result.status)}, "
-            f"value={_safe_non_decision_text(result.value)}, "
-            f"missing_inputs={_safe_non_decision_text(missing)}"
+            f"- {name}: status={result.status}, value={result.value}, missing_inputs={missing}"
         )
     return lines
 
@@ -103,7 +67,9 @@ def build_turtle_decision_prompt(
             (
                 "## 输出结构\n"
                 "1. 数据状态：概述 facts.status、signals.status 与关键 caveats。\n"
-                "2. 公式核对：逐项引用公式、代入式、数值、单位、来源和缺失输入。\n"
+                "2. 公式核对：逐项引用公式、代入式、数值、单位、来源和缺失输入。"
+                "注意 capex 按绝对值参与 owner_earnings（`ocf - abs(capex)`），"
+                "无论数据源以正号还是负号披露。\n"
                 "3. 否决检查：说明是否触发 unsupported/non_decisionable 停止逻辑。\n"
                 "4. 结论：仅在所有关键输入和公式可决策时给出投资判断；否则输出不可决策报告。"
             ),
@@ -133,24 +99,24 @@ def build_non_decisionable_report(
         "结论：不可决策；关键输入或公式状态不足。不输出任何交易动作建议。",
         "",
         "## 标的",
-        f"- ticker: {_safe_non_decision_text(context.ticker)}",
-        f"- market: {_safe_non_decision_text(context.market)}",
-        f"- trade_date: {_safe_non_decision_text(context.trade_date)}",
-        f"- company_name: {_safe_non_decision_text(context.company_name)}",
-        f"- facts_status: {_safe_non_decision_text(facts.status)}",
-        f"- signals_status: {_safe_non_decision_text(signals.status)}",
+        f"- ticker: {context.ticker}",
+        f"- market: {context.market}",
+        f"- trade_date: {context.trade_date}",
+        f"- company_name: {context.company_name}",
+        f"- facts_status: {facts.status}",
+        f"- signals_status: {signals.status}",
         "",
         "## 缺失输入",
     ]
 
     if missing_inputs:
-        lines.extend(f"- {_safe_non_decision_text(name)}" for name in missing_inputs)
+        lines.extend(f"- {name}" for name in missing_inputs)
     else:
         lines.append("- 无")
 
     lines.extend(["", "## 限制与备注"])
     if caveats:
-        lines.extend(f"- {_safe_non_decision_text(caveat)}" for caveat in caveats)
+        lines.extend(f"- {caveat}" for caveat in caveats)
     else:
         lines.append("- 无")
 
