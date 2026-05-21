@@ -483,3 +483,50 @@ def test_report_adapter_rejects_million_shares_as_money_unit():
     assert not isinstance(field.value, MoneyAmount)
     assert field.reliability == "display_only"
     assert "unsupported unit million shares" in " ".join(facts.caveats)
+
+
+class TestReportAdapterStatus:
+    def test_none_extraction_is_non_decisionable(self):
+        facts = build_report_facts_from_extraction(
+            extraction=None, allow_llm_models=(), adapter_caveats=[],
+        )
+        assert facts.status == "non_decisionable"
+
+    def test_empty_fields_is_non_decisionable(self):
+        class FakeExtraction:
+            fields = {}
+            staleness = None
+            company = market = period_end = catalog_version = None
+        facts = build_report_facts_from_extraction(
+            extraction=FakeExtraction(), allow_llm_models=(), adapter_caveats=[],
+        )
+        assert facts.status == "non_decisionable"
+
+    def test_non_dict_fields_is_non_decisionable(self):
+        class FakeExtraction:
+            fields = "not a dict"
+            staleness = None
+            company = market = period_end = catalog_version = None
+        facts = build_report_facts_from_extraction(
+            extraction=FakeExtraction(), allow_llm_models=(), adapter_caveats=[],
+        )
+        assert facts.status == "non_decisionable"
+
+    def test_adapter_caveats_make_status_degraded(self):
+        class FakeField:
+            field_id = "net_profit"
+            unit = "yuan"
+            currency = "CNY"
+            evidence_page = 45
+            value = 1_000_000_000
+
+        class FakeExtraction:
+            fields = {"net_profit": FakeField()}
+            staleness = None
+            company = market = period_end = catalog_version = None
+        facts = build_report_facts_from_extraction(
+            extraction=FakeExtraction(),
+            allow_llm_models=(),
+            adapter_caveats=["unrelated warning"],
+        )
+        assert facts.status == "degraded"

@@ -14,6 +14,7 @@ from .facts import (
     MoneyUnit,
     TurtleFactValue,
     TurtleReportFacts,
+    TurtleStatus,
     infer_turtle_period_end,
 )
 
@@ -253,7 +254,11 @@ def build_report_facts_from_extraction(
 ) -> TurtleReportFacts:
     """Convert a public FinancialReportClient extraction into Turtle facts."""
     if extraction is None:
-        return TurtleReportFacts(fields={}, metadata={}, caveats=list(adapter_caveats))
+        return TurtleReportFacts(
+            fields={}, metadata={},
+            caveats=list(adapter_caveats),
+            status="non_decisionable",
+        )
 
     policy = FinancialReportPolicy(allow_llm_models=allow_llm_models)
     raw_fields = getattr(extraction, "fields", None)
@@ -293,7 +298,20 @@ def build_report_facts_from_extraction(
         "period_end": getattr(extraction, "period_end", None),
         "catalog_version": getattr(extraction, "catalog_version", None),
     }
-    return TurtleReportFacts(fields=adapted, metadata=metadata, caveats=caveats)
+
+    if not adapted:
+        status: TurtleStatus = "non_decisionable"
+    elif caveats or any(
+        f.reliability != "reliable"
+        or (isinstance(f.value, MoneyAmount) and f.value.reliability != "reliable")
+        or f.caveat
+        for f in adapted.values()
+    ):
+        status = "degraded"
+    else:
+        status = "complete"
+
+    return TurtleReportFacts(fields=adapted, metadata=metadata, caveats=caveats, status=status)
 
 
 def get_turtle_report_facts(
