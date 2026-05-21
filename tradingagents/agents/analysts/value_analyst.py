@@ -369,11 +369,13 @@ def create_value_analyst(llm, toolkit):
                     logger.info(f"📊 [价值投资分析师] 生成报告，长度: {len(report_content)}")
                     return {
                         "value_report": report_content,
+                        "value_turtle_payload": turtle_payload,
                         "value_tool_call_count": tool_call_count
                     }
             else:
                 return {
                     "value_report": str(result),
+                    "value_turtle_payload": turtle_payload,
                     "value_tool_call_count": tool_call_count
                 }
 
@@ -383,6 +385,7 @@ def create_value_analyst(llm, toolkit):
             logger.error(traceback.format_exc())
             return {
                 "value_report": f"价值投资分析失败: {str(e)}",
+                "value_turtle_payload": turtle_payload,
                 "value_tool_call_count": tool_call_count
             }
 
