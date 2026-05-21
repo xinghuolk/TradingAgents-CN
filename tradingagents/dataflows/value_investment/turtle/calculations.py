@@ -335,15 +335,12 @@ def compute_turtle_signals(facts: TurtleFacts) -> TurtleComputedSignals:
     r_sources = _merge_sources(net_profit_sources, payout_sources, tax_sources, r_buyback_sources, r_market_cap_sources)
     r_value = None
     r_substitution = "(net_profit * M * (1 - Q) + buyback) / market_cap * 100"
-    if not r_critical_missing and r_market_cap != 0:
+    if not r_critical_missing:
         r_value = (net_profit * payout * (1 - tax_rate) + r_buyback_for_formula) / r_market_cap * 100  # type: ignore[operator]
         r_substitution = (
             f"({_fmt(net_profit)} * {_fmt(payout)} * (1 - {_fmt(tax_rate)}) "
             f"+ {_fmt(r_buyback_for_formula)}) / {_fmt(r_market_cap)} * 100"
         )
-    elif not r_critical_missing:
-        r_critical_missing = ["market_cap"]
-        r_missing = _merge_missing(r_critical_missing, r_degraded_buyback_missing)
     r_status: TurtleStatus = "non_decisionable" if r_critical_missing else "degraded" if r_buyback_degraded else "complete"
     results["R"] = _result(
         name="R",
@@ -361,15 +358,12 @@ def compute_turtle_signals(facts: TurtleFacts) -> TurtleComputedSignals:
     gg_sources = _merge_sources(owner_sources, payout_sources, tax_sources, gg_buyback_sources, gg_market_cap_sources)
     gg_value = None
     gg_substitution = "(owner_earnings * M * (1 - Q) + buyback) / market_cap * 100"
-    if not gg_critical_missing and gg_market_cap != 0:
+    if not gg_critical_missing:
         gg_value = (owner_earnings * payout * (1 - tax_rate) + gg_buyback_for_formula) / gg_market_cap * 100  # type: ignore[operator]
         gg_substitution = (
             f"({_fmt(owner_earnings)} * {_fmt(payout)} * (1 - {_fmt(tax_rate)}) "
             f"+ {_fmt(gg_buyback_for_formula)}) / {_fmt(gg_market_cap)} * 100"
         )
-    elif not gg_critical_missing:
-        gg_critical_missing = ["market_cap"]
-        gg_missing = _merge_missing(gg_critical_missing, gg_degraded_buyback_missing)
     gg_status: TurtleStatus = "non_decisionable" if gg_critical_missing else "degraded" if gg_buyback_degraded else "complete"
     results["GG"] = _result(
         name="GG",
@@ -405,18 +399,10 @@ def compute_turtle_signals(facts: TurtleFacts) -> TurtleComputedSignals:
     net_cash_sources = _merge_sources(cash_sources, debt_sources, net_cash_market_cap_sources)
     net_cash_ratio = None
     net_cash_substitution = "(cash - interest_bearing_debt) / market_cap * 100"
-    if not net_cash_missing and net_cash_market_cap != 0:
+    if not net_cash_missing:
         net_cash_ratio = (cash - debt) / net_cash_market_cap * 100  # type: ignore[operator]
         net_cash_substitution = f"({_fmt(cash)} - {_fmt(debt)}) / {_fmt(net_cash_market_cap)} * 100"
-    elif not net_cash_missing:
-        net_cash_missing = ["market_cap"]
-    net_cash_status: TurtleStatus = (
-        "non_decisionable"
-        if "market_cap" in net_cash_missing
-        else "degraded"
-        if net_cash_missing
-        else "complete"
-    )
+    net_cash_status: TurtleStatus = "non_decisionable" if net_cash_missing else "complete"
     results["net_cash_ratio"] = _result(
         name="net_cash_ratio",
         formula="net_cash_ratio = (cash - interest_bearing_debt) / market_cap * 100",
@@ -430,13 +416,7 @@ def compute_turtle_signals(facts: TurtleFacts) -> TurtleComputedSignals:
 
     ev_missing = list(results["net_cash_ratio"].missing_inputs)
     ev_value = None if ev_missing else (1.0 if net_cash_ratio > 40 else 0.0)  # type: ignore[operator]
-    ev_status: TurtleStatus = (
-        "non_decisionable"
-        if "market_cap" in ev_missing
-        else "degraded"
-        if ev_missing
-        else "complete"
-    )
+    ev_status: TurtleStatus = "non_decisionable" if ev_missing else "complete"
     results["ev_switch"] = _result(
         name="ev_switch",
         formula="ev_switch = 1.0 if net_cash_ratio > 40 else 0.0",
@@ -450,13 +430,7 @@ def compute_turtle_signals(facts: TurtleFacts) -> TurtleComputedSignals:
 
     protection_missing = list(results["net_cash_ratio"].missing_inputs)
     protection_value = None if protection_missing else _target_cash_protection(net_cash_ratio)  # type: ignore[arg-type]
-    protection_status: TurtleStatus = (
-        "non_decisionable"
-        if "market_cap" in protection_missing
-        else "degraded"
-        if protection_missing
-        else "complete"
-    )
+    protection_status: TurtleStatus = "non_decisionable" if protection_missing else "complete"
     results["cash_protection"] = _result(
         name="cash_protection",
         formula="cash_protection = target discount from net_cash_ratio bands",

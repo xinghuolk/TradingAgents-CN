@@ -313,14 +313,15 @@ def test_report_adapter_derives_caveated_single_year_payout_proxy():
         adapter_caveats=[],
     )
 
-    payout = facts.fields["dividend_avg_payout_ratio_3y"]
+    payout = facts.fields["dividend_payout_ratio_proxy_single_year"]
     assert payout.value == 0.35
+    assert payout.reliability == "display_only"
     assert payout.source_reference == "dividends_paid p.7; net_profit p.7"
     assert payout.caveat == "single-year report payout proxy; not a 3-year average"
     assert "single-year report payout proxy; not a 3-year average" in facts.caveats
 
 
-def test_report_adapter_replaces_display_only_payout_with_reliable_proxy():
+def test_report_adapter_adds_proxy_alongside_display_only_extraction_payout():
     extraction = FakeExtraction(fields={
         "dividend_avg_payout_ratio_3y": FakeField(
             "dividend_avg_payout_ratio_3y",
@@ -340,13 +341,16 @@ def test_report_adapter_replaces_display_only_payout_with_reliable_proxy():
         adapter_caveats=[],
     )
 
-    payout = facts.fields["dividend_avg_payout_ratio_3y"]
-    assert payout.value == 0.35
-    assert payout.reliability == "reliable"
-    assert payout.caveat == "single-year report payout proxy; not a 3-year average"
+    # The extraction's display-only field stays under its original key.
+    assert facts.fields["dividend_avg_payout_ratio_3y"].reliability == "display_only"
+    # The calculated proxy is stored under the new key as display_only.
+    proxy = facts.fields["dividend_payout_ratio_proxy_single_year"]
+    assert proxy.value == 0.35
+    assert proxy.reliability == "display_only"
+    assert proxy.caveat == "single-year report payout proxy; not a 3-year average"
 
 
-def test_report_adapter_replaces_reliable_non_numeric_payout_with_proxy():
+def test_report_adapter_adds_proxy_alongside_non_numeric_extraction_payout():
     extraction = FakeExtraction(fields={
         "dividend_avg_payout_ratio_3y": FakeField(
             "dividend_avg_payout_ratio_3y",
@@ -365,10 +369,13 @@ def test_report_adapter_replaces_reliable_non_numeric_payout_with_proxy():
         adapter_caveats=[],
     )
 
-    payout = facts.fields["dividend_avg_payout_ratio_3y"]
-    assert payout.value == 0.35
-    assert payout.reliability == "reliable"
-    assert payout.caveat == "single-year report payout proxy; not a 3-year average"
+    # The extraction's string "35%" field stays under its original key (display_only due to missing currency/unit).
+    assert facts.fields["dividend_avg_payout_ratio_3y"].value == "35%"
+    # The calculated proxy is stored under the new key as display_only.
+    proxy = facts.fields["dividend_payout_ratio_proxy_single_year"]
+    assert proxy.value == 0.35
+    assert proxy.reliability == "display_only"
+    assert proxy.caveat == "single-year report payout proxy; not a 3-year average"
 
 
 def test_report_adapter_skips_non_finite_derived_payout_ratio():
@@ -383,7 +390,7 @@ def test_report_adapter_skips_non_finite_derived_payout_ratio():
         adapter_caveats=[],
     )
 
-    assert "dividend_avg_payout_ratio_3y" not in facts.fields
+    assert "dividend_payout_ratio_proxy_single_year" not in facts.fields
     assert "report payout proxy skipped: invalid payout ratio" in facts.caveats
 
 
@@ -407,7 +414,7 @@ def test_report_adapter_does_not_derive_payout_from_unreliable_dividend_field():
         adapter_caveats=[],
     )
 
-    assert "dividend_avg_payout_ratio_3y" not in facts.fields
+    assert "dividend_payout_ratio_proxy_single_year" not in facts.fields
 
 
 def test_report_adapter_does_not_derive_payout_from_mixed_currency_fields():
@@ -422,7 +429,7 @@ def test_report_adapter_does_not_derive_payout_from_mixed_currency_fields():
         adapter_caveats=[],
     )
 
-    assert "dividend_avg_payout_ratio_3y" not in facts.fields
+    assert "dividend_payout_ratio_proxy_single_year" not in facts.fields
     assert "report payout proxy skipped: currency mismatch" in facts.caveats
 
 
@@ -483,3 +490,123 @@ def test_report_adapter_rejects_million_shares_as_money_unit():
     assert not isinstance(field.value, MoneyAmount)
     assert field.reliability == "display_only"
     assert "unsupported unit million shares" in " ".join(facts.caveats)
+
+
+class TestGetTurtleReportFactsPreservesStatusOnPeriodEndFallback:
+    """Regression: get_turtle_report_facts 在 period_end 缺失而重建 TurtleReportFacts 时
+    必须保留 status 字段；否则 non_decisionable / degraded 会被静默 upgrade 到 complete。"""
+
+    def test_extraction_none_preserves_non_decisionable_status(self):
+        class FakeAdapterMissingPeriodEnd:
+            def get_annual_report_data(self, **kwargs):
+                return FakeAdapterResult(
+                    available=False,
+                    company=kwargs["ticker"],
+                    market=kwargs["market"],
+                    period_end=kwargs["period_end"],
+                    extraction=None,  # → build_report_facts 返回 status="non_decisionable"
+                    warnings=[],
+                    errors=[],
+                )
+
+        facts = get_turtle_report_facts(
+            ticker="600519",
+            market="A",
+            trade_date="2026-04-01",
+            adapter=FakeAdapterMissingPeriodEnd(),
+            allow_llm_models=(),
+        )
+
+        # extraction=None → facts.metadata 的 period_end 是 None → 触发 metadata 重建路径
+        # 重建后 status 必须仍是 non_decisionable，不能被默认值 complete 覆盖
+        assert facts.status == "non_decisionable"
+        assert facts.metadata["period_end"] == "2025-12-31"
+
+
+class TestReportAdapterStatus:
+    def test_none_extraction_is_non_decisionable(self):
+        facts = build_report_facts_from_extraction(
+            extraction=None, allow_llm_models=(), adapter_caveats=[],
+        )
+        assert facts.status == "non_decisionable"
+
+    def test_empty_fields_is_non_decisionable(self):
+        class FakeExtraction:
+            fields = {}
+            staleness = None
+            company = market = period_end = catalog_version = None
+        facts = build_report_facts_from_extraction(
+            extraction=FakeExtraction(), allow_llm_models=(), adapter_caveats=[],
+        )
+        assert facts.status == "non_decisionable"
+
+    def test_non_dict_fields_is_non_decisionable(self):
+        class FakeExtraction:
+            fields = "not a dict"
+            staleness = None
+            company = market = period_end = catalog_version = None
+        facts = build_report_facts_from_extraction(
+            extraction=FakeExtraction(), allow_llm_models=(), adapter_caveats=[],
+        )
+        assert facts.status == "non_decisionable"
+
+    def test_adapter_caveats_make_status_degraded(self):
+        class FakeField:
+            field_id = "net_profit"
+            unit = "yuan"
+            currency = "CNY"
+            evidence_page = 45
+            value = 1_000_000_000
+
+        class FakeExtraction:
+            fields = {"net_profit": FakeField()}
+            staleness = None
+            company = market = period_end = catalog_version = None
+        facts = build_report_facts_from_extraction(
+            extraction=FakeExtraction(),
+            allow_llm_models=(),
+            adapter_caveats=["unrelated warning"],
+        )
+        assert facts.status == "degraded"
+
+
+class TestPayoutProxyRenameAndDowngrade:
+    def _build_with_dividends_and_profit(self):
+        """构造含 dividends_paid 与 net_profit 的 fake extraction，触发 proxy 派生。"""
+        class FakeField:
+            def __init__(self, field_id, value, unit="yuan", currency="CNY"):
+                self.field_id = field_id
+                self.value = value
+                self.unit = unit
+                self.currency = currency
+                self.evidence_page = 1
+                self.is_reliable = True
+                self.source = "akshare"
+                self.confidence = "verified"
+                self.raw_bucket = "clean_present"
+
+        class FakeExtraction:
+            staleness = None
+            company = market = period_end = catalog_version = None
+            fields = {
+                "net_profit": FakeField("net_profit", 1_000_000_000),
+                "dividends_paid": FakeField("dividends_paid", 300_000_000),
+            }
+        return build_report_facts_from_extraction(
+            extraction=FakeExtraction(), allow_llm_models=(), adapter_caveats=[],
+        )
+
+    def test_proxy_uses_new_key_name(self):
+        facts = self._build_with_dividends_and_profit()
+        assert "dividend_payout_ratio_proxy_single_year" in facts.fields
+        assert "dividend_avg_payout_ratio_3y" not in facts.fields
+
+    def test_proxy_reliability_is_display_only(self):
+        facts = self._build_with_dividends_and_profit()
+        proxy = facts.fields["dividend_payout_ratio_proxy_single_year"]
+        assert proxy.reliability == "display_only"
+
+    def test_proxy_carries_single_year_caveat(self):
+        facts = self._build_with_dividends_and_profit()
+        proxy = facts.fields["dividend_payout_ratio_proxy_single_year"]
+        assert "single-year" in (proxy.caveat or "")

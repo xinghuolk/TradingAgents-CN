@@ -147,6 +147,7 @@ class TurtleReportFacts:
     fields: dict[str, TurtleFactValue] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
     caveats: list[str] = field(default_factory=list)
+    status: TurtleStatus = "complete"
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "fields", _copy_dict(self.fields))
@@ -158,6 +159,7 @@ class TurtleReportFacts:
             "fields": {key: value.to_dict() for key, value in self.fields.items()},
             "metadata": _copy_dict(self.metadata),
             "caveats": _copy_list(self.caveats),
+            "status": self.status,
         }
 
 
@@ -165,6 +167,7 @@ class TurtleReportFacts:
 class TurtleMarketFacts:
     fields: dict[str, TurtleFactValue] = field(default_factory=dict)
     caveats: list[str] = field(default_factory=list)
+    status: TurtleStatus = "complete"
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "fields", _copy_dict(self.fields))
@@ -174,6 +177,7 @@ class TurtleMarketFacts:
         return {
             "fields": {key: value.to_dict() for key, value in self.fields.items()},
             "caveats": _copy_list(self.caveats),
+            "status": self.status,
         }
 
 
@@ -236,3 +240,16 @@ class TurtleComputedSignals:
             "veto_reasons": _copy_list(self.veto_reasons),
             "caveats": _copy_list(self.caveats),
         }
+
+
+_STATUS_RANK: dict[TurtleStatus, int] = {
+    "complete": 0,
+    "degraded": 1,
+    "non_decisionable": 2,
+    "unsupported": 3,
+}
+
+
+def merge_status(*statuses: TurtleStatus) -> TurtleStatus:
+    """Return the most severe status across the inputs."""
+    return max(statuses, key=lambda s: _STATUS_RANK[s])

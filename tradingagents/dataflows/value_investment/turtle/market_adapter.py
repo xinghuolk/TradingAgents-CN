@@ -7,12 +7,14 @@ import os
 from math import isfinite
 from typing import Any
 
-from .facts import MoneyAmount, TurtleFactValue, TurtleMarketFacts, default_holding_channel
+from .facts import MoneyAmount, TurtleFactValue, TurtleMarketFacts, TurtleStatus, default_holding_channel
 
 
 logger = logging.getLogger(__name__)
 SOURCE_LABEL = "market-adapter"
-DEFAULT_CHANNEL_CAVEAT = "tax_rate uses default holding_channel until UI/API exposes channel selection"
+
+# "内置常量字段"：仅有这些字段不算实际外部数据采集成功（adapter status 派生白名单）
+_BUILTIN_FIELDS = frozenset({"tax_rate", "holding_channel", "rf_rate"})
 
 
 def _normalize_market(market: str) -> str:
@@ -202,7 +204,10 @@ def build_market_facts(
     caveats: list[str] = []
     safe_market_data = market_data or {}
     currency = _currency_for_market(market)
-    active_channel = holding_channel or default_holding_channel(market)
+
+    stripped_channel = holding_channel.strip() if holding_channel else ""
+    channel_is_explicit = bool(stripped_channel)
+    active_channel = stripped_channel or default_holding_channel(market)
 
     has_market_cap = "market_cap" in safe_market_data and safe_market_data.get("market_cap") is not None
     market_cap = _numeric_value(safe_market_data.get("market_cap"))
@@ -228,21 +233,28 @@ def build_market_facts(
         fields["close_price"] = _field("close_price", float(close_price), "market_data.close_price")
 
     tax_rate_known = _is_known_tax_rate_combination(market, active_channel)
-    tax_rate_unknown_caveat = None
-    tax_rate_reliability = "reliable"
     if not tax_rate_known:
-        tax_rate_unknown_caveat = f"tax_rate unknown for {market}:{active_channel}"
         tax_rate_reliability = "display_only"
-        _append_caveat(caveats, tax_rate_unknown_caveat)
+        tax_rate_caveat = f"tax_rate unknown for {market}:{active_channel}"
+        _append_caveat(caveats, tax_rate_caveat)
+    elif not channel_is_explicit:
+        tax_rate_reliability = "display_only"
+        tax_rate_caveat = (
+            f"tax_rate uses default holding_channel '{active_channel}' for {market}; "
+            "pass holding_channel explicitly to enable computation"
+        )
+        _append_caveat(caveats, tax_rate_caveat)
+    else:
+        tax_rate_reliability = "reliable"
+        tax_rate_caveat = None
 
     fields["tax_rate"] = _field(
         "tax_rate",
         default_tax_rate(market, active_channel),
         "holding_channel.default_tax_rate",
-        caveat=tax_rate_unknown_caveat or DEFAULT_CHANNEL_CAVEAT,
+        caveat=tax_rate_caveat,
         reliability=tax_rate_reliability,
     )
-    _append_caveat(caveats, DEFAULT_CHANNEL_CAVEAT)
     fields["holding_channel"] = _field("holding_channel", active_channel, "holding_channel")
 
     try:
@@ -321,7 +333,21 @@ def build_market_facts(
                 "buyback_data.records",
             )
 
-    return TurtleMarketFacts(fields=fields, caveats=caveats)
+    external_fields = {k: v for k, v in fields.items() if k not in _BUILTIN_FIELDS}
+
+    if not external_fields:
+        status: TurtleStatus = "non_decisionable"
+    elif caveats or any(
+        f.reliability != "reliable"
+        or (isinstance(f.value, MoneyAmount) and f.value.reliability != "reliable")
+        or f.caveat
+        for f in fields.values()
+    ):
+        status = "degraded"
+    else:
+        status = "complete"
+
+    return TurtleMarketFacts(fields=fields, caveats=caveats, status=status)
 
 
 def get_turtle_market_facts(ticker: str, market: str, holding_channel: str | None = None) -> TurtleMarketFacts:

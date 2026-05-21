@@ -318,8 +318,9 @@ def test_build_market_facts_defaults_missing_hk_holding_channel():
     caveats = " ".join(facts.caveats)
     assert facts.fields["holding_channel"].value == "stock_connect"
     assert facts.fields["tax_rate"].value == 0.20
-    assert facts.fields["tax_rate"].reliability == "reliable"
+    assert facts.fields["tax_rate"].reliability == "display_only"
     assert "tax_rate unknown for HK:None" not in caveats
+    assert "default holding_channel" in (facts.fields["tax_rate"].caveat or "")
 
 
 def test_build_market_facts_invalid_rf_env_value_adds_caveat(monkeypatch):
@@ -337,3 +338,111 @@ def test_build_market_facts_invalid_rf_env_value_adds_caveat(monkeypatch):
 
     assert "rf_rate invalid" in " ".join(facts.caveats)
     assert "rf_rate" not in facts.fields
+
+
+def _valid_market_data():
+    return {
+        "market_cap": 1_500_000_000_000,
+        "close_price": 1800.0,
+        "total_shares": 1_000_000_000,
+        "industry": "白酒",
+    }
+
+
+class TestFailFastDefaults:
+    def test_default_channel_makes_tax_rate_display_only(self):
+        facts = build_market_facts(
+            ticker="600519",
+            market="A",
+            holding_channel=None,
+            market_data=_valid_market_data(),
+            dividend_data=None,
+            buyback_data=None,
+            industry="白酒",
+        )
+        tax_rate = facts.fields["tax_rate"]
+        assert tax_rate.reliability == "display_only"
+        assert "default holding_channel" in (tax_rate.caveat or "")
+
+    def test_explicit_channel_keeps_tax_rate_reliable(self):
+        facts = build_market_facts(
+            ticker="600519",
+            market="A",
+            holding_channel="long_term_domestic",
+            market_data=_valid_market_data(),
+            dividend_data=None,
+            buyback_data=None,
+            industry="白酒",
+        )
+        tax_rate = facts.fields["tax_rate"]
+        assert tax_rate.reliability == "reliable"
+        assert tax_rate.caveat is None or "default" not in tax_rate.caveat
+
+    def test_empty_holding_channel_string_counts_as_default(self):
+        facts = build_market_facts(
+            ticker="600519",
+            market="A",
+            holding_channel="   ",
+            market_data=_valid_market_data(),
+            dividend_data=None,
+            buyback_data=None,
+            industry="白酒",
+        )
+        assert facts.fields["tax_rate"].reliability == "display_only"
+
+
+class TestNoUnconditionalDefaultChannelCaveat:
+    def test_explicit_channel_does_not_add_default_channel_caveat(self):
+        facts = build_market_facts(
+            ticker="600519",
+            market="A",
+            holding_channel="long_term_domestic",
+            market_data=_valid_market_data(),
+            dividend_data=None,
+            buyback_data=None,
+            industry="白酒",
+        )
+        joined = "; ".join(facts.caveats)
+        assert "default holding_channel" not in joined
+        assert "tax_rate uses default" not in joined
+
+
+class TestMarketAdapterStatus:
+    def test_all_reliable_explicit_channel_is_complete(self):
+        facts = build_market_facts(
+            ticker="600519",
+            market="A",
+            holding_channel="long_term_domestic",
+            market_data=_valid_market_data(),
+            dividend_data={"avg_payout_ratio_3y": 0.5, "records": [{"year": 2024}]},
+            buyback_data={"total_cancelled_amount": 0, "records": [{"year": 2024}]},
+            industry="白酒",
+            rf_rate=0.025,
+        )
+        assert facts.status == "complete"
+
+    def test_default_channel_yields_degraded(self):
+        facts = build_market_facts(
+            ticker="600519",
+            market="A",
+            holding_channel=None,
+            market_data=_valid_market_data(),
+            dividend_data={"avg_payout_ratio_3y": 0.5, "records": [{"year": 2024}]},
+            buyback_data={"total_cancelled_amount": 0, "records": [{"year": 2024}]},
+            industry="白酒",
+            rf_rate=0.025,
+        )
+        assert facts.status == "degraded"
+
+    def test_no_market_data_at_all_is_non_decisionable(self):
+        facts = build_market_facts(
+            ticker="600519",
+            market="A",
+            holding_channel="long_term_domestic",
+            market_data=None,
+            dividend_data=None,
+            buyback_data=None,
+            industry=None,
+            rf_rate=None,
+        )
+        assert facts.status == "non_decisionable"

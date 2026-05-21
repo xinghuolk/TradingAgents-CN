@@ -162,10 +162,12 @@ def _plain_turtle_report_prompt(company_name: str, ticker: str, payload: str) ->
             fields=_fact_fields_from_payload(report_payload),
             metadata=dict(report_metadata),
             caveats=list(_required_list(report_payload, "caveats")),
+            status=_required_status(report_payload, "status"),
         ),
         market=TurtleMarketFacts(
             fields=_fact_fields_from_payload(market_payload),
             caveats=list(_required_list(market_payload, "caveats")),
+            status=_required_status(market_payload, "status"),
         ),
         status=_required_status(facts_payload, "status"),
         caveats=list(_required_list(facts_payload, "caveats")),
@@ -227,6 +229,8 @@ def create_value_analyst(llm, toolkit):
         market_info = StockUtils.get_market_info(ticker)
         logger.info(f"📊 [价值投资分析师] 市场类型: {market_info['market_name']}")
 
+        turtle_payload = _latest_turtle_tool_payload(messages) or ""
+
         # 确定市场类型
         if market_info['is_china']:
             market_type = "A"
@@ -237,14 +241,14 @@ def create_value_analyst(llm, toolkit):
             logger.warning(f"⚠️ [价值投资分析师] 美股暂不支持价值投资分析")
             return {
                 "value_report": f"美股 {ticker} 暂不支持穿透回报率分析",
+                "value_turtle_payload": turtle_payload,
                 "value_tool_call_count": tool_call_count
             }
 
         # 获取公司名称
         company_name = _get_company_name(ticker, market_info)
 
-        turtle_payload = _latest_turtle_tool_payload(messages)
-        if turtle_payload is not None:
+        if turtle_payload:
             try:
                 prompt_text = _plain_turtle_report_prompt(company_name, ticker, turtle_payload)
                 logger.info("📊 [价值投资分析师] 使用Turtle payload直接生成报告（无工具绑定）")
@@ -252,12 +256,14 @@ def create_value_analyst(llm, toolkit):
                 report_content = result.content if isinstance(result, AIMessage) else str(result)
                 return {
                     "value_report": report_content or "",
+                    "value_turtle_payload": turtle_payload,
                     "value_tool_call_count": tool_call_count,
                 }
             except Exception as e:
                 logger.error(f"❌ [价值投资分析师] Turtle报告生成失败: {e}")
                 return {
                     "value_report": f"Turtle价值分析报告生成失败: {str(e)}",
+                    "value_turtle_payload": turtle_payload,
                     "value_tool_call_count": tool_call_count,
                 }
 
@@ -365,11 +371,13 @@ def create_value_analyst(llm, toolkit):
                     logger.info(f"📊 [价值投资分析师] 生成报告，长度: {len(report_content)}")
                     return {
                         "value_report": report_content,
+                        "value_turtle_payload": turtle_payload,
                         "value_tool_call_count": tool_call_count
                     }
             else:
                 return {
                     "value_report": str(result),
+                    "value_turtle_payload": turtle_payload,
                     "value_tool_call_count": tool_call_count
                 }
 
@@ -379,6 +387,7 @@ def create_value_analyst(llm, toolkit):
             logger.error(traceback.format_exc())
             return {
                 "value_report": f"价值投资分析失败: {str(e)}",
+                "value_turtle_payload": turtle_payload,
                 "value_tool_call_count": tool_call_count
             }
 

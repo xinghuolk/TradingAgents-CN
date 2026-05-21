@@ -1,5 +1,6 @@
 import json
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
@@ -12,6 +13,7 @@ from tradingagents.dataflows.value_investment.turtle.facts import (
     TurtleMarketFacts,
     TurtleReportFacts,
 )
+from tradingagents.tools.turtle_analysis_tool import prepare_turtle_analysis_payload
 
 
 def _money_fact(name: str, value: float) -> TurtleFactValue:
@@ -349,3 +351,80 @@ def test_value_analyst_rejects_partial_turtle_payload_without_plain_llm(monkeypa
     assert "Turtle" in result["value_report"]
     assert "失败" in result["value_report"] or "不可决策" in result["value_report"]
     assert result["value_tool_call_count"] == 1
+
+
+class TestAggregatedStatus:
+    def test_merge_status_picks_most_severe_of_report_and_market(self):
+        """report=complete, market=degraded → 顶层 degraded"""
+        with patch(
+            "tradingagents.tools.turtle_analysis_tool.get_turtle_report_facts",
+            return_value=TurtleReportFacts(status="complete"),
+        ), patch(
+            "tradingagents.tools.turtle_analysis_tool.get_turtle_market_facts",
+            return_value=TurtleMarketFacts(status="degraded"),
+        ):
+            payload = prepare_turtle_analysis_payload(
+                ticker="600519", market="A",
+                trade_date="2026-05-19", company_name="X",
+            )
+        data = json.loads(payload)
+        assert data["facts"]["status"] == "degraded"
+
+    def test_non_decisionable_dominates(self):
+        with patch(
+            "tradingagents.tools.turtle_analysis_tool.get_turtle_report_facts",
+            return_value=TurtleReportFacts(status="non_decisionable"),
+        ), patch(
+            "tradingagents.tools.turtle_analysis_tool.get_turtle_market_facts",
+            return_value=TurtleMarketFacts(status="complete"),
+        ):
+            payload = prepare_turtle_analysis_payload(
+                ticker="600519", market="A",
+                trade_date="2026-05-19", company_name="X",
+            )
+        data = json.loads(payload)
+        assert data["facts"]["status"] == "non_decisionable"
+
+
+class TestHoldingChannelPassthrough:
+    def test_none_holding_channel_propagated_to_market_adapter(self):
+        captured = {}
+
+        def fake_market(ticker, market, holding_channel):
+            captured["holding_channel"] = holding_channel
+            return TurtleMarketFacts(status="degraded")
+
+        with patch(
+            "tradingagents.tools.turtle_analysis_tool.get_turtle_report_facts",
+            return_value=TurtleReportFacts(status="complete"),
+        ), patch(
+            "tradingagents.tools.turtle_analysis_tool.get_turtle_market_facts",
+            side_effect=fake_market,
+        ):
+            prepare_turtle_analysis_payload(
+                ticker="600519", market="A",
+                trade_date="2026-05-19", company_name="X",
+                holding_channel=None,
+            )
+        assert captured["holding_channel"] is None
+
+    def test_explicit_holding_channel_propagated(self):
+        captured = {}
+
+        def fake_market(ticker, market, holding_channel):
+            captured["holding_channel"] = holding_channel
+            return TurtleMarketFacts(status="complete")
+
+        with patch(
+            "tradingagents.tools.turtle_analysis_tool.get_turtle_report_facts",
+            return_value=TurtleReportFacts(status="complete"),
+        ), patch(
+            "tradingagents.tools.turtle_analysis_tool.get_turtle_market_facts",
+            side_effect=fake_market,
+        ):
+            prepare_turtle_analysis_payload(
+                ticker="600519", market="A",
+                trade_date="2026-05-19", company_name="X",
+                holding_channel="long_term_domestic",
+            )
+        assert captured["holding_channel"] == "long_term_domestic"

@@ -65,6 +65,10 @@ class AgentState(MessagesState):
     ]
     fundamentals_report: Annotated[str, "Report from the Fundamentals Researcher"]
     value_report: Annotated[str, "Report from the Value Investment Analyst"]
+    value_turtle_payload: Annotated[
+        str,
+        "Raw {facts, signals} JSON payload produced by prepare_turtle_analysis",
+    ]
 
     # 🔧 死循环修复: 工具调用计数器
     market_tool_call_count: Annotated[int, "Market analyst tool call counter"]
