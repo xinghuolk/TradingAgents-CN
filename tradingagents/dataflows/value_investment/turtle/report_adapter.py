@@ -26,6 +26,7 @@ TURTLE_FIELD_ALIASES = {
     "dividends_paid": "dividends_paid",
 }
 
+PAYOUT_PROXY_FIELD = "dividend_payout_ratio_proxy_single_year"
 PAYOUT_PROXY_CAVEAT = "single-year report payout proxy; not a 3-year average"
 
 
@@ -197,8 +198,10 @@ def _derive_report_payout_proxy(
     fields: dict[str, TurtleFactValue],
     caveats: list[str],
 ) -> None:
-    if _is_reliable_numeric_field(fields.get("dividend_avg_payout_ratio_3y")):
+    if _is_reliable_numeric_field(fields.get(PAYOUT_PROXY_FIELD)):
         return
+    # ⚠️ 注：proxy reliability=display_only 时 _is_reliable_numeric_field 永远 False，
+    # 该早返实际不会触发；保留为防御性编程。
 
     dividend = _reliable_money_field(fields, "dividends_paid")
     profit = _reliable_money_field(fields, "net_profit")
@@ -235,12 +238,12 @@ def _derive_report_payout_proxy(
         _append_caveat(caveats, "report payout proxy skipped: invalid payout ratio")
         return
 
-    fields["dividend_avg_payout_ratio_3y"] = TurtleFactValue(
-        name="dividend_avg_payout_ratio_3y",
+    fields[PAYOUT_PROXY_FIELD] = TurtleFactValue(
+        name=PAYOUT_PROXY_FIELD,
         value=round(ratio, 12),
         source_label="financial-report-client",
         source_reference=f"{dividend.source_reference}; {profit.source_reference}",
-        reliability="reliable",
+        reliability="display_only",
         caveat=PAYOUT_PROXY_CAVEAT,
     )
     _append_caveat(caveats, PAYOUT_PROXY_CAVEAT)
