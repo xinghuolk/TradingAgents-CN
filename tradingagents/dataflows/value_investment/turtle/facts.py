@@ -236,3 +236,16 @@ class TurtleComputedSignals:
             "veto_reasons": _copy_list(self.veto_reasons),
             "caveats": _copy_list(self.caveats),
         }
+
+
+_STATUS_RANK: dict[TurtleStatus, int] = {
+    "complete": 0,
+    "degraded": 1,
+    "non_decisionable": 2,
+    "unsupported": 3,
+}
+
+
+def merge_status(*statuses: TurtleStatus) -> TurtleStatus:
+    """Return the most severe status across the inputs."""
+    return max(statuses, key=lambda s: _STATUS_RANK[s])

@@ -143,3 +143,26 @@ def test_turtle_fact_serializers_return_defensive_copies():
     assert signals.results["R"].missing_inputs == ["input 1"]
     assert signals.veto_reasons == ["veto"]
     assert signals.caveats == ["signal caveat"]
+
+
+from tradingagents.dataflows.value_investment.turtle.facts import merge_status
+
+
+class TestMergeStatus:
+    def test_single_status_passes_through(self):
+        assert merge_status("complete") == "complete"
+        assert merge_status("degraded") == "degraded"
+
+    def test_picks_most_severe(self):
+        assert merge_status("complete", "degraded") == "degraded"
+        assert merge_status("degraded", "non_decisionable") == "non_decisionable"
+        assert merge_status("complete", "non_decisionable") == "non_decisionable"
+
+    def test_unsupported_dominates(self):
+        assert merge_status("complete", "unsupported") == "unsupported"
+        assert merge_status("non_decisionable", "unsupported") == "unsupported"
+
+    def test_ordering_is_complete_lt_degraded_lt_non_decisionable_lt_unsupported(self):
+        # 多参数 + 乱序也是最严重
+        assert merge_status("unsupported", "complete", "degraded") == "unsupported"
+        assert merge_status("degraded", "complete", "non_decisionable") == "non_decisionable"
