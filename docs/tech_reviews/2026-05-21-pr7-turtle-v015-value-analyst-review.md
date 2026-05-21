@@ -6,6 +6,8 @@
 - **评审日期**：2026-05-21
 - **规模**：+7,594 / -25，13 个生产文件 + 7 个测试模块 + 4 份文档
 
+> **状态说明（2026-05-21 后置补注）**：本文所有 `file:line` 引用与"76 用例通过"等数字均基于合并提交 `ca6fa00` 的状态。修复决策已通过 Spec 1 落地（`docs/superpowers/specs/2026-05-21-turtle-correctness-fixes-design.md`）。本文保留为历史评审记录，**不再是当前执行指令**。
+
 ## 1. 变更概览
 
 将旧版「穿透回报率」管线替换为 Turtle v0.15 价值投资 flow，核心改动：
@@ -17,7 +19,7 @@
 - `tradingagents/dataflows/providers/hk/hk_stock.py` 在 `get_stock_info` 中补充 `price` 与 `shares_outstanding`。
 - 新增 7 个 unit-test 模块（76 用例通过）。
 
-整体架构干净地分离了 **facts → 确定性 signals → LLM 决策** 三层，对 `complete / degraded / non_decisionable / unsupported` 状态有显式传播。frozen dataclass + `__post_init__` 的深拷贝保证了不可变性；每个事实都带 `source_label`、`source_reference`、`reliability`、`caveat`，相比旧版是实质性升级。
+整体架构干净地分离了 **facts → 确定性 signals → LLM 决策** 三层，对 `complete / degraded / non_decisionable / unsupported` 状态有显式传播。frozen dataclass + `__post_init__` 的深拷贝**降低了外部 aliasing 风险**（虽然 `fields: dict` / `caveats: list` 仍是可变容器，并非深度不可变——构造与序列化时做防御性拷贝即可满足实际需要）；每个事实都带 `source_label`、`source_reference`、`reliability`、`caveat`，相比旧版是实质性升级。
 
 ## 2. 问题清单
 
@@ -32,7 +34,9 @@
 'shareholder_return'  → 'share[已省略]er_return' # "hold" 子串匹配
 ```
 
-**影响**：`build_non_decisionable_report` 渲染 `missing_inputs` 时会出现乱码。当前只被测试触发，但已经在 `__all__` 中，一旦分析师真的命中 `signals.status == "non_decisionable"`，这就是默认 fallback 报告。
+**影响**：`build_non_decisionable_report` 渲染 `missing_inputs` 时会出现乱码。当前 **仅在测试中触发**，且已经导出在 `__all__` 中。
+
+> **澄清（2026-05-21）**：原版表述"一旦分析师命中 non_decisionable 就是默认 fallback"略过强——实际 `value_analyst.py` 的不可决策路径仍走 `build_turtle_decision_prompt` + LLM 调用（同一 prompt 链路），并不调用 `build_non_decisionable_report`。后者是导出的辅助函数 / 测试覆盖入口，bug 真实但运行时影响有限。Spec 1 §7.1 选择**完全删除** redaction（而非选择性保留），从根本消除 bug。
 
 **修复思路**：identifier 与 enum 都是内部定义、不会泄露投资动作词汇，建议只对自由文本 caveat / source label 脱敏；或以白名单方式仅处理特定字段。中文词不能依赖 `\b`，需要按字段类别区分。
 
@@ -51,6 +55,8 @@ facts = TurtleFacts(
 而 `value_analyst.py` 的系统提示要求：*"若 facts.status 或 signals.status 为 non_decisionable，只能输出不可决策报告"*。实际只有 `signals.status` 会进入 `non_decisionable`（来自 `compute_turtle_signals`），facts 层的状态永远不反映 adapter 的降级，违反文档化契约。
 
 **修复思路**：让 report/market adapter 自己上报 status，或基于 caveat 启发式推导 facts.status（"stale extraction" / "rf_rate invalid" → `degraded`，缺失关键 money 字段 → `non_decisionable`）。
+
+> **2026-05-21 补注**：Spec 1 §2 / §4 已选定 **adapter-emitted status + `merge_status` 聚合** 路径——不维护"关键字段白名单"，per-formula 不可决策性由 `compute_turtle_signals` 单独判定，facts 层只表达"数据采集结果是否有阴影"。原版括号里的"缺失关键 money 字段 → `non_decisionable`"启发式被 Spec 1 拒绝（容易与 calculation 层的字段需求漂移）。详见 Spec 1 §3 决策 2 与 §4.3。
 
 ### 2.3 🟡 工具签名在 `agent_utils.py` 与 `turtle_analysis_tool.py` 之间漂移
 

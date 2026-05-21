@@ -8,6 +8,12 @@
 
 > 本文专门评估 **公式与数值口径的合理性** 与 **数据源引用（source_label / source_reference / reliability）的合理性**。常规代码风格、脱敏 bug、签名漂移等问题见配套综合评审。
 
+> **状态说明（2026-05-21 后置补注）**：本文所有 `file:line` 引用均基于合并提交 `ca6fa00` 当时的代码。修复决策已通过 Spec 1 落地，详见：
+> - `docs/superpowers/specs/2026-05-21-turtle-correctness-fixes-design.md`（覆盖本文 A.4 / A.5 / A.6 / B.1 / B.3 及 D 章 backend 部分）
+> - 路线图 `docs/tech_reviews/2026-05-21-pr7-turtle-v015-followup-roadmap.md`（Spec 2 / 3 / 4 范围）
+>
+> 本文保留为历史评审记录，**不再是当前执行指令**。
+
 ---
 
 ## A. 计算层（`calculations.py`）
@@ -31,7 +37,9 @@ gg_value = (owner_earnings * payout * (1 - tax_rate) + buyback) / market_cap * 1
 - 高增长股当期净利润远高于过去 → R 严重高估
 - payout proxy fallback 时本身就是单年度的，混入 3 年别名后语义被掩盖（公式仍写 `payout_anchor = avg_payout_ratio_3y`）
 
-**建议**：要么把分子统一到 3 年平均口径（`avg_net_profit_3y`、`avg_owner_earnings_3y`），要么把分母换成当期分红率。当前混用是模型层的口径错配，比代码 bug 更隐蔽，但会系统性扭曲所有跨周期的回报率比较。
+**建议**：要么把分子统一到 3 年平均口径（`avg_net_profit_3y`、`avg_owner_earnings_3y`），要么把 payout 换成当期分红率（注：原版误写为"把分母换成"，分母是 `market_cap`，此处实指 payout 项）。当前混用是模型层的口径错配，比代码 bug 更隐蔽，但会系统性扭曲所有跨周期的回报率比较。
+
+> **2026-05-21 补注**：A.1 不是"settled bug"，而是 Spec 2（model-recalibration）需要做的口径决策——也可能是有意的"归一化 payout"假设。Spec 2 应同时对齐 buyback 时间窗与 market_cap 快照口径，并在 prompt 里明示选择。本评审保留为决策起点，不指定最终方案。
 
 ### A.2 🟡 分红与回购的税务口径不对称
 
@@ -108,7 +116,7 @@ elif not net_cash_missing:
 
 不影响正确性，但会让读者怀疑分支边界。建议删掉，让 `_validate_positive_market_cap` 成为单一的市值守卫。
 
-### A.5 🟡 `ev_switch` / `cash_protection` 的 `degraded` 分支永远不会被触发
+### A.5 🟡 `ev_switch` / `cash_protection` 的 `degraded` 分支输出"status=degraded、value=None"，误导性而非完全不可达
 
 ```python
 # calculations.py:431-449
@@ -132,6 +140,8 @@ ev_status = (
 实际有"degraded"语义的情形应该是：`cash` 或 `debt` 缺失但市值 OK 时，仍能用"假设缺失项 = 0"输出一个保守估计。当前代码没这么做。
 
 **建议**：要么让 `net_cash_ratio` 在 cash/debt 缺失时退化为单边计算（带 caveat），要么把 ev_switch / cash_protection 的 `degraded` 分支删掉避免误导 LLM。
+
+> **2026-05-21 补注**：Spec 1 选定后者——Fail-fast 下 `net_cash_ratio` 不做单边降级，直接 `non_decisionable`，因此误导性 degraded 分支删除。原版"永远不会被触发"措辞不精确：分支在 cash/debt 缺失而 market_cap 存在时**可达**，但输出 `status=degraded` + `value=None`，对 LLM 是误导而非死代码。
 
 ### A.6 🟢 `owner_earnings = ocf - abs(capex)` 的符号兼容
 
@@ -244,6 +254,15 @@ fields["dividend_avg_payout_ratio_3y"] = TurtleFactValue(
 **风险**：单年度分红率（尤其周期股或刚开始分红的公司）波动剧烈，用它代理 3y 平均会让 R/GG 显著失真，但状态仍是"complete"。
 
 **建议**：单年度代理的 `reliability` 应设为 `"display_only"`，或新增 `"approximate"` 一档，让计算层在不可用时显式降级，而不是悄悄进入"看起来 complete"的状态。
+
+> **2026-05-21 补注：B.3 真正的根因不是命名，而是 key 撞车 bug**：
+>
+> - `market_adapter.py:274` 把**真实 3y 平均**（来自 dividend pipeline）写入 `dividend_avg_payout_ratio_3y`
+> - `report_adapter.py:237` 把**单年度 proxy** 写入**同一个 key**
+> - `calculations._field`（`calculations.py:11`）取值时 `facts.report.fields.get(name) or facts.market.fields.get(name)`——**report 优先**
+> - 结果：当 report adapter 算出 proxy，会**静默覆盖** market adapter 的真 3y 数据，R/GG 用单年度比例代替真平均
+>
+> Spec 1 的修复同时解决命名误导与撞车 bug：proxy 重命名为 `dividend_payout_ratio_proxy_single_year` + reliability=display_only；真 3y 字段名保持，calculations 别名链不动。详见 Spec 1 §5.2。
 
 ### B.4 🟢 R/GG `source_reference` 在 FX 转换后会拼接 FX 记录
 
@@ -358,7 +377,18 @@ return {
 
 ### D.3 推荐方案
 
-最小代价的改造：
+> **2026-05-21 补注**：D.3 已被 Spec 1 §6 取代。本节保留为初版方案记录。Spec 1 的实际方案：
+>
+> - `graph.trading_graph.py:870` 是 `_log_state`（写日志），**不是** propagator 主输出。propagator 在 `propagate()` 内直接返回 LangGraph 自动透传的 `final_state`，无需手动复制字段。
+> - 必须额外做的：扩展 `tradingagents/agents/utils/agent_states.py` 的 `AgentState` TypedDict 新增 `value_turtle_payload` 字段（D.3 原版漏写）。
+> - 持久化层：`simple_analysis_service.py:2829-2849` 当前**不跳过空串**，需要加"内容非空"短路；同时 `value_analyst_node` 在所有写 `value_report` 的 return 路径返回 payload key（空串或 JSON），形成统一契约。
+> - 新增 `tests/unit/test_simple_analysis_service_turtle_payload.py` 单测覆盖持久化行为，替代不可执行的 smoke 验收项。
+>
+> 详见 Spec 1 §6.1 - §6.5、§8.4 验收 #5。**实施时请以 Spec 1 为准**。
+
+---
+
+最小代价的改造（**初版方案，部分已过时——见上方补注**）：
 
 **Backend（Apache 2.0 部分）**
 
@@ -372,7 +402,7 @@ return {
    }
    ```
 
-2. `graph.propagation.py:52` 与 `graph.trading_graph.py:870` 把新字段透传到 final_state。
+2. `graph.propagation.py:52` 与 `graph.trading_graph.py:870` 把新字段透传到 final_state。 *（过时：见补注）*
 
 3. `app/services/simple_analysis_service.py:2796` 附近新增持久化目标：
 

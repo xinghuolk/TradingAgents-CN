@@ -24,7 +24,7 @@
 
 | Spec | 主题 | 覆盖评审条目 | 风险 | 规模 | 依赖 |
 |------|------|--------------|------|------|------|
-| **Spec 1** | correctness-fixes | 综合 2.1 / 2.2 / 2.3；计算 A.4 / A.5 / B.1 / B.3；D 章 backend 透传 | 低 | 中 | 无 |
+| **Spec 1** | correctness-fixes | 综合 2.1 / 2.2 / 2.3；计算 A.4 / A.5 / A.6 / B.1 + B.1 附（DEFAULT_CHANNEL_CAVEAT）/ B.3；D 章 backend 透传 + AgentState schema + 持久化空内容短路 | 低 | 中 | 无 |
 | **Spec 2** | model-recalibration | 计算 A.1 时间口径；A.2 税务口径；A.7 payout_anchor 重命名 | 中（改变数值） | 小（设计决策为主） | 与 Spec 1 无强依赖，可并行 |
 | **Spec 3** | cross-currency-fx | 计算 A.3 跨币 FX；B.2 market source provider；B.4 FX metadata | 中（新数据通道） | 中 | 与 Spec 1 / 2 无强依赖，可并行 |
 | **Spec 4** | turtle-data-view-frontend | D 章 frontend tab（数据 / 计算 / 状态 Tab） | 中（proprietary、UX 设计） | 大 | **依赖 Spec 1 的 backend 透传**完成 |
@@ -61,7 +61,7 @@ start  ─────┤      （可并行）                ├── Spec 4 (
 
 | Spec | 状态 | Spec 文档 | Plan 文档 | PR | 备注 |
 |------|------|----------|-----------|-----|------|
-| Spec 1：correctness-fixes | ⬜ | — | — | — | 等待用户选定首先开始 |
+| Spec 1：correctness-fixes | 🟢 | `docs/superpowers/specs/2026-05-21-turtle-correctness-fixes-design.md` | — | — | spec 已通过用户审阅；plan 待写 |
 | Spec 2：model-recalibration | ⬜ | — | — | — | |
 | Spec 3：cross-currency-fx | ⬜ | — | — | — | |
 | Spec 4：turtle-data-view-frontend | ⬜ | — | — | — | 阻塞于 Spec 1 backend 部分 |
@@ -79,17 +79,20 @@ start  ─────┤      （可并行）                ├── Spec 4 (
 
 ### Spec 1：correctness-fixes
 
-修复项：
+> 决策已定，详见 `docs/superpowers/specs/2026-05-21-turtle-correctness-fixes-design.md`。本节是范围索引，不再列备选方案。
 
-- **综合 2.1 redaction over-broad bug**（`decision.py`）—— identifier 与 enum 不应被脱敏，只保留 caveat / source label 自由文本的脱敏
-- **综合 2.2 facts.status 硬编码 "complete"**（`turtle_analysis_tool.py`）—— 根据 caveat / 关键字段缺失推导真实 status
-- **综合 2.3 tool signature drift**（`agent_utils.py` 与 `turtle_analysis_tool.py`）—— 对齐 `company_name` 类型
-- **计算 A.4 三处死代码**（`calculations.py` line 344-346 / 370-372 / 411-412）—— 删除不可达分支
-- **计算 A.5 ev_switch / cash_protection 的 degraded 不可达**—— 要么让 net_cash_ratio 支持单边降级，要么删 degraded 分支
-- **计算 B.1 `tax_rate` 默认渠道下仍 reliable**（`market_adapter.py`）—— 默认 holding_channel 时降级为 `display_only`
-- **计算 B.3 单年度 payout proxy 假装 3y**（`report_adapter.py`）—— 改名或降级为 `display_only`
-- **D 章 backend 透传 `value_turtle_payload`**（`value_analyst.py`、`propagation.py`、`trading_graph.py`、`simple_analysis_service.py`）—— 把 JSON payload 一并落盘
-- **A.6 `abs(capex)` 文档化**（`decision.py` prompt 旁补一行）
+修复项（10 项）：
+
+- **综合 2.1 redaction**（`decision.py`）—— 完全删除 `_safe_non_decision_text` 与 `_SOURCE_TEXT_REDACTIONS`；护栏移到 `build_turtle_decision_prompt` 提示词
+- **综合 2.2 facts.status 硬编码 "complete"**（`turtle_analysis_tool.py`）—— Adapter-emitted：`TurtleReportFacts` / `TurtleMarketFacts` 各自携带 status，工具层用 `merge_status` 聚合
+- **综合 2.3 tool signature drift**—— `turtle_analysis_tool.py` 的 `company_name` 类型对齐为 `str = ""`
+- **计算 A.4 三处死代码**（`calculations.py` line 344-346 / 370-372 / 411-412）—— 删除不可达分支；附带删相邻 `!= 0` 冗余检查
+- **计算 A.5 ev_switch / cash_protection 的 degraded 与 value=None 矛盾**—— 删除会输出 "status=degraded、value=None" 的误导性分支（Fail-fast 下 `net_cash_ratio` 不做单边降级）
+- **计算 A.6 `abs(capex)` 文档化**—— 在 `build_turtle_decision_prompt` 的输出结构第 2 项加一行说明
+- **计算 B.1 `tax_rate` 默认渠道下仍 reliable**（`market_adapter.py`）—— 显式 channel 时 reliable，默认 channel 时降级为 display_only
+- **计算 B.1 附：DEFAULT_CHANNEL_CAVEAT 无条件追加**（`market_adapter.py:245`）—— 删除该无条件 `_append_caveat`，避免 market.status 永远 degraded
+- **计算 B.3 单年度 payout proxy 名字撞车 bug**（`report_adapter.py`）—— 重命名为 `dividend_payout_ratio_proxy_single_year` + 降级 display_only；附带消除 report-side proxy 与 market-side 真 3y 数据**写同一 key、`_field` report 优先静默覆盖**的撞车 bug
+- **D 章 backend 透传 `value_turtle_payload`**—— `AgentState` TypedDict 加字段、`propagation.py` InitialState 加 `""`、`value_analyst_node` 所有写 `value_report` 的 return 路径都带 payload（unsupported 返 `""`）、`simple_analysis_service.py` 持久化层加"内容非空"短路 + 新增 `value_turtle_payload.json` 配置
 
 ### Spec 2：model-recalibration
 
@@ -127,5 +130,8 @@ start  ─────┤      （可并行）                ├── Spec 4 (
 
 ## 7. 当前进度
 
-- **当前焦点**：等待用户选定首先开始的 spec（推荐 Spec 1）
-- **已就绪**：评审文档 + 路线图、`fix/turtle-v015-review-followups` 分支
+- **当前焦点**：Spec 1 已通过用户审阅（commit `63f92b2` → `4544627` 第二轮 finding 处理；commit `281fd06` meta-review 引入；当前 working 状态更新中）。下一步：调用 `superpowers:writing-plans` 生成 Spec 1 的实施 plan
+- **已就绪**：
+  - 三份评审文档 + 路线图 + meta-review（`docs/tech_reviews/2026-05-21-*`）
+  - Spec 1 设计文档（`docs/superpowers/specs/2026-05-21-turtle-correctness-fixes-design.md`，🟢）
+  - 工作分支：`fix/turtle-v015-review-followups`，已 push 到 origin
