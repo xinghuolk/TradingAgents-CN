@@ -14,7 +14,7 @@
 
 ## 2. 范围
 
-### 2.1 范围内（9 项）
+### 2.1 范围内（10 项）
 
 | 来源 | 条目 | 形态 |
 |------|------|------|
@@ -95,9 +95,15 @@ class TurtleMarketFacts:
 **统一规则**（不维护字段白名单）：
 
 - `extraction is None`（report adapter）或 `market_data is None and dividend_data is None and buyback_data is None`（market adapter）→ `non_decisionable`
+- **adapter 适配后 `fields` 仍为空**（如 `extraction.fields` 不是 dict、所有字段被 policy 拒绝、market_cap 等所有可识别字段全失败）→ `non_decisionable`。注：仅有 `tax_rate` / `holding_channel` 这类"内置常量字段"不算实际数据采集成功
 - 任一 caveat（含 adapter 级 `caveats: list[str]` 与字段级 `TurtleFactValue.caveat`）或任一字段 `reliability != "reliable"` → `degraded`
 - 全字段 reliable 且 adapter / 字段两层 caveat 都为空 → `complete`
 - 来源整体不支持（如某市场 extractor 未集成）→ `unsupported`
+
+**实现提示**：
+
+- report adapter：在 `build_report_facts_from_extraction` 末尾，如果 `adapted` dict 为空，强制 status=`non_decisionable`，其他规则按上述判
+- market adapter：内置常量字段（`tax_rate` / `holding_channel` / `rf_rate`）单独识别，判定时只看"是否拿到外部数据字段"（market_cap、close_price、dividend records 等）。具体白名单常量放在 `market_adapter.py` 顶部
 
 实现位置：
 
@@ -264,18 +270,18 @@ class AgentState(MessagesState):
 "value_turtle_payload": "",
 ```
 
-### 6.2 `value_analyst_node` 返回 payload（所有路径）
+### 6.3 `value_analyst_node` 返回 payload（所有路径）
 
-`tradingagents/agents/analysts/value_analyst.py`：节点开始处获取 `turtle_payload = _latest_turtle_tool_payload(messages) or ""`，所有 return 路径都带上 `"value_turtle_payload": turtle_payload`。
+`tradingagents/agents/analysts/value_analyst.py`：节点开始处获取 `turtle_payload = _latest_turtle_tool_payload(messages) or ""`。**所有写入 `value_report` 的 return 路径都带 `"value_turtle_payload": turtle_payload`**（即使值为 `""`），形成统一不变量。触发 ToolNode 的中间返回不写 payload key——LangGraph state merge 保留已有值（即 InitialState 设的 `""`）。
 
-| 路径 | `value_report` 内容 | `value_turtle_payload` |
-|------|--------------------|----------------------|
-| 美股 unsupported | "美股 {ticker} 暂不支持..." | `""` |
+| 路径 | `value_report` | `value_turtle_payload` |
+|------|----------------|----------------------|
+| 美股 unsupported | `"美股 {ticker} 暂不支持..."` | `""`（无工具调用） |
 | Turtle 路径成功 | LLM 生成的 markdown | 原 JSON 字符串 |
 | Turtle 路径异常 | 错误说明 | 原 JSON 字符串（事后排查用） |
-| 工具未调用 | （触发 ToolNode，下一轮再回到节点） | 不需要返回 |
+| LLM 触发 ToolNode（中间态） | 不写 | 不写（state merge 保留旧值） |
 
-### 6.3 LangGraph 透传
+### 6.4 LangGraph 透传
 
 **无需额外改动**。`trading_graph.py:388` 的 `propagate()` 直接返回 LangGraph 自动传播的 `final_state`；只要 `AgentState`（§6.1）与 InitialState（§6.2）都包含 `value_turtle_payload` 字段，state 自动透传到 `final_state` 给下游消费者。
 
@@ -287,7 +293,7 @@ class AgentState(MessagesState):
 "value_turtle_payload": final_state.get("value_turtle_payload", ""),  # ← 可选
 ```
 
-### 6.4 持久化
+### 6.5 持久化
 
 `app/services/simple_analysis_service.py:2796` 附近的 `report_modules` 字典新增条目：
 
@@ -301,7 +307,14 @@ class AgentState(MessagesState):
 
 **关于空 payload 的处理**：核查现状（`simple_analysis_service.py:2829-2849`）发现现有循环 **不跳过空串**——它只检查 `if state_key in state`，空内容仍会写 0 字节文件。
 
-**Spec 1 选用的方案：在 `value_analyst_node` 不返回空 payload**——美股 unsupported 等无 payload 路径直接返回不含 `value_turtle_payload` 键的 dict（LangGraph 会保留 InitialState 默认空串）。再在 `simple_analysis_service.py:2832` 的检查里加上"内容非空"短路：
+**统一契约**：
+
+- `value_analyst_node` **始终**返回 `"value_turtle_payload"` 键（即使值为 `""`），与 §6.3 的"所有 return 路径都带"一致
+- 美股 unsupported / 工具未调用等路径 → 值为 `""`
+- Turtle 路径成功 / Turtle 路径异常 → 值为原 JSON 字符串
+- 持久化层（`simple_analysis_service.py:2832`）加"内容非空"短路负责过滤——空串不落盘
+
+这样上游契约简单（始终有键），落盘策略集中在一处，行为可单元测试。具体改动：
 
 ```python
 # simple_analysis_service.py:2829-2832 改动
@@ -319,7 +332,7 @@ for module_key, module_info in report_modules.items():
 
 注意：这个空串跳过改动对所有 report module 生效（包括 `value_report` 自身），是普遍性改进，无副作用——原本写 0 字节 markdown 也是 noise。
 
-### 6.5 不属于 Spec 1 的部分
+### 6.6 不属于 Spec 1 的部分
 
 - **不动** `app/routers/analysis.py:407` 的 `report_fields` 列表
 - **不动** `app/routers/analysis.py:525` 的 summary 拼接
@@ -336,7 +349,7 @@ for module_key, module_info in report_modules.items():
 
 Spec 4 brainstorming 时再定具体方案；Spec 1 只承诺"落盘存在 + state 链路可见"。
 
-### 6.6 数据流总览
+### 6.7 数据流总览
 
 ```
 prepare_turtle_analysis (tool)
@@ -431,7 +444,8 @@ ev_status: TurtleStatus = "non_decisionable" if ev_missing else "complete"
 | `test_turtle_decision.py` | 新增 | `TestNonDecisionableReportPreservesIdentifiers`：`buyback_amount` / `shareholder_return` 等字段名 **不被改写**——综合评审 2.1 的回归钉子 |
 | `test_turtle_value_analyst_integration.py` | 改 | "Turtle 路径成功"断言补 `result["value_turtle_payload"] == turtle_payload_json` |
 | `test_turtle_value_analyst_integration.py` | 新增 | `TestPayloadOnFailure`：报告生成异常时 payload 仍透传；美股 unsupported 路径 payload 为空串 |
-| `tests/unit/test_value_analyst_payload_propagation.py` | 新建 | 断言 `value_analyst_node` 返回 dict 含 `"value_turtle_payload"` 键 |
+| `tests/unit/test_value_analyst_payload_propagation.py` | 新建 | 断言 `value_analyst_node` 返回 dict 含 `"value_turtle_payload"` 键（除 ToolNode 中间态外） |
+| `tests/unit/test_simple_analysis_service_turtle_payload.py` | 新建 | 断言持久化层在非空 payload 下写 `value_turtle_payload.json`、空串下跳过——覆盖 §6.5 的"空内容短路"实现，替换原依赖 smoke 的验收条目 |
 
 ### 8.3 smoke 脚本调整
 
@@ -449,8 +463,13 @@ PR 必须满足：
 2. `pytest tests/unit/test_turtle_decision.py::TestNonDecisionableReportPreservesIdentifiers` 单独可跑且通过
 3. `scripts/smoke_test_turtle_value.py --ticker 600519 --market A`（不传 holding_channel）输出 `signals_status == "non_decisionable"`
 4. 同 smoke 传 `--holding-channel long_term_domestic`，A 股全 reliable 数据下 `signals_status in {"complete", "degraded"}`
-5. smoke 跑完后磁盘上有 `value_turtle_payload.json`（与 `value_report.md` 同目录）
+5. **持久化集成验证**（替换原"smoke 后磁盘有文件"——smoke 脚本不经过 LangGraph / `simple_analysis_service` 持久化链路）：新增 `tests/unit/test_simple_analysis_service_turtle_payload.py`，断言：
+   - 给定 `state["value_turtle_payload"] = '{"facts": ..., "signals": ...}'` 时，`save_reports_to_disk`（或等价持久化入口）在 `reports_dir/value_turtle_payload.json` 写入对应内容
+   - 给定 `state["value_turtle_payload"] = ""`（美股 unsupported 路径模拟），不创建该文件
+   - 这两个用例同时锁定 §6.3 的"始终返回 key"契约与 §6.5 的"空内容短路"行为
 6. 任意一处引用 `dividend_avg_payout_ratio_3y` 作为 report-side proxy 的代码 / 测试被清理
+
+**手工冒烟（PR checklist 项，非自动验收）**：通过 FastAPI 完整分析端点（如 POST `/api/analysis`）跑一次 A 股分析，显式传 holding_channel，确认 reports 目录下同时存在 `value_report.md` 与 `value_turtle_payload.json` 且后者可被 `json.tool` 解析。
 
 ### 8.5 不在 Spec 1 测试范围
 
