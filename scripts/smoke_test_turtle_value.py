@@ -30,6 +30,12 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--market", default="A")
     parser.add_argument("--trade-date", default="2026-05-19")
     parser.add_argument("--company-name", default="贵州茅台")
+    parser.add_argument(
+        "--holding-channel",
+        default=None,
+        help="持仓渠道（如 long_term_domestic / stock_connect）。"
+             "不传则触发 fail-fast，R/GG 输出 non_decisionable。",
+    )
     return parser.parse_args()
 
 
@@ -80,6 +86,7 @@ def main() -> int:
                 market=args.market,
                 trade_date=args.trade_date,
                 company_name=args.company_name,
+                holding_channel=args.holding_channel,
             )
     finally:
         diagnostics = captured_stdout.getvalue()
