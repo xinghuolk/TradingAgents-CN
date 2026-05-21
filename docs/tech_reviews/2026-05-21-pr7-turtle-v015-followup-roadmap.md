@@ -61,8 +61,8 @@ start  ─────┤      （可并行）                ├── Spec 4 (
 
 | Spec | 状态 | Spec 文档 | Plan 文档 | PR | 备注 |
 |------|------|----------|-----------|-----|------|
-| Spec 1：correctness-fixes | 🟠 | `docs/superpowers/specs/2026-05-21-turtle-correctness-fixes-design.md` | `docs/superpowers/plans/2026-05-21-turtle-correctness-fixes.md` | (待开 PR) | 实施完成，等待用户 push + 开 PR |
-| Spec 2：model-recalibration | ⬜ | — | — | — | |
+| Spec 1：correctness-fixes | ✅ | `docs/superpowers/specs/2026-05-21-turtle-correctness-fixes-design.md` | `docs/superpowers/plans/2026-05-21-turtle-correctness-fixes.md` | [#8](https://github.com/xinghuolk/TradingAgents-CN/pull/8) | merged 2026-05-22；30 commits / 379 tests green |
+| Spec 2：model-recalibration | 🟡 | — | — | — | brainstorming 启动；分支 `feat/turtle-spec2-model-recalibration` |
 | Spec 3：cross-currency-fx | ⬜ | — | — | — | |
 | Spec 4：turtle-data-view-frontend | ⬜ | — | — | — | 阻塞于 Spec 1 backend 部分 |
 
@@ -130,6 +130,6 @@ start  ─────┤      （可并行）                ├── Spec 4 (
 
 ## 7. 当前进度
 
-- **当前焦点**：Spec 1 实施完成（15 个 task 全部 PASS，最终测试 379/379 全绿，含 buyback_amount 回归钉死、status 派生、payload 透传与持久化）。等待用户确认 push + 开 PR。
-- **已就绪**：所有 review 与 plan 文档 + Spec 1 完整实施 + 工作分支 `fix/turtle-v015-review-followups` 本地 commit 完整
-- **下一步**：用户授权后 push 到 origin、`gh pr create` 创建 PR
+- **当前焦点**：Spec 1 已 merge（PR #8，commit `1d0d3d2`，2026-05-22）。Spec 2（model-recalibration）brainstorming 启动，工作分支 `feat/turtle-spec2-model-recalibration`。
+- **已就绪**：Spec 1 全部代码与测试已在 main；roadmap §4 Spec 1 状态 → ✅
+- **下一步**：完成 Spec 2 brainstorming（A.1 时间口径 / A.2 税务口径 / A.7 命名）→ 写 spec → 写 plan → 实施
