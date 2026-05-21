@@ -2714,6 +2714,42 @@ class SimpleAnalysisService:
             except Exception as fallback_error:
                 logger.error(f"❌ 降级保存也失败: {task_id} - {fallback_error}")
 
+    @staticmethod
+    def _save_report_modules_to_disk(
+        state: Dict[str, Any],
+        reports_dir: Path,
+        report_modules: Dict[str, Any],
+    ) -> Dict[str, str]:
+        """将 report_modules 中定义的各模块内容写入 reports_dir。
+
+        空内容（空串或纯空白）短路跳过，避免产生 0 字节噪音文件。
+        返回 {module_key: absolute_file_path} 的 dict（仅包含实际写出的条目）。
+        """
+        saved: Dict[str, str] = {}
+        for module_key, module_info in report_modules.items():
+            try:
+                state_key = module_info['state_key']
+                if state_key not in state:
+                    continue
+                module_content = state[state_key]
+                if isinstance(module_content, str):
+                    report_content = module_content
+                else:
+                    report_content = str(module_content)
+
+                # 空内容短路：避免写 0 字节文件
+                if isinstance(report_content, str) and not report_content.strip():
+                    continue
+
+                file_path = reports_dir / module_info['filename']
+                with open(file_path, 'w', encoding='utf-8') as f:
+                    f.write(report_content)
+                saved[module_key] = str(file_path)
+                logger.info(f"✅ 保存模块报告: {file_path}")
+            except Exception as e:
+                logger.warning(f"⚠️ 保存模块 {module_key} 失败: {e}")
+        return saved
+
     async def _save_modular_reports_to_data_dir(self, result: Dict[str, Any], stock_symbol: str) -> Dict[str, str]:
         """保存分模块报告到data目录 - 完全采用web目录的文件结构"""
         try:
@@ -2798,6 +2834,11 @@ class SimpleAnalysisService:
                     'title': '价值投资分析',
                     'state_key': 'value_report'
                 },
+                'value_turtle_payload': {
+                    'filename': 'value_turtle_payload.json',
+                    'title': '价值投资 Turtle payload',
+                    'state_key': 'value_turtle_payload',
+                },
                 'investment_plan': {
                     'filename': 'investment_plan.md',
                     'title': f'{stock_symbol} 投资决策报告',
@@ -2826,27 +2867,9 @@ class SimpleAnalysisService:
             }
 
             # 保存各模块报告 - 完全按照web目录的方式
-            for module_key, module_info in report_modules.items():
-                try:
-                    state_key = module_info['state_key']
-                    if state_key in state:
-                        # 提取模块内容
-                        module_content = state[state_key]
-                        if isinstance(module_content, str):
-                            report_content = module_content
-                        else:
-                            report_content = str(module_content)
-
-                        # 保存到文件 - 使用web目录的文件名
-                        file_path = reports_dir / module_info['filename']
-                        with open(file_path, 'w', encoding='utf-8') as f:
-                            f.write(report_content)
-
-                        saved_files[module_key] = str(file_path)
-                        logger.info(f"✅ 保存模块报告: {file_path}")
-
-                except Exception as e:
-                    logger.warning(f"⚠️ 保存模块 {module_key} 失败: {e}")
+            saved_files.update(
+                self._save_report_modules_to_disk(state, reports_dir, report_modules)
+            )
 
             # 保存最终决策报告 - 完全按照web目录的方式
             decision = result.get('decision', {})
