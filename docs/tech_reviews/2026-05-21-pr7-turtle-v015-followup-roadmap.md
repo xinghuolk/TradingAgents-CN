@@ -38,19 +38,18 @@
 ## 3. 推荐实施顺序
 
 ```
-        ✅ Spec 1 (correctness-fixes, merged #8)
+        Spec 1 (correctness-fixes, merged #8) ✅
                 │
-        ┌───────┼───────┬──────────────┐
-        ▼       ▼       ▼              
-    🟡 Spec 5  ⬜ Spec 3  ⬜ Spec 4    
-    (multi-   (FX +       (frontend     
-    period)    source    tab)          
-        │      quality +
-        │      承诺支付率)
+        ┌───────┴───────┬──────────────┐
+        ▼               ▼              ▼
+    Spec 5 🟢       Spec 3 ⬜      Spec 4 ⬜
+    (multi-period)  (FX + source   (frontend tab)
+        │            quality +
+        │            承诺支付率)
         ▼
-    ⬜ Spec 2 (model-recalibration)
-       │
-       └── 承诺字段升级路径（Spec 3 完成后增强 M 算法）
+    Spec 2 ⬜ (model-recalibration)
+        │
+        └── 承诺字段升级路径（Spec 3 完成后增强 M 算法，可选）
 ```
 
 **关键路径变更**（Path C + 方案 2 拆分，2026-05-22）：
@@ -79,7 +78,7 @@
 | Spec | 状态 | Spec 文档 | Plan 文档 | PR | 备注 |
 |------|------|----------|-----------|-----|------|
 | Spec 1：correctness-fixes | ✅ | `docs/superpowers/specs/2026-05-21-turtle-correctness-fixes-design.md` | `docs/superpowers/plans/2026-05-21-turtle-correctness-fixes.md` | [#8](https://github.com/xinghuolk/TradingAgents-CN/pull/8) | merged 2026-05-22；30 commits / 379 tests green |
-| Spec 5：multi-period-extraction | 🟡 | — | — | — | brainstorming 进行中；Spec 2 真正 blocker；分支 `feat/turtle-spec5-multi-period-extraction` |
+| Spec 5：multi-period-extraction | 🟢 | `docs/superpowers/specs/2026-05-22-turtle-multi-period-extraction-design.md` | — | — | spec 已写（含 subagent review 修正），待用户审阅 → plan；Spec 2 真正 blocker；分支 `feat/turtle-spec5-multi-period-extraction` |
 | Spec 3：data-source-quality | ⬜ | — | — | — | 与 Spec 5 / 2 / 4 并行可启动；含 FX、source provider、承诺支付率 |
 | Spec 2：model-recalibration | ⬜ | — | — | — | **暂缓**，等 Spec 5 完成；承诺字段来自 Spec 3 可选增强；brainstorming learnings 见 §5 |
 | Spec 4：turtle-data-view-frontend | ⬜ | — | — | — | 阻塞于 Spec 1 backend 部分 |
@@ -134,15 +133,20 @@
 - **计算 B.4 FX metadata 缺 provider/timestamp**—— FX 信息同样携带来源与时间戳
 - **承诺支付率字段**—— extractor 字段表中无对应字段；需选其一：(a) 扩展 extractor `dividend_commitment_ratio` 字段（上游协调）；(b) 从已有 `dividend_policy_text` LLM 二次提取；(c) 暂时不抓，Spec 2 公式里降级为"无承诺值时跳过 M 算法的 min(...)"
 
-### Spec 2：model-recalibration（**暂缓**，等 Spec 3 完成）
+### Spec 2：model-recalibration（**暂缓**，等 Spec 5 完成）
+
+依赖关系（方案 2 拆分后明确）：
+
+- **强依赖 Spec 5**：multi-period payout / buyback 数据（M 的"近 3 年支付率均值"、O 的"过去 3 年回购年均"都来自 Spec 5 的 historical 数据 + `_money_hm_report_3y_avg` / `_number_report_3y_avg` helpers）
+- **可选依赖 Spec 3**：承诺支付率字段是 M 算法 `min(3y avg, 承诺)` 的增强项；Spec 3 未完成时降级为 `M = max(3y avg, 新信号)`（跳过 min 的承诺约束）
 
 修复项（**与 Path C 前的初版差异较大，因为 brainstorming + 上游对比揭示了更精细的公式**）：
 
 - **计算 A.1 时间口径完整对齐上游**：
   - R = `(C × M × (1 - Q%) + O) / market_cap × 100`
   - C = 当年归母净利润（snapshot，与上游因子 2 一致）
-  - **M = max(min(近 3 年支付率均值, 承诺支付率), 新信号 DPS 调整值)** —— 完整算法，依赖 Spec 3 的 multi-period payout 数据 + 承诺支付率字段
-  - **O = 注销型回购年均金额（过去 3 年）** —— 依赖 Spec 3 multi-period buyback 数据
+  - **M = max(min(近 3 年支付率均值, 承诺支付率), 新信号 DPS 调整值)** —— 近 3 年支付率均值来自 **Spec 5**（per-period 派生 payout ratio + `_number_report_3y_avg`）；承诺支付率来自 **Spec 3**（可选增强，缺失则跳过 min）
+  - **O = 注销型回购年均金额（过去 3 年）** —— 来自 **Spec 5** multi-period buyback 数据（`_money_hm_report_3y_avg`）
   - Q = 税率（按 holding_channel 查表，Spec 1 已就位）
 - **计算 A.2 分红 / 回购税务口径不对称**—— Q2=A2-1：prompt 文档化"注销型回购对继续持有股东无即时税务事件，因此 `+ buyback` 不扣税；与上游'注销型回购不做税务折扣'明示一致"
 - **计算 A.7 `payout_anchor` 别名问题**—— Q3 sub：保留在 `results` dict 并 rename 为 `payout_M` 或 `payout_anchor_value`（具体留 Spec 2 brainstorming 时再定，需要反映 M = max(min(...), ...) 的最终值）
@@ -184,6 +188,6 @@
 
 ## 7. 当前进度
 
-- **当前焦点**：Spec 1 已 merge（PR #8）。**路线持续调整**：Path C 后再 scope assessment 拆分（方案 2），multi-period extraction 独立为 Spec 5；Spec 3 收缩回数据质量（FX + source + 承诺）。**Spec 5 优先**（Spec 2 真正 blocker，最短关键路径）。工作分支 `feat/turtle-spec5-multi-period-extraction`。
-- **已就绪**：Spec 1 在 main；roadmap 重组为 Spec 1 ✅ → Spec 5 🟡（当前）+ Spec 3 ⬜ + Spec 4 ⬜（三条并行链）→ Spec 2 ⬜（依赖 Spec 5）
-- **下一步**：Spec 5 brainstorming → spec → plan → 实施 → Spec 2
+- **当前焦点**：Spec 1 已 merge（PR #8）。**路线持续调整**：Path C 后再 scope assessment 拆分（方案 2），multi-period extraction 独立为 Spec 5；Spec 3 收缩回数据质量（FX + source + 承诺）。**Spec 5 优先**（Spec 2 真正 blocker，最短关键路径）。**Spec 5 spec 已写完**（`docs/superpowers/specs/2026-05-22-turtle-multi-period-extraction-design.md`，含 subagent review 修正），🟢 待用户审阅。工作分支 `feat/turtle-spec5-multi-period-extraction`。
+- **已就绪**：Spec 1 在 main；roadmap 重组为 Spec 1 ✅ → Spec 5 🟢（spec 已写）+ Spec 3 ⬜ + Spec 4 ⬜（三条并行链）→ Spec 2 ⬜（依赖 Spec 5）
+- **下一步**：用户审阅 Spec 5 spec → 调 writing-plans 生成 plan → subagent-driven 实施 → 解锁 Spec 2

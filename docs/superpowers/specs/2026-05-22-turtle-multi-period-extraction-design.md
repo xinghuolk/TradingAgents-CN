@@ -355,7 +355,24 @@ def prepare_turtle_analysis_payload(
     ...
 ```
 
-仅此一行改动。`_report_facts` helper（已存在）天然支持新的 `historical` 字段（通过 `getattr` 拿）。
+实际路径（`get_turtle_report_facts` 返回真实 `TurtleReportFacts`）走 `_report_facts` 的 `isinstance` 分支，直接返回原对象，historical 完整保留。
+
+**但 `_report_facts` 的 duck-typed 兜底分支需要补 `historical`**（`turtle_analysis_tool.py:22` 附近）—— 当前该分支只拷 `fields / metadata / caveats / status`，会丢 historical。改为：
+
+```python
+def _report_facts(value: Any) -> TurtleReportFacts:
+    if isinstance(value, TurtleReportFacts):
+        return value
+    return TurtleReportFacts(
+        fields=getattr(value, "fields", {}) or {},
+        metadata=getattr(value, "metadata", {}) or {},
+        caveats=getattr(value, "caveats", []) or [],
+        status=getattr(value, "status", "complete"),
+        historical=getattr(value, "historical", {}) or {},   # ← 新增，避免测试 double / 兼容路径丢历史
+    )
+```
+
+真实路径不受影响（走 isinstance 分支），此改动仅保证 test double / duck-typed 兼容路径不丢 historical 字段。
 
 ## 6. calculations 层聚合 helpers
 
@@ -488,6 +505,30 @@ def _number_report_3y_avg(
 | Spec 5 | 提供 helpers + 完整单元测试。**不修改 R/GG 公式现有调用**（依然 Spec 1 单期 `_money_hm`） |
 | Spec 2 | 在 R/GG 公式中切换到 `_money_hm_report_3y_avg`、`_number_report_3y_avg`；重写 M 算法；更新 R/GG 测试 fixture |
 
+### 6.5 `_number_report_3y_avg` 与 payout ratio 数据流（关键澄清）
+
+`_number_report_3y_avg` 消费的是 **per-period 派生的 reliable plain-numeric 字段**，而非 raw extractor 数值字段。两者数据流不同：
+
+**Raw extractor 数值字段**（net_profit / dividends_paid / capex 等）：经 `_adapt_value`（`report_adapter.py`），有 currency + 合法 unit 才转 `MoneyAmount`（reliable），缺 currency/unit 降为 `display_only` 原始数值。这类字段是 **money**，由 `_money_hm_report_3y_avg` 处理，不是 `_number_report_3y_avg`。
+
+**Derived ratio 字段**（payout ratio）：由 `_derive_report_payout_*`（`report_adapter.py:197+`）**手工创建** TurtleFactValue，`value=round(ratio, 12)`（无量纲 plain float），**不经过 `_adapt_value` 的 currency/unit 机制**。这才是 `_number_report_3y_avg` 的消费目标。
+
+**"3 年支付率均值"= mean of per-year ratios（不是 ratio of means）**：
+
+- ✅ 正确（上游"近 3 年支付率均值"语义）：`mean([div_2024/np_2024, div_2023/np_2023, div_2022/np_2022])`
+  —— 通过对每期独立派生的 `dividend_payout_ratio_current_year`（Spec 2 命名）做 `_number_report_3y_avg`
+- ❌ 错误（ratio of means）：`mean(dividends_3y) / mean(net_profit_3y)` —— 用两次 `_money_hm_report_3y_avg` 相除会得到这个，**Spec 2 不可用此路径**
+
+**per-period 派生自动发生**：multi-period 流程中每期都走 `_fetch_single_period_facts → build_report_facts_from_extraction → _derive_report_payout_*`，所以每个 historical period 的 facts 都含自己年度的 payout ratio 字段。Spec 5 无需新增"per-period 派生"逻辑——它已经在 build 流程里。
+
+**reliability 边界（Spec 5 vs Spec 2）**：
+
+- Spec 1 / Spec 5 当下：派生 payout 字段是 `dividend_payout_ratio_proxy_single_year`，reliability=`display_only` → `_number_report_3y_avg`（要求 reliable）对它返回 None。**这是预期** —— Spec 5 不把它接进 R/GG
+- Spec 2：重命名为 `dividend_payout_ratio_current_year` 并升级 reliability=`reliable`，届时 `_number_report_3y_avg` 才真正产出 3y avg payout
+- **Spec 5 单元测试用 synthetic facts**（手工构造含 reliability=reliable 的 plain-numeric 字段的 TurtleReportFacts + historical），验证 helper 逻辑本身；不依赖真实 payout 字段的 reliability 状态
+
+**结论**：`_number_report_3y_avg` 设计正确，与 derived ratio 字段的手工创建路径吻合。Spec 5 交付 + 单测 helper；Spec 2 负责升级 payout 字段 reliability 并 wire 进 M 算法。
+
 ## 7. 边界情况与缓存
 
 ### 7.1 边界情况
@@ -551,7 +592,7 @@ PR 必须满足：
 | `tradingagents/dataflows/value_investment/turtle/facts.py` | `TurtleReportFacts` 加 `historical` 字段；`__post_init__` / `to_dict` 同步；新增 `_copy_historical` helper |
 | `tradingagents/dataflows/value_investment/turtle/report_adapter.py` | `get_turtle_report_facts` 加 `history_periods` 参数；提取 `_fetch_single_period_facts` helper；新增 `_derive_historical_period_ends` 与 `_fetch_periods_concurrently` |
 | `tradingagents/dataflows/value_investment/turtle/calculations.py` | 新增 `_money_hm_report_3y_avg` 与 `_number_report_3y_avg`（**不**修改现有 R/GG 公式调用） |
-| `tradingagents/tools/turtle_analysis_tool.py` | `prepare_turtle_analysis_payload` 调用 `get_turtle_report_facts` 传 `history_periods=2` |
+| `tradingagents/tools/turtle_analysis_tool.py` | `prepare_turtle_analysis_payload` 调用 `get_turtle_report_facts` 传 `history_periods=2`；`_report_facts` duck-typed 兜底分支补 `historical=getattr(...)` |
 | `tradingagents/agents/analysts/value_analyst.py` | `_plain_turtle_report_prompt` 反序列化路径加 `_historical_from_payload` 并填充 `TurtleReportFacts.historical` |
 | `tests/unit/test_turtle_multi_period.py` | 新建（主要测试集） |
 | `tests/unit/test_turtle_facts.py` | 追加 `TestTurtleReportFactsHistorical` 类 |
