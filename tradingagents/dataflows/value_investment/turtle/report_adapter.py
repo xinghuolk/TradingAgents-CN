@@ -317,6 +317,18 @@ def build_report_facts_from_extraction(
     return TurtleReportFacts(fields=adapted, metadata=metadata, caveats=caveats, status=status)
 
 
+def _derive_historical_period_ends(latest_period_end: str, history_periods: int) -> list[str]:
+    """Compute historical period_ends from latest period_end.
+
+    Example: latest='2024-12-31', history_periods=2 -> ['2023-12-31', '2022-12-31']
+    Only supports YYYY-12-31 (annual reports).
+    """
+    if history_periods <= 0:
+        return []
+    latest_year = int(latest_period_end[:4])
+    return [f"{latest_year - n}-12-31" for n in range(1, history_periods + 1)]
+
+
 def get_turtle_report_facts(
     *,
     ticker: str,
