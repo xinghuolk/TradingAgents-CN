@@ -46,7 +46,7 @@ def test_prepare_turtle_analysis_payload_returns_facts_and_non_decisionable_sign
     monkeypatch.setattr(
         turtle_analysis_tool,
         "get_turtle_report_facts",
-        lambda *, ticker, market, trade_date: TurtleReportFacts(
+        lambda *, ticker, market, trade_date, history_periods=None: TurtleReportFacts(
             fields={
                 "net_profit": _money_fact("net_profit", 100),
                 "operating_cash_flow": _money_fact("operating_cash_flow", 120),
@@ -151,7 +151,7 @@ def test_value_analyst_uses_plain_llm_after_prepare_turtle_analysis_tool_message
     monkeypatch.setattr(
         turtle_analysis_tool,
         "get_turtle_report_facts",
-        lambda *, ticker, market, trade_date: TurtleReportFacts(
+        lambda *, ticker, market, trade_date, history_periods=None: TurtleReportFacts(
             fields={
                 "net_profit": _money_fact("net_profit", 100),
                 "operating_cash_flow": _money_fact("operating_cash_flow", 120),
@@ -428,3 +428,31 @@ class TestHoldingChannelPassthrough:
                 holding_channel="long_term_domestic",
             )
         assert captured["holding_channel"] == "long_term_domestic"
+
+
+class TestPrepareTurtlePayloadMultiPeriod:
+    def test_payload_includes_historical(self):
+        report_with_history = TurtleReportFacts(
+            status="complete",
+            historical={"2023-12-31": TurtleReportFacts(status="complete")},
+        )
+        captured = {}
+
+        def fake_report(**kwargs):
+            captured["history_periods"] = kwargs.get("history_periods")
+            return report_with_history
+
+        with patch(
+            "tradingagents.tools.turtle_analysis_tool.get_turtle_report_facts",
+            side_effect=fake_report,
+        ), patch(
+            "tradingagents.tools.turtle_analysis_tool.get_turtle_market_facts",
+            return_value=TurtleMarketFacts(status="complete"),
+        ):
+            payload = prepare_turtle_analysis_payload(
+                ticker="600519", market="A", trade_date="2025-05-19", company_name="X",
+            )
+        assert captured["history_periods"] == 2
+        data = json.loads(payload)
+        assert "historical" in data["facts"]["report"]
+        assert "2023-12-31" in data["facts"]["report"]["historical"]
