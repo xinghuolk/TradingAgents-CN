@@ -598,3 +598,60 @@ class TestMoneyHM3yAvg:
         value, sources, missing = _money_hm_report_3y_avg(facts, "net_profit", caveats, "CNY")
         assert value is None
         assert missing == ["net_profit_3y_avg"]
+
+
+from tradingagents.dataflows.value_investment.turtle.calculations import (
+    _number_report_3y_avg,
+)
+
+
+def _ratio_fact_3y(value):
+    return TurtleFactValue(
+        name="payout_ratio",
+        value=value,
+        source_label="report",
+        source_reference=f"ratio.{value}",
+        reliability="reliable",
+    )
+
+
+def _facts_ratio_history(latest_val, history_vals):
+    ctx = TurtleRunContext(
+        ticker="600519", market="A", trade_date="2025-05-19",
+        period_end="2024-12-31", holding_channel="long_term_domestic",
+        company_name="X",
+    )
+    historical = {}
+    for i, v in enumerate(history_vals, start=1):
+        pe = f"{2024 - i}-12-31"
+        fields = {"payout_ratio": _ratio_fact_3y(v)} if v is not None else {}
+        historical[pe] = TurtleReportFacts(fields=fields)
+    report_fields = {"payout_ratio": _ratio_fact_3y(latest_val)} if latest_val is not None else {}
+    report = TurtleReportFacts(fields=report_fields, historical=historical)
+    return TurtleFacts(
+        context=ctx, report=report, market=TurtleMarketFacts(),
+        status="complete", caveats=[],
+    )
+
+
+class TestNumber3yAvg:
+    def test_three_periods_mean(self):
+        facts = _facts_ratio_history(0.6, [0.5, 0.4])
+        caveats = []
+        value, sources, missing = _number_report_3y_avg(facts, "payout_ratio", caveats)
+        assert abs(value - 0.5) < 1e-9   # mean(0.6, 0.5, 0.4)
+        assert missing == []
+
+    def test_two_periods_with_caveat(self):
+        facts = _facts_ratio_history(0.6, [0.4, None])
+        caveats = []
+        value, sources, missing = _number_report_3y_avg(facts, "payout_ratio", caveats)
+        assert abs(value - 0.5) < 1e-9
+        assert any("2/3 periods" in c for c in caveats)
+
+    def test_one_period_below_threshold(self):
+        facts = _facts_ratio_history(0.6, [None, None])
+        caveats = []
+        value, sources, missing = _number_report_3y_avg(facts, "payout_ratio", caveats)
+        assert value is None
+        assert missing == ["payout_ratio_3y_avg"]
