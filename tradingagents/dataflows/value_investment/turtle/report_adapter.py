@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import logging
 from math import isfinite
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 from tradingagents.dataflows.financial_reports.adapter import create_financial_report_adapter
 from tradingagents.dataflows.financial_reports.config import get_financial_report_client_config
@@ -361,6 +364,48 @@ def _fetch_single_period_facts(
         status=facts.status,
         historical=facts.historical,
     )
+
+
+def _fetch_periods_concurrently(
+    *,
+    active_adapter: Any,
+    ticker: str,
+    market: str,
+    period_ends: list[str],
+    reference_date: str,
+    allow_llm_models: tuple[str, ...],
+) -> dict[str, TurtleReportFacts]:
+    """Fetch multiple periods in parallel, keyed by period_end.
+
+    Failed periods are silently omitted (caller applies the >=2 threshold).
+    """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    results: dict[str, TurtleReportFacts] = {}
+    max_workers = min(len(period_ends), 3)
+    if max_workers <= 0:
+        return results
+
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        future_to_period = {
+            pool.submit(
+                _fetch_single_period_facts,
+                adapter=active_adapter, ticker=ticker, market=market,
+                period_end=pe, reference_date=reference_date,
+                allow_llm_models=allow_llm_models,
+            ): pe
+            for pe in period_ends
+        }
+        for future in as_completed(future_to_period):
+            pe = future_to_period[future]
+            try:
+                results[pe] = future.result()
+            except Exception as exc:
+                logger.warning(
+                    "Failed to fetch annual report for %s %s period_end=%s: %s",
+                    ticker, market, pe, exc,
+                )
+    return results
 
 
 def get_turtle_report_facts(
