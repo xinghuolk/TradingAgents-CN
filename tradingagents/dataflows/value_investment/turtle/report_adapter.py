@@ -424,27 +424,34 @@ def get_turtle_report_facts(
     history_periods=0 -> latest period only (Spec 1 behavior)
     history_periods=2 -> latest + 2 prior periods (populated as facts.historical)
     """
-    config = None
-    if adapter is None or allow_llm_models is None:
-        config = get_financial_report_client_config()
+    config = (
+        get_financial_report_client_config()
+        if (adapter is None or allow_llm_models is None)
+        else None
+    )
+    allowed_models = (
+        allow_llm_models
+        if allow_llm_models is not None
+        else (config.allow_llm_models if config is not None else ())
+    )
 
-    allowed_models = allow_llm_models if allow_llm_models is not None else config.allow_llm_models
+    def _make_adapter() -> Any:
+        if adapter is not None:
+            return adapter
+        cfg = config if config is not None else get_financial_report_client_config()
+        return create_financial_report_adapter(cfg)
 
     latest_period_end = infer_turtle_period_end(trade_date)
     market_normalized = _normalize_market(market)
 
     if history_periods <= 0:
-        single_adapter = adapter if adapter is not None else create_financial_report_adapter(config)
         return _fetch_single_period_facts(
-            adapter=single_adapter, ticker=ticker, market=market_normalized,
+            adapter=_make_adapter(), ticker=ticker, market=market_normalized,
             period_end=latest_period_end, reference_date=trade_date,
             allow_llm_models=allowed_models,
         )
 
-    if adapter is not None:
-        adapter_factory = lambda: adapter
-    else:
-        adapter_factory = lambda: create_financial_report_adapter(config)
+    adapter_factory = _make_adapter
 
     historical_period_ends = _derive_historical_period_ends(latest_period_end, history_periods)
     all_periods = [latest_period_end] + historical_period_ends
