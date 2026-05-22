@@ -415,8 +415,13 @@ def get_turtle_report_facts(
     trade_date: str,
     adapter: Any | None = None,
     allow_llm_models: tuple[str, ...] | None = None,
+    history_periods: int = 0,
 ) -> TurtleReportFacts:
-    """Fetch annual report data and adapt it to Turtle report facts."""
+    """Fetch annual report data and adapt it to Turtle report facts.
+
+    history_periods=0 -> latest period only (Spec 1 behavior)
+    history_periods=2 -> latest + 2 prior periods (populated as facts.historical)
+    """
     config = None
     active_adapter = adapter
     if active_adapter is None:
@@ -428,12 +433,47 @@ def get_turtle_report_facts(
         config = config or get_financial_report_client_config()
         allowed_models = config.allow_llm_models
 
-    period_end = infer_turtle_period_end(trade_date)
-    return _fetch_single_period_facts(
-        adapter=active_adapter,
-        ticker=ticker,
-        market=_normalize_market(market),
-        period_end=period_end,
-        reference_date=trade_date,
+    latest_period_end = infer_turtle_period_end(trade_date)
+    market_normalized = _normalize_market(market)
+
+    if history_periods <= 0:
+        return _fetch_single_period_facts(
+            adapter=active_adapter, ticker=ticker, market=market_normalized,
+            period_end=latest_period_end, reference_date=trade_date,
+            allow_llm_models=allowed_models,
+        )
+
+    historical_period_ends = _derive_historical_period_ends(latest_period_end, history_periods)
+    all_periods = [latest_period_end] + historical_period_ends
+
+    period_facts_results = _fetch_periods_concurrently(
+        active_adapter=active_adapter, ticker=ticker, market=market_normalized,
+        period_ends=all_periods, reference_date=trade_date,
         allow_llm_models=allowed_models,
+    )
+
+    if latest_period_end not in period_facts_results:
+        return TurtleReportFacts(
+            fields={},
+            metadata={"period_end": latest_period_end},
+            caveats=[
+                f"latest period {latest_period_end} extraction raised exception during concurrent fetch"
+            ],
+            status="non_decisionable",
+            historical={},
+        )
+
+    latest_facts = period_facts_results[latest_period_end]
+    historical_facts = {
+        pe: period_facts_results[pe]
+        for pe in historical_period_ends
+        if pe in period_facts_results
+    }
+
+    return TurtleReportFacts(
+        fields=latest_facts.fields,
+        metadata=latest_facts.metadata,
+        caveats=latest_facts.caveats,
+        status=latest_facts.status,
+        historical=historical_facts,
     )

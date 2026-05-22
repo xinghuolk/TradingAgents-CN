@@ -82,3 +82,47 @@ class TestDeriveHistoricalPeriodEnds:
         assert _derive_historical_period_ends("2025-12-31", 3) == [
             "2024-12-31", "2023-12-31", "2022-12-31",
         ]
+
+
+from tradingagents.dataflows.value_investment.turtle.report_adapter import (
+    get_turtle_report_facts,
+)
+
+
+class TestGetTurtleReportFactsMultiPeriod:
+    def test_history_periods_zero_no_historical(self):
+        adapter = _FakeAdapter()
+        facts = get_turtle_report_facts(
+            ticker="600519", market="A", trade_date="2025-05-19",
+            adapter=adapter, allow_llm_models=(), history_periods=0,
+        )
+        assert facts.historical == {}
+
+    def test_history_periods_two_populates_historical(self):
+        adapter = _FakeAdapter()
+        facts = get_turtle_report_facts(
+            ticker="600519", market="A", trade_date="2025-05-19",
+            adapter=adapter, allow_llm_models=(), history_periods=2,
+        )
+        # latest = 2024-12-31 (trade_date 2025-05, month>3 -> year-1)
+        # historical = 2023-12-31, 2022-12-31
+        assert set(facts.historical.keys()) == {"2023-12-31", "2022-12-31"}
+
+    def test_one_historical_period_fails_dropped(self):
+        adapter = _FakeAdapter(fail_set={"2022-12-31"})
+        facts = get_turtle_report_facts(
+            ticker="600519", market="A", trade_date="2025-05-19",
+            adapter=adapter, allow_llm_models=(), history_periods=2,
+        )
+        assert set(facts.historical.keys()) == {"2023-12-31"}
+
+    def test_latest_fails_returns_synthetic_non_decisionable(self):
+        adapter = _FakeAdapter(fail_set={"2024-12-31"})
+        facts = get_turtle_report_facts(
+            ticker="600519", market="A", trade_date="2025-05-19",
+            adapter=adapter, allow_llm_models=(), history_periods=2,
+        )
+        assert facts.status == "non_decisionable"
+        assert facts.fields == {}
+        assert facts.historical == {}
+        assert any("2024-12-31" in c for c in facts.caveats)
