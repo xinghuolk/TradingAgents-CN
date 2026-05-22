@@ -329,6 +329,40 @@ def _derive_historical_period_ends(latest_period_end: str, history_periods: int)
     return [f"{latest_year - n}-12-31" for n in range(1, history_periods + 1)]
 
 
+def _fetch_single_period_facts(
+    *,
+    adapter: Any,
+    ticker: str,
+    market: str,
+    period_end: str,
+    reference_date: str,
+    allow_llm_models: tuple[str, ...],
+) -> TurtleReportFacts:
+    """Fetch + adapt one period's annual report. market is already normalized."""
+    result = adapter.get_annual_report_data(
+        ticker=ticker,
+        market=market,
+        period_end=period_end,
+        reference_date=reference_date,
+    )
+    facts = build_report_facts_from_extraction(
+        extraction=result.extraction,
+        allow_llm_models=allow_llm_models,
+        adapter_caveats=list(result.warnings) + list(result.errors),
+    )
+    if facts.metadata.get("period_end") is not None:
+        return facts
+    metadata = dict(facts.metadata)
+    metadata["period_end"] = period_end
+    return TurtleReportFacts(
+        fields=facts.fields,
+        metadata=metadata,
+        caveats=facts.caveats,
+        status=facts.status,
+        historical=facts.historical,
+    )
+
+
 def get_turtle_report_facts(
     *,
     ticker: str,
@@ -350,25 +384,11 @@ def get_turtle_report_facts(
         allowed_models = config.allow_llm_models
 
     period_end = infer_turtle_period_end(trade_date)
-    result = active_adapter.get_annual_report_data(
+    return _fetch_single_period_facts(
+        adapter=active_adapter,
         ticker=ticker,
         market=_normalize_market(market),
         period_end=period_end,
         reference_date=trade_date,
-    )
-    facts = build_report_facts_from_extraction(
-        extraction=result.extraction,
         allow_llm_models=allowed_models,
-        adapter_caveats=list(result.warnings) + list(result.errors),
-    )
-    if facts.metadata.get("period_end") is not None:
-        return facts
-
-    metadata = dict(facts.metadata)
-    metadata["period_end"] = period_end
-    return TurtleReportFacts(
-        fields=facts.fields,
-        metadata=metadata,
-        caveats=facts.caveats,
-        status=facts.status,
     )
