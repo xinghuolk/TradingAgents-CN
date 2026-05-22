@@ -74,6 +74,33 @@ def _fact_value_from_payload(name: str, payload: dict[str, Any]) -> TurtleFactVa
     )
 
 
+def _historical_from_payload(payload: Any) -> "dict[str, TurtleReportFacts]":
+    """Rehydrate the historical mapping from a serialized report payload."""
+    if not isinstance(payload, dict):
+        return {}
+    result: dict[str, TurtleReportFacts] = {}
+    for period_end, raw in payload.items():
+        if not isinstance(raw, dict):
+            continue
+        metadata = raw.get("metadata", {})
+        if not isinstance(metadata, dict):
+            metadata = {}
+        caveats = raw.get("caveats", [])
+        if not isinstance(caveats, list):
+            caveats = []
+        status = raw.get("status")
+        if status not in _TURTLE_STATUSES:
+            continue
+        result[period_end] = TurtleReportFacts(
+            fields=_fact_fields_from_payload(raw),
+            metadata=dict(metadata),
+            caveats=list(caveats),
+            status=status,
+            historical={},
+        )
+    return result
+
+
 def _fact_fields_from_payload(payload: dict[str, Any]) -> dict[str, TurtleFactValue]:
     fields = payload.get("fields")
     if not isinstance(fields, dict):
@@ -163,6 +190,7 @@ def _plain_turtle_report_prompt(company_name: str, ticker: str, payload: str) ->
             metadata=dict(report_metadata),
             caveats=list(_required_list(report_payload, "caveats")),
             status=_required_status(report_payload, "status"),
+            historical=_historical_from_payload(report_payload.get("historical", {})),
         ),
         market=TurtleMarketFacts(
             fields=_fact_fields_from_payload(market_payload),

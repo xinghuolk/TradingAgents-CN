@@ -456,3 +456,35 @@ class TestPrepareTurtlePayloadMultiPeriod:
         data = json.loads(payload)
         assert "historical" in data["facts"]["report"]
         assert "2023-12-31" in data["facts"]["report"]["historical"]
+
+
+class TestValueAnalystRehydratesHistorical:
+    def test_plain_prompt_rehydrates_historical(self):
+        """_plain_turtle_report_prompt 反序列化含 historical 的 payload 不丢历史数据。"""
+        from tradingagents.agents.analysts.value_analyst import _plain_turtle_report_prompt
+
+        payload = json.dumps({
+            "facts": {
+                "context": {
+                    "ticker": "600519", "market": "A", "trade_date": "2025-05-19",
+                    "period_end": "2024-12-31", "holding_channel": "long_term_domestic",
+                    "company_name": "X",
+                },
+                "report": {
+                    "fields": {}, "metadata": {"period_end": "2024-12-31"},
+                    "caveats": [], "status": "complete",
+                    "historical": {
+                        "2023-12-31": {
+                            "fields": {}, "metadata": {"period_end": "2023-12-31"},
+                            "caveats": [], "status": "complete", "historical": {},
+                        }
+                    },
+                },
+                "market": {"fields": {}, "caveats": [], "status": "complete"},
+                "status": "complete", "caveats": [],
+            },
+            "signals": {"status": "complete", "results": {}, "veto_reasons": [], "caveats": []},
+        }, ensure_ascii=False)
+
+        prompt = _plain_turtle_report_prompt("X", "600519", payload)
+        assert "2023-12-31" in prompt
