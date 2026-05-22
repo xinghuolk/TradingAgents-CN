@@ -78,7 +78,7 @@
 | Spec | 状态 | Spec 文档 | Plan 文档 | PR | 备注 |
 |------|------|----------|-----------|-----|------|
 | Spec 1：correctness-fixes | ✅ | `docs/superpowers/specs/2026-05-21-turtle-correctness-fixes-design.md` | `docs/superpowers/plans/2026-05-21-turtle-correctness-fixes.md` | [#8](https://github.com/xinghuolk/TradingAgents-CN/pull/8) | merged 2026-05-22；30 commits / 379 tests green |
-| Spec 5：multi-period-extraction | 🔵 | `docs/superpowers/specs/2026-05-22-turtle-multi-period-extraction-design.md` | `docs/superpowers/plans/2026-05-22-turtle-multi-period-extraction.md` | — | spec + plan 已通过；subagent-driven 实施中；Spec 2 真正 blocker；分支 `feat/turtle-spec5-multi-period-extraction` |
+| Spec 5：multi-period-extraction | 🟠 | `docs/superpowers/specs/2026-05-22-turtle-multi-period-extraction-design.md` | `docs/superpowers/plans/2026-05-22-turtle-multi-period-extraction.md` | (待开 PR) | 实施完成（10 tasks 全绿），等待 push + PR；Spec 2 可启动 |
 | Spec 3：data-source-quality | ⬜ | — | — | — | 与 Spec 5 / 2 / 4 并行可启动；含 FX、source provider、承诺支付率 |
 | Spec 2：model-recalibration | ⬜ | — | — | — | **暂缓**，等 Spec 5 完成；承诺字段来自 Spec 3 可选增强；brainstorming learnings 见 §5 |
 | Spec 4：turtle-data-view-frontend | ⬜ | — | — | — | 阻塞于 Spec 1 backend 部分 |
@@ -188,6 +188,6 @@
 
 ## 7. 当前进度
 
-- **当前焦点**：Spec 1 已 merge（PR #8）。**路线持续调整**：Path C 后再 scope assessment 拆分（方案 2），multi-period extraction 独立为 Spec 5；Spec 3 收缩回数据质量（FX + source + 承诺）。**Spec 5 优先**（Spec 2 真正 blocker，最短关键路径）。**Spec 5 spec 已写完**（`docs/superpowers/specs/2026-05-22-turtle-multi-period-extraction-design.md`，含 subagent review 修正），🟢 待用户审阅。工作分支 `feat/turtle-spec5-multi-period-extraction`。
+- **当前焦点**：Spec 5 实施完成（10 tasks 全 PASS，全套 unit 测试 405/405 绿）。等待用户 push + 开 PR。完成后 Spec 2（model-recalibration）即可启动（multi-period 数据通道已就位）。
 - **已就绪**：Spec 1 在 main；roadmap 重组为 Spec 1 ✅ → Spec 5 🟢（spec 已写）+ Spec 3 ⬜ + Spec 4 ⬜（三条并行链）→ Spec 2 ⬜（依赖 Spec 5）
 - **下一步**：Spec 5 subagent-driven 实施中（plan `docs/superpowers/plans/2026-05-22-turtle-multi-period-extraction.md`，10 tasks / 5 phases）→ 实施完成 push + PR → 解锁 Spec 2
