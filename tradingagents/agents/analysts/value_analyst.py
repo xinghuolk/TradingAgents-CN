@@ -75,27 +75,24 @@ def _fact_value_from_payload(name: str, payload: dict[str, Any]) -> TurtleFactVa
 
 
 def _historical_from_payload(payload: Any) -> "dict[str, TurtleReportFacts]":
-    """Rehydrate the historical mapping from a serialized report payload."""
+    """Rehydrate the historical mapping from a serialized report payload.
+
+    Missing historical key -> caller passes {} -> returns {} (backward compatible).
+    A present-but-malformed period entry raises, consistent with the strict
+    payload hydration helpers (this payload is produced by our own to_dict, so
+    malformed entries indicate corruption and should fail loud).
+    """
     if not isinstance(payload, dict):
-        return {}
+        raise ValueError("malformed historical payload; expected an object mapping period_end to facts")
     result: dict[str, TurtleReportFacts] = {}
     for period_end, raw in payload.items():
         if not isinstance(raw, dict):
-            continue
-        metadata = raw.get("metadata", {})
-        if not isinstance(metadata, dict):
-            metadata = {}
-        caveats = raw.get("caveats", [])
-        if not isinstance(caveats, list):
-            caveats = []
-        status = raw.get("status")
-        if status not in _TURTLE_STATUSES:
-            continue
+            raise ValueError(f"malformed historical entry for {period_end}; expected an object")
         result[period_end] = TurtleReportFacts(
             fields=_fact_fields_from_payload(raw),
-            metadata=dict(metadata),
-            caveats=list(caveats),
-            status=status,
+            metadata=dict(_required_mapping(raw, "metadata")),
+            caveats=list(_required_list(raw, "caveats")),
+            status=_required_status(raw, "status"),
             historical={},
         )
     return result

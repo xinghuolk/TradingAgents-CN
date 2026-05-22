@@ -226,3 +226,9 @@ class TestTurtleReportFactsHistorical:
     def test_empty_historical_dict_round_trips(self):
         facts = TurtleReportFacts()
         assert facts.to_dict()["historical"] == {}
+
+    def test_historical_child_is_defensively_copied(self):
+        child = TurtleReportFacts(caveats=["original"])
+        parent = TurtleReportFacts(historical={"2023-12-31": child})
+        child.caveats.append("leaked")
+        assert parent.historical["2023-12-31"].caveats == ["original"]

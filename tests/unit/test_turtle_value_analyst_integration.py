@@ -458,6 +458,39 @@ class TestPrepareTurtlePayloadMultiPeriod:
         assert "2023-12-31" in data["facts"]["report"]["historical"]
 
 
+class TestHistoricalFromPayloadStrict:
+    def test_missing_historical_key_returns_empty(self):
+        from tradingagents.agents.analysts.value_analyst import _historical_from_payload
+        assert _historical_from_payload({}) == {}
+
+    def test_malformed_period_entry_raises(self):
+        from tradingagents.agents.analysts.value_analyst import _historical_from_payload
+        with pytest.raises((ValueError, TypeError, KeyError)):
+            _historical_from_payload({"2023-12-31": "not-a-dict"})
+
+    def test_invalid_status_raises(self):
+        from tradingagents.agents.analysts.value_analyst import _historical_from_payload
+        with pytest.raises(ValueError):
+            _historical_from_payload({
+                "2023-12-31": {
+                    "fields": {}, "metadata": {"period_end": "2023-12-31"},
+                    "caveats": [], "status": "bogus_status",
+                }
+            })
+
+    def test_valid_entry_rehydrates(self):
+        from tradingagents.agents.analysts.value_analyst import _historical_from_payload
+        result = _historical_from_payload({
+            "2023-12-31": {
+                "fields": {}, "metadata": {"period_end": "2023-12-31"},
+                "caveats": ["x"], "status": "complete",
+            }
+        })
+        assert "2023-12-31" in result
+        assert result["2023-12-31"].status == "complete"
+        assert result["2023-12-31"].caveats == ["x"]
+
+
 class TestValueAnalystRehydratesHistorical:
     def test_plain_prompt_rehydrates_historical(self):
         """_plain_turtle_report_prompt 反序列化含 historical 的 payload 不丢历史数据。"""

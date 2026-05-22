@@ -21,21 +21,20 @@ def _copy_list(value: list[Any]) -> list[Any]:
 
 
 def _copy_historical(value: dict[str, "TurtleReportFacts"]) -> dict[str, "TurtleReportFacts"]:
-    """Defensive copy of historical mapping. Strip nested historical to avoid recursion."""
+    """Defensive copy of historical mapping. Reconstruct every child (forcing its own
+    __post_init__ deep-copy) and strip nested historical to avoid recursion."""
     if not value:
         return {}
-    result: dict[str, "TurtleReportFacts"] = {}
-    for period_end, facts in value.items():
-        if facts.historical:
-            facts = TurtleReportFacts(
-                fields=facts.fields,
-                metadata=facts.metadata,
-                caveats=facts.caveats,
-                status=facts.status,
-                historical={},
-            )
-        result[period_end] = facts
-    return result
+    return {
+        period_end: TurtleReportFacts(
+            fields=facts.fields,
+            metadata=facts.metadata,
+            caveats=facts.caveats,
+            status=facts.status,
+            historical={},
+        )
+        for period_end, facts in value.items()
+    }
 
 
 def infer_turtle_period_end(reference_date: str | None) -> str:
