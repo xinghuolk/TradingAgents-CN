@@ -20,6 +20,24 @@ def _copy_list(value: list[Any]) -> list[Any]:
     return deepcopy(value)
 
 
+def _copy_historical(value: dict[str, "TurtleReportFacts"]) -> dict[str, "TurtleReportFacts"]:
+    """Defensive copy of historical mapping. Strip nested historical to avoid recursion."""
+    if not value:
+        return {}
+    result: dict[str, "TurtleReportFacts"] = {}
+    for period_end, facts in value.items():
+        if facts.historical:
+            facts = TurtleReportFacts(
+                fields=facts.fields,
+                metadata=facts.metadata,
+                caveats=facts.caveats,
+                status=facts.status,
+                historical={},
+            )
+        result[period_end] = facts
+    return result
+
+
 def infer_turtle_period_end(reference_date: str | None) -> str:
     if reference_date is None:
         date_text = datetime.today().strftime("%Y-%m-%d")
@@ -148,11 +166,13 @@ class TurtleReportFacts:
     metadata: dict[str, Any] = field(default_factory=dict)
     caveats: list[str] = field(default_factory=list)
     status: TurtleStatus = "complete"
+    historical: dict[str, "TurtleReportFacts"] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "fields", _copy_dict(self.fields))
         object.__setattr__(self, "metadata", _copy_dict(self.metadata))
         object.__setattr__(self, "caveats", _copy_list(self.caveats))
+        object.__setattr__(self, "historical", _copy_historical(self.historical))
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -160,6 +180,7 @@ class TurtleReportFacts:
             "metadata": _copy_dict(self.metadata),
             "caveats": _copy_list(self.caveats),
             "status": self.status,
+            "historical": {pe: facts.to_dict() for pe, facts in self.historical.items()},
         }
 
 
