@@ -557,7 +557,7 @@ extractor 自身的 `RefreshPolicy.CACHE_FIRST` 已是 per-period 缓存。Spec 
 
 ### 8.1 新增测试文件
 
-`tests/unit/test_turtle_multi_period.py`（主要）+ 在现有 `test_turtle_facts.py` / `test_turtle_report_adapter.py` / `test_turtle_calculations.py` / `test_turtle_value_analyst_integration.py` 中追加相关用例。
+`tests/unit/test_turtle_multi_period.py`（主要）+ 在现有 `test_turtle_facts.py` / `test_turtle_calculations.py` / `test_turtle_value_analyst_integration.py` 中追加相关用例。（`test_turtle_report_adapter.py` 不新增用例，仅作单期兼容性回归。）
 
 ### 8.2 测试场景表
 
@@ -566,7 +566,7 @@ extractor 自身的 `RefreshPolicy.CACHE_FIRST` 已是 per-period 缓存。Spec 
 | `TestDeriveHistoricalPeriodEnds` | `latest=2024-12-31, history_periods=2 → [2023-12-31, 2022-12-31]`；`history_periods=0 → []`；`history_periods=3 → [2023, 2022, 2021]` |
 | `TestTurtleReportFactsHistorical` | 默认 `historical={}`；构造时传入 historical → 字段正确；`to_dict` 包含 historical；嵌套 historical 被 `_copy_historical` strip |
 | `TestGetTurtleReportFactsSinglePeriod` | `history_periods=0` 行为与 Spec 1 完全一致（用现有 fixture） |
-| `TestGetTurtleReportFactsMultiPeriod` | 3 期全成功 → facts.report.fields + 2 historical；1 期失败 → 1 historical；latest 失败 → fallback 单期路径；全部失败 → empty facts |
+| `TestGetTurtleReportFactsMultiPeriod` | 3 期全成功 → facts.report.fields + 2 historical；1 期失败（drop）→ 1 historical；latest raise → 合成 non_decisionable + historical={}；latest graceful 失败（extraction=None）→ non_decisionable + historical={}；非 reliable historical 期被 drop |
 | `TestFetchPeriodsConcurrently` | mock adapter 抛异常 → silently drop + log warning；mock 多 worker 完成顺序 |
 | `TestMoneyHM3yAvg` | 3 期 reliable → mean 正确；2 期 reliable → mean + caveat "2/3"；1 期 reliable → None + missing；0 期 reliable → None + missing；display_only 跳过；FX 跨期 normalize |
 | `TestNumber3yAvg` | 类似覆盖（payout ratio 数值字段） |
@@ -594,14 +594,16 @@ PR 必须满足：
 | `tradingagents/dataflows/value_investment/turtle/calculations.py` | 新增 `_money_hm_report_3y_avg` 与 `_number_report_3y_avg`（**不**修改现有 R/GG 公式调用） |
 | `tradingagents/tools/turtle_analysis_tool.py` | `prepare_turtle_analysis_payload` 调用 `get_turtle_report_facts` 传 `history_periods=2`；`_report_facts` duck-typed 兜底分支补 `historical=getattr(...)` |
 | `tradingagents/agents/analysts/value_analyst.py` | `_plain_turtle_report_prompt` 反序列化路径加 `_historical_from_payload` 并填充 `TurtleReportFacts.historical` |
-| `tests/unit/test_turtle_multi_period.py` | 新建（主要测试集） |
-| `tests/unit/test_turtle_facts.py` | 追加 `TestTurtleReportFactsHistorical` 类 |
-| `tests/unit/test_turtle_report_adapter.py` | 追加单期 / 多期 / 失败覆盖测试 |
+| `tests/unit/test_turtle_multi_period.py` | 新建（主要测试集：period 推导 / 并发 fetch / 多期路径 / graceful 失败 drop / per-worker adapter） |
+| `tests/unit/test_turtle_facts.py` | 追加 `TestTurtleReportFactsHistorical` 类（含 defensive-copy 用例） |
 | `tests/unit/test_turtle_calculations.py` | 追加 `TestMoneyHM3yAvg` / `TestNumber3yAvg` 类 |
-| `tests/unit/test_turtle_value_analyst_integration.py` | 追加 `TestValueAnalystRehydratesHistorical` 类 |
+| `tests/unit/test_turtle_value_analyst_integration.py` | 追加 `TestPrepareTurtlePayloadMultiPeriod` / `TestValueAnalystRehydratesHistorical` / `TestHistoricalFromPayloadStrict` 类 |
+
+注：实施中**未修改** `test_turtle_report_adapter.py`（多期 / 失败覆盖测试统一放在 `test_turtle_multi_period.py`；report_adapter 现有单期测试只作兼容性回归，不新增）。
 
 ## 10. 与后续 Spec 的依赖
 
 - **Spec 2**（model-recalibration）：**强依赖本 Spec 5**。Spec 2 实施时切换 R/GG 公式中 `_money_hm("net_profit", ...)` → `_money_hm_report_3y_avg("net_profit", ...)` 等；重写 M 算法。
+  - **Spec 2 必须对齐的 data-quality caveat（L2 followup）**：`_money_hm_report_3y_avg` / `_number_report_3y_avg` 当前**只**在 < 3 期可用时加 `N/3 periods` caveat，**不**像 `_money_hm` / `_number` 那样对每个被跳过的不可靠 / 非法字段追加 per-period caveat（如 `X unreliable: display_only`）。Spec 5 阶段 helper 未 wire 进 R/GG，无信息损失；但 Spec 2 把它们接入公式时，**必须**补齐 per-period 跳过原因的 caveat，否则用户看不到"某年数据为何未进入 3y 均值"。这是 Spec 2 wiring 的 checklist 项。
 - **Spec 3**（data-source-quality）：与 Spec 5 完全独立可并行。Spec 3 完成的承诺支付率字段是 Spec 2 M 算法的可选增强项。
 - **Spec 4**（frontend tab）：与 Spec 5 完全独立可并行。Spec 4 渲染 facts JSON 时会顺手看到 `historical` 字段，可在数据 tab 里增加"历史年份对照"视图（Spec 4 设计时决定是否做）。
