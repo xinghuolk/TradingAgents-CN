@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from math import isfinite
-from typing import Any
+from typing import Any, Callable
 
 logger = logging.getLogger(__name__)
 
@@ -368,7 +368,7 @@ def _fetch_single_period_facts(
 
 def _fetch_periods_concurrently(
     *,
-    active_adapter: Any,
+    adapter_factory: Callable[[], Any],
     ticker: str,
     market: str,
     period_ends: list[str],
@@ -377,7 +377,9 @@ def _fetch_periods_concurrently(
 ) -> dict[str, TurtleReportFacts]:
     """Fetch multiple periods in parallel, keyed by period_end.
 
-    Failed periods are silently omitted (caller applies the >=2 threshold).
+    Each worker creates its OWN adapter via adapter_factory() to avoid sharing a
+    requests.Session (ReportCollectorClient) across threads. Failed periods are
+    silently omitted (caller applies the >=2 threshold).
     """
     from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -386,16 +388,16 @@ def _fetch_periods_concurrently(
     if max_workers <= 0:
         return results
 
+    def _fetch_one(period_end: str) -> TurtleReportFacts:
+        return _fetch_single_period_facts(
+            adapter=adapter_factory(),
+            ticker=ticker, market=market,
+            period_end=period_end, reference_date=reference_date,
+            allow_llm_models=allow_llm_models,
+        )
+
     with ThreadPoolExecutor(max_workers=max_workers) as pool:
-        future_to_period = {
-            pool.submit(
-                _fetch_single_period_facts,
-                adapter=active_adapter, ticker=ticker, market=market,
-                period_end=pe, reference_date=reference_date,
-                allow_llm_models=allow_llm_models,
-            ): pe
-            for pe in period_ends
-        }
+        future_to_period = {pool.submit(_fetch_one, pe): pe for pe in period_ends}
         for future in as_completed(future_to_period):
             pe = future_to_period[future]
             try:
@@ -423,31 +425,32 @@ def get_turtle_report_facts(
     history_periods=2 -> latest + 2 prior periods (populated as facts.historical)
     """
     config = None
-    active_adapter = adapter
-    if active_adapter is None:
+    if adapter is None or allow_llm_models is None:
         config = get_financial_report_client_config()
-        active_adapter = create_financial_report_adapter(config)
 
-    allowed_models = allow_llm_models
-    if allowed_models is None:
-        config = config or get_financial_report_client_config()
-        allowed_models = config.allow_llm_models
+    allowed_models = allow_llm_models if allow_llm_models is not None else config.allow_llm_models
 
     latest_period_end = infer_turtle_period_end(trade_date)
     market_normalized = _normalize_market(market)
 
     if history_periods <= 0:
+        single_adapter = adapter if adapter is not None else create_financial_report_adapter(config)
         return _fetch_single_period_facts(
-            adapter=active_adapter, ticker=ticker, market=market_normalized,
+            adapter=single_adapter, ticker=ticker, market=market_normalized,
             period_end=latest_period_end, reference_date=trade_date,
             allow_llm_models=allowed_models,
         )
+
+    if adapter is not None:
+        adapter_factory = lambda: adapter
+    else:
+        adapter_factory = lambda: create_financial_report_adapter(config)
 
     historical_period_ends = _derive_historical_period_ends(latest_period_end, history_periods)
     all_periods = [latest_period_end] + historical_period_ends
 
     period_facts_results = _fetch_periods_concurrently(
-        active_adapter=active_adapter, ticker=ticker, market=market_normalized,
+        adapter_factory=adapter_factory, ticker=ticker, market=market_normalized,
         period_ends=all_periods, reference_date=trade_date,
         allow_llm_models=allowed_models,
     )

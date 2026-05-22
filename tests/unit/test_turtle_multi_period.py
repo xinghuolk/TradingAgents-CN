@@ -82,7 +82,7 @@ class TestFetchPeriodsConcurrently:
     def test_all_periods_succeed(self):
         adapter = _FakeAdapter()
         results = _fetch_periods_concurrently(
-            active_adapter=adapter, ticker="600519", market="CN",
+            adapter_factory=lambda: adapter, ticker="600519", market="CN",
             period_ends=["2024-12-31", "2023-12-31", "2022-12-31"],
             reference_date="2025-05-19", allow_llm_models=(),
         )
@@ -92,7 +92,7 @@ class TestFetchPeriodsConcurrently:
     def test_one_period_fails_is_dropped(self):
         adapter = _FakeAdapter(fail_set={"2022-12-31"})
         results = _fetch_periods_concurrently(
-            active_adapter=adapter, ticker="600519", market="CN",
+            adapter_factory=lambda: adapter, ticker="600519", market="CN",
             period_ends=["2024-12-31", "2023-12-31", "2022-12-31"],
             reference_date="2025-05-19", allow_llm_models=(),
         )
@@ -101,11 +101,34 @@ class TestFetchPeriodsConcurrently:
     def test_all_periods_fail_returns_empty(self):
         adapter = _FakeAdapter(fail_set={"2024-12-31", "2023-12-31"})
         results = _fetch_periods_concurrently(
-            active_adapter=adapter, ticker="600519", market="CN",
+            adapter_factory=lambda: _FakeAdapter(fail_set={"2024-12-31", "2023-12-31"}),
+            ticker="600519", market="CN",
             period_ends=["2024-12-31", "2023-12-31"],
             reference_date="2025-05-19", allow_llm_models=(),
         )
         assert results == {}
+
+
+class TestFetchPeriodsConcurrentlyPerWorkerAdapter:
+    def test_factory_called_once_per_period(self):
+        """Each period gets its own adapter instance from the factory (thread isolation)."""
+        from tradingagents.dataflows.value_investment.turtle.report_adapter import (
+            _fetch_periods_concurrently,
+        )
+        created = []
+
+        def factory():
+            a = _FakeAdapter()
+            created.append(a)
+            return a
+
+        results = _fetch_periods_concurrently(
+            adapter_factory=factory, ticker="600519", market="CN",
+            period_ends=["2024-12-31", "2023-12-31", "2022-12-31"],
+            reference_date="2025-05-19", allow_llm_models=(),
+        )
+        assert len(created) == 3   # one adapter per period (no sharing)
+        assert set(results.keys()) == {"2024-12-31", "2023-12-31", "2022-12-31"}
 
 
 class TestDeriveHistoricalPeriodEnds:
