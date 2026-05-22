@@ -525,3 +525,76 @@ class TestEvSwitchAndCashProtectionNonDecisionable:
         signals = compute_turtle_signals(facts)
         assert signals.results["net_cash_ratio"].status == "non_decisionable"
         assert signals.results["net_cash_ratio"].value is None
+
+
+from tradingagents.dataflows.value_investment.turtle.calculations import (
+    _money_hm_report_3y_avg,
+)
+
+
+def _money_fact_3y(value, currency="CNY"):
+    return TurtleFactValue(
+        name="net_profit",
+        value=MoneyAmount(
+            value=value, currency=currency, unit="hundred_million",
+            source_label="report", source_reference=f"p.{value}",
+        ),
+        source_label="report",
+        source_reference=f"p.{value}",
+        reliability="reliable",
+    )
+
+
+def _facts_money_history(latest_val, history_vals):
+    """latest_val + per-year historical money facts for 'net_profit'.
+
+    history_vals: list of values (None means that period has no net_profit fact).
+    """
+    ctx = TurtleRunContext(
+        ticker="600519", market="A", trade_date="2025-05-19",
+        period_end="2024-12-31", holding_channel="long_term_domestic",
+        company_name="X",
+    )
+    historical = {}
+    for i, v in enumerate(history_vals, start=1):
+        pe = f"{2024 - i}-12-31"
+        fields = {"net_profit": _money_fact_3y(v)} if v is not None else {}
+        historical[pe] = TurtleReportFacts(fields=fields)
+    report_fields = {"net_profit": _money_fact_3y(latest_val)} if latest_val is not None else {}
+    report = TurtleReportFacts(fields=report_fields, historical=historical)
+    return TurtleFacts(
+        context=ctx, report=report, market=TurtleMarketFacts(),
+        status="complete", caveats=[],
+    )
+
+
+class TestMoneyHM3yAvg:
+    def test_three_periods_mean(self):
+        facts = _facts_money_history(100.0, [90.0, 110.0])
+        caveats = []
+        value, sources, missing = _money_hm_report_3y_avg(facts, "net_profit", caveats, "CNY")
+        assert value == 100.0   # mean(100, 90, 110)
+        assert missing == []
+        assert len(sources) == 3
+
+    def test_two_periods_mean_with_caveat(self):
+        facts = _facts_money_history(100.0, [80.0, None])
+        caveats = []
+        value, sources, missing = _money_hm_report_3y_avg(facts, "net_profit", caveats, "CNY")
+        assert value == 90.0    # mean(100, 80)
+        assert missing == []
+        assert any("2/3 periods" in c for c in caveats)
+
+    def test_one_period_below_threshold(self):
+        facts = _facts_money_history(100.0, [None, None])
+        caveats = []
+        value, sources, missing = _money_hm_report_3y_avg(facts, "net_profit", caveats, "CNY")
+        assert value is None
+        assert missing == ["net_profit_3y_avg"]
+
+    def test_zero_periods(self):
+        facts = _facts_money_history(None, [None, None])
+        caveats = []
+        value, sources, missing = _money_hm_report_3y_avg(facts, "net_profit", caveats, "CNY")
+        assert value is None
+        assert missing == ["net_profit_3y_avg"]
