@@ -452,7 +452,10 @@ def get_turtle_report_facts(
         allow_llm_models=allowed_models,
     )
 
-    if latest_period_end not in period_facts_results:
+    latest_facts = period_facts_results.get(latest_period_end)
+
+    # Case 1: latest raised an exception during concurrent fetch (not in results)
+    if latest_facts is None:
         return TurtleReportFacts(
             fields={},
             metadata={"period_end": latest_period_end},
@@ -463,13 +466,24 @@ def get_turtle_report_facts(
             historical={},
         )
 
-    latest_facts = period_facts_results[latest_period_end]
+    # Case 2: latest fetched but unusable (adapter graceful failure / empty extraction).
+    # Latest drives the decision, so drop historical too — multi-period analysis can't proceed.
+    if latest_facts.status == "non_decisionable":
+        return TurtleReportFacts(
+            fields=latest_facts.fields,
+            metadata=latest_facts.metadata,
+            caveats=latest_facts.caveats,
+            status=latest_facts.status,
+            historical={},
+        )
+
+    # Case 3: latest usable -> keep, and drop non_decisionable (failed/empty) historical periods
     historical_facts = {
         pe: period_facts_results[pe]
         for pe in historical_period_ends
         if pe in period_facts_results
+        and period_facts_results[pe].status != "non_decisionable"
     }
-
     return TurtleReportFacts(
         fields=latest_facts.fields,
         metadata=latest_facts.metadata,
