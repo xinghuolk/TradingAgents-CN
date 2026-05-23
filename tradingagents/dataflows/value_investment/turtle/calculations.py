@@ -123,6 +123,100 @@ def _money_hm(
     return None, failed_sources, [name]
 
 
+def _money_hm_report_3y_avg(
+    facts: TurtleFacts,
+    name: str,
+    caveats: list[str],
+    target_currency: str,
+) -> tuple[float | None, list[str], list[str]]:
+    """Average a report-side money field across [latest + historical periods].
+
+    Reads facts.report and facts.report.historical (report-side only).
+    Threshold: >= 2 periods reliable -> mean; else None.
+    """
+    period_facts_list = [facts.report, *facts.report.historical.values()]
+    available_values: list[float] = []
+    sources: list[str] = []
+    failed_sources: list[str] = []
+
+    for period in period_facts_list:
+        fact = period.fields.get(name)
+        if fact is None:
+            continue
+        if not isinstance(fact.value, MoneyAmount):
+            failed_sources.append(fact.source_reference)
+            continue
+        if fact.reliability != "reliable" or fact.value.reliability != "reliable":
+            failed_sources.append(fact.source_reference)
+            continue
+        if isinstance(fact.value.value, bool) or not isinstance(fact.value.value, (int, float)):
+            failed_sources.append(fact.source_reference)
+            continue
+        try:
+            amount = fact.value.to_hundred_million(
+                target_currency=target_currency, fx_rates=_fx_rates(facts),
+            )
+        except (TypeError, ValueError, OverflowError) as exc:
+            _append_caveat(caveats, str(exc))
+            failed_sources.append(fact.source_reference)
+            continue
+        if not math.isfinite(amount.value):
+            failed_sources.append(fact.source_reference)
+            continue
+
+        available_values.append(float(amount.value))
+        sources.append(amount.source_reference)
+
+    if len(available_values) < 2:
+        return None, _merge_sources(sources, failed_sources), [f"{name}_3y_avg"]
+
+    if len(available_values) < 3:
+        _append_caveat(caveats, f"{name}_3y_avg computed from {len(available_values)}/3 periods")
+
+    return sum(available_values) / len(available_values), sources, []
+
+
+def _number_report_3y_avg(
+    facts: TurtleFacts,
+    name: str,
+    caveats: list[str],
+) -> tuple[float | None, list[str], list[str]]:
+    """Average a report-side numeric (non-money) field across periods.
+
+    Used for derived payout ratios (Spec 2 M algorithm). Same >=2 threshold.
+    """
+    period_facts_list = [facts.report, *facts.report.historical.values()]
+    available_values: list[float] = []
+    sources: list[str] = []
+    failed_sources: list[str] = []
+
+    for period in period_facts_list:
+        fact = period.fields.get(name)
+        if fact is None:
+            continue
+        if isinstance(fact.value, bool) or not isinstance(fact.value, (int, float)):
+            failed_sources.append(fact.source_reference)
+            continue
+        if fact.reliability != "reliable":
+            failed_sources.append(fact.source_reference)
+            continue
+        value = float(fact.value)
+        if not math.isfinite(value):
+            failed_sources.append(fact.source_reference)
+            continue
+
+        available_values.append(value)
+        sources.append(fact.source_reference)
+
+    if len(available_values) < 2:
+        return None, _merge_sources(sources, failed_sources), [f"{name}_3y_avg"]
+
+    if len(available_values) < 3:
+        _append_caveat(caveats, f"{name}_3y_avg computed from {len(available_values)}/3 periods")
+
+    return sum(available_values) / len(available_values), sources, []
+
+
 def _number(facts: TurtleFacts, name: str, caveats: list[str]) -> tuple[float | None, list[str], list[str]]:
     failed_sources: list[str] = []
     for fact in _field_candidates(facts, name):

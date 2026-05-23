@@ -27,6 +27,7 @@ def _report_facts(value: Any) -> TurtleReportFacts:
         metadata=getattr(value, "metadata", {}) or {},
         caveats=getattr(value, "caveats", []) or [],
         status=getattr(value, "status", "complete"),
+        historical=getattr(value, "historical", {}) or {},
     )
 
 
@@ -56,7 +57,10 @@ def prepare_turtle_analysis_payload(
         holding_channel=holding_channel,
     )
     report = _report_facts(
-        get_turtle_report_facts(ticker=ticker, market=market, trade_date=trade_date)
+        get_turtle_report_facts(
+            ticker=ticker, market=market, trade_date=trade_date,
+            history_periods=2,
+        )
     )
     market_facts = _market_facts(
         get_turtle_market_facts(

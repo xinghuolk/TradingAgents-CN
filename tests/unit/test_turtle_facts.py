@@ -196,3 +196,39 @@ class TestTurtleMarketFactsStatus:
         d = facts.to_dict()
         assert d["status"] == "degraded"
         assert d["caveats"] == ["y"]
+
+
+class TestTurtleReportFactsHistorical:
+    def test_historical_defaults_to_empty(self):
+        facts = TurtleReportFacts()
+        assert facts.historical == {}
+
+    def test_historical_stores_prior_periods(self):
+        prior = TurtleReportFacts(status="complete")
+        facts = TurtleReportFacts(historical={"2023-12-31": prior})
+        assert "2023-12-31" in facts.historical
+        assert facts.historical["2023-12-31"].status == "complete"
+
+    def test_to_dict_includes_historical(self):
+        prior = TurtleReportFacts(status="degraded", caveats=["x"])
+        facts = TurtleReportFacts(historical={"2023-12-31": prior})
+        d = facts.to_dict()
+        assert "historical" in d
+        assert d["historical"]["2023-12-31"]["status"] == "degraded"
+        assert d["historical"]["2023-12-31"]["caveats"] == ["x"]
+
+    def test_nested_historical_stripped(self):
+        deep = TurtleReportFacts(status="complete")
+        mid = TurtleReportFacts(status="complete", historical={"2022-12-31": deep})
+        facts = TurtleReportFacts(historical={"2023-12-31": mid})
+        assert facts.historical["2023-12-31"].historical == {}
+
+    def test_empty_historical_dict_round_trips(self):
+        facts = TurtleReportFacts()
+        assert facts.to_dict()["historical"] == {}
+
+    def test_historical_child_is_defensively_copied(self):
+        child = TurtleReportFacts(caveats=["original"])
+        parent = TurtleReportFacts(historical={"2023-12-31": child})
+        child.caveats.append("leaked")
+        assert parent.historical["2023-12-31"].caveats == ["original"]

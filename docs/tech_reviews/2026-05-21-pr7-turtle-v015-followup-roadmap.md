@@ -25,8 +25,9 @@
 | Spec | 主题 | 覆盖评审条目 | 风险 | 规模 | 依赖 |
 |------|------|--------------|------|------|------|
 | **Spec 1** | correctness-fixes | 综合 2.1 / 2.2 / 2.3；计算 A.4 / A.5 / A.6 / B.1 + B.1 附（DEFAULT_CHANNEL_CAVEAT）/ B.3；D 章 backend 透传 + AgentState schema + 持久化空内容短路 | 低 | 中 | 无 |
-| **Spec 2** | model-recalibration | 计算 A.1 时间口径；A.2 税务口径；A.7 payout_anchor 重命名 | 中（改变数值） | 小（设计决策为主） | 与 Spec 1 无强依赖，可并行 |
-| **Spec 3** | cross-currency-fx | 计算 A.3 跨币 FX；B.2 market source provider；B.4 FX metadata | 中（新数据通道） | 中 | 与 Spec 1 / 2 无强依赖，可并行 |
+| **Spec 5** | multi-period-extraction | FinancialReportClient 跨 3 期年报数据获取；跨期失败覆盖；缓存策略；跨期一致性校验（货币 / 单位 / 公司） | 中（新数据契约 + 性能） | 中 | 与 Spec 1 无强依赖，可与 Spec 3 / 4 并行 |
+| **Spec 3** | data-source-quality | 计算 A.3 跨币 FX；B.2 market source provider；B.4 FX metadata；承诺支付率字段（extractor 扩展或 dividend_policy_text 二次提取） | 中（新数据通道） | 中 | 与 Spec 1 / 5 无强依赖，可并行 |
+| **Spec 2** | model-recalibration | 计算 A.1 时间口径 + M 完整算法（`max(min(3y avg, 承诺), 新信号DPS)`，承诺缺失时降级）；A.2 税务口径 prompt 文档化；A.7 payout_anchor 重命名；buyback O 切到 extractor 3y 均值 | 中（改变数值） | 中（公式实施 + fixture migration） | **强依赖 Spec 5**（multi-period 数据）；可选依赖 Spec 3（承诺支付率为可选增强） |
 | **Spec 4** | turtle-data-view-frontend | D 章 frontend tab（数据 / 计算 / 状态 Tab） | 中（proprietary、UX 设计） | 大 | **依赖 Spec 1 的 backend 透传**完成 |
 
 **已并入相邻 spec 的化妆性条目**：
@@ -37,23 +38,38 @@
 ## 3. 推荐实施顺序
 
 ```
-            ┌── Spec 1 (correctness) ──────┐
-            │                                │
-            ├── Spec 2 (model)               │
-start  ─────┤      （可并行）                ├── Spec 4 (frontend tab)
-            ├── Spec 3 (FX)                  │       依赖 Spec 1 backend 透传
-            │      （可并行）                │
-            └────────────────────────────────┘
+        Spec 1 (correctness-fixes, merged #8) ✅
+                │
+        ┌───────┴───────┬──────────────┐
+        ▼               ▼              ▼
+    Spec 5 🟢       Spec 3 ⬜      Spec 4 ⬜
+    (multi-period)  (FX + source   (frontend tab)
+        │            quality +
+        │            承诺支付率)
+        ▼
+    Spec 2 ⬜ (model-recalibration)
+        │
+        └── 承诺字段升级路径（Spec 3 完成后增强 M 算法，可选）
 ```
 
-**关键路径**：Spec 1 → Spec 4（backend 透传必须先就位）。
+**关键路径变更**（Path C + 方案 2 拆分，2026-05-22）：
 
-**Spec 2 / 3** 与 Spec 1 无强依赖，单线推进时按以下顺序：
+- 原 Spec 3 范围（含 multi-period + 承诺支付率）经过 brainstorming scope assessment 拆分为：
+  - **Spec 5（multi-period-extraction）**：Spec 2 的真正 blocker，独立成 spec 让其专注
+  - **Spec 3（data-source-quality）**：FX 跨币 + source 追溯 + 承诺支付率（性质相似的"数据来源质量"工作）
+- **Spec 2 强依赖**：仅 Spec 5（multi-period 数据）；承诺支付率（来自 Spec 3）作为**可选增强** —— Spec 2 公式 `max(min(3y avg, 承诺), 新信号)` 在承诺缺失时降级为 `max(3y avg, 新信号)`，承诺值就位后再升级
+- 三条独立链（**可并行**）：
+  - **Spec 5 → Spec 2**：核心 R/GG 公式重建（最短关键路径）
+  - **Spec 3**：数据质量提升
+  - **Spec 4**：frontend tab
 
-1. **Spec 1**（correctness-fixes）：风险最低、影响面广、能让"事实先行"设计真正生效
-2. **Spec 2**（model-recalibration）：口径决策影响所有 R/GG 数字基线，越早决定下游测试越稳
-3. **Spec 3**（cross-currency-fx）：影响 H 股 + CNY 报表公司是否可用，业务紧迫性强
-4. **Spec 4**（turtle-data-view-frontend）：用户感知最强，但必须等 Spec 1 backend 透传完成
+单线推进时按以下顺序：
+
+1. **Spec 1**（correctness-fixes）✅ —— 已完成
+2. **Spec 5**（multi-period-extraction）—— **当前进行**；最短关键路径，unlock Spec 2
+3. **Spec 2**（model-recalibration）—— Spec 5 完成后实施
+4. **Spec 3**（data-source-quality）—— 与 Spec 5 / Spec 2 / Spec 4 都可并行
+5. **Spec 4**（turtle-data-view-frontend）—— 用户感知最强；Spec 1 后立即可启动
 
 ## 4. 状态追踪
 
@@ -61,9 +77,10 @@ start  ─────┤      （可并行）                ├── Spec 4 (
 
 | Spec | 状态 | Spec 文档 | Plan 文档 | PR | 备注 |
 |------|------|----------|-----------|-----|------|
-| Spec 1：correctness-fixes | 🟠 | `docs/superpowers/specs/2026-05-21-turtle-correctness-fixes-design.md` | `docs/superpowers/plans/2026-05-21-turtle-correctness-fixes.md` | (待开 PR) | 实施完成，等待用户 push + 开 PR |
-| Spec 2：model-recalibration | ⬜ | — | — | — | |
-| Spec 3：cross-currency-fx | ⬜ | — | — | — | |
+| Spec 1：correctness-fixes | ✅ | `docs/superpowers/specs/2026-05-21-turtle-correctness-fixes-design.md` | `docs/superpowers/plans/2026-05-21-turtle-correctness-fixes.md` | [#8](https://github.com/xinghuolk/TradingAgents-CN/pull/8) | merged 2026-05-22；30 commits / 379 tests green |
+| Spec 5：multi-period-extraction | 🟠 | `docs/superpowers/specs/2026-05-22-turtle-multi-period-extraction-design.md` | `docs/superpowers/plans/2026-05-22-turtle-multi-period-extraction.md` | [#9](https://github.com/xinghuolk/TradingAgents-CN/pull/9) | 10 tasks 全绿 + 独立 review 4 项修复（High graceful-failure / M2 thread-safety / M3 strict rehydration / L1 copy）已合入；PR #9 审阅中 |
+| Spec 3：data-source-quality | ⬜ | — | — | — | 与 Spec 5 / 2 / 4 并行可启动；含 FX、source provider、承诺支付率 |
+| Spec 2：model-recalibration | ⬜ | — | — | — | **暂缓**，等 Spec 5 完成；承诺字段来自 Spec 3 可选增强；brainstorming learnings 见 §5 |
 | Spec 4：turtle-data-view-frontend | ⬜ | — | — | — | 阻塞于 Spec 1 backend 部分 |
 
 文档路径约定：
@@ -94,21 +111,62 @@ start  ─────┤      （可并行）                ├── Spec 4 (
 - **计算 B.3 单年度 payout proxy 名字撞车 bug**（`report_adapter.py`）—— 重命名为 `dividend_payout_ratio_proxy_single_year` + 降级 display_only；附带消除 report-side proxy 与 market-side 真 3y 数据**写同一 key、`_field` report 优先静默覆盖**的撞车 bug
 - **D 章 backend 透传 `value_turtle_payload`**—— `AgentState` TypedDict 加字段、`propagation.py` InitialState 加 `""`、`value_analyst_node` 所有写 `value_report` 的 return 路径都带 payload（unsupported 返 `""`）、`simple_analysis_service.py` 持久化层加"内容非空"短路 + 新增 `value_turtle_payload.json` 配置
 
-### Spec 2：model-recalibration
+### Spec 5：multi-period-extraction（**当前进行中**，方案 2 拆分后独立成 spec）
 
-修复项：
+范围（单一关注点：跨期数据获取）：
 
-- **计算 A.1 时间口径不一致**—— 要么引入 `avg_net_profit_3y` / `avg_owner_earnings_3y`，要么用当期 payout 替换 3y 平均；需要设计决策
-- **计算 A.2 分红 / 回购税务口径不对称**—— 引入 `q_buyback` 或在 prompt 中明示假设
-- **计算 A.7 `payout_anchor` 别名问题**—— 重命名为 `payout_anchor_passthrough` 或从 results 中移除
+- **multi-period extraction**：FinancialReportClient 跨 3 期 period_end 调用（trade_date 推导出 latest period_end 后逐年回退 2 年）
+- **跨期失败覆盖**：3 期里 N 期 reliable 时如何处理（strict 全 3 期 / lenient ≥1 期 / threshold ≥2 期）
+- **缓存策略**：extractor 已有 cache_first refresh_policy 单期级缓存，多期是否额外加层缓存
+- **跨期一致性校验**：跨期 currency / unit / company_name 应一致；不一致如何处理
+- **并发 vs 串行**：3 次 extractor 调用是串行还是 `asyncio.to_thread` 并发
+- **API 表面**：扩展 `get_turtle_report_facts` 返回 multi-period（向后兼容）还是新增 `get_turtle_multi_period_facts`
+- **TurtleFacts 数据结构**：multi-period 数据如何存（per-period dict / 新 dataclass / 仅聚合衍生字段）
+- **calculations.py 集成**：如何读取 multi-period（新 helper `_money_hm_multi_period` 还是直接读 facts.report.historical）
 
-### Spec 3：cross-currency-fx
+### Spec 3：data-source-quality（与 Spec 5 / 2 / 4 并行可启动）
 
-修复项：
+修复项 + 新增：
 
-- **计算 A.3 跨币 FX 通道未打通**—— 选 FX provider；写入 `facts.report.metadata["fx_rates"]`；明确 pair 方向约定
+- **计算 A.3 跨币 FX 通道未打通**—— 选 FX provider；写入 `facts.report.metadata["fx_rates"]`；明确 pair 方向约定（`HKD:CNY` = 1 HKD 兑 X CNY 等）
 - **计算 B.2 市场 source_reference 缺 provider**—— `market_adapter` 携带 `info["source"]` + timestamp 进 source_reference
 - **计算 B.4 FX metadata 缺 provider/timestamp**—— FX 信息同样携带来源与时间戳
+- **承诺支付率字段**—— extractor 字段表中无对应字段；需选其一：(a) 扩展 extractor `dividend_commitment_ratio` 字段（上游协调）；(b) 从已有 `dividend_policy_text` LLM 二次提取；(c) 暂时不抓，Spec 2 公式里降级为"无承诺值时跳过 M 算法的 min(...)"
+
+### Spec 2：model-recalibration（**暂缓**，等 Spec 5 完成）
+
+依赖关系（方案 2 拆分后明确）：
+
+- **强依赖 Spec 5**：multi-period payout / buyback 数据（M 的"近 3 年支付率均值"、O 的"过去 3 年回购年均"都来自 Spec 5 的 historical 数据 + `_money_hm_report_3y_avg` / `_number_report_3y_avg` helpers）
+- **可选依赖 Spec 3**：承诺支付率字段是 M 算法 `min(3y avg, 承诺)` 的增强项；Spec 3 未完成时降级为 `M = max(3y avg, 新信号)`（跳过 min 的承诺约束）
+
+修复项（**与 Path C 前的初版差异较大，因为 brainstorming + 上游对比揭示了更精细的公式**）：
+
+- **计算 A.1 时间口径完整对齐上游**：
+  - R = `(C × M × (1 - Q%) + O) / market_cap × 100`
+  - C = 当年归母净利润（snapshot，与上游因子 2 一致）
+  - **M = max(min(近 3 年支付率均值, 承诺支付率), 新信号 DPS 调整值)** —— 近 3 年支付率均值来自 **Spec 5**（per-period 派生 payout ratio + `_number_report_3y_avg`）；承诺支付率来自 **Spec 3**（可选增强，缺失则跳过 min）
+  - **O = 注销型回购年均金额（过去 3 年）** —— 来自 **Spec 5** multi-period buyback 数据（`_money_hm_report_3y_avg`）
+  - Q = 税率（按 holding_channel 查表，Spec 1 已就位）
+- **计算 A.2 分红 / 回购税务口径不对称**—— Q2=A2-1：prompt 文档化"注销型回购对继续持有股东无即时税务事件，因此 `+ buyback` 不扣税；与上游'注销型回购不做税务折扣'明示一致"
+- **计算 A.7 `payout_anchor` 别名问题**—— Q3 sub：保留在 `results` dict 并 rename 为 `payout_M` 或 `payout_anchor_value`（具体留 Spec 2 brainstorming 时再定，需要反映 M = max(min(...), ...) 的最终值）
+
+#### Path C brainstorming learnings（保存自 2026-05-22 暂缓前的工作）
+
+来自 `tradingagents/.../turtle_framework/龟龟投资策略_v0.15/phase3_分析与报告.md` 与 subagent 对比验证：
+
+| Brainstorming Q | 决策 | 对齐上游？ | 备注 |
+|----|----|---|----|
+| Q1：模型口径 | A. 当期 snapshot | ⚠️ 部分 | R 的 C 是 snapshot 对齐；但 M、O 是 3y 平均，**不是纯 snapshot**——上游是有意的时间口径混用 |
+| Q2：税务口径 | A2-1. 文档化不对称 | ✅ | 上游原文"注销型回购不做税务折扣"完全对齐 |
+| Q3：payout PRIMARY 来源 | A3-1. report-side 升 PRIMARY | ✅ 方向 | 上游明确"payout 来自年报附注同币种"；但简化为 current_year = dividends/profit 未实现完整 M = max(min(3y avg, 承诺), 新信号) |
+| Q4：buyback 数据源 | A4-4. extractor `repurchase_of_stock` | ✅ 数据源对齐 | 数据源对齐；但简化为当年值，**未实现 O = 3y 平均** |
+| Q5：akshare records 处置 | A5-1. 保留为 display_only | ✅ | 上游对回购历史用于定性分析（价值陷阱排查） |
+
+#### 已知次要偏离（Spec 2 文档化或留未来 spec）
+
+- **GG 公式分子口径**：上游因子 3 精算 GG 分子是 bottom-up 现金流量表逐行追踪的 3y 均值（AA）；当前实现是 `OCF - abs(Capex)` 单年近似——本质上是因子 2 的近似 GG，不是上游因子 3。Spec 2 文档化此简化；完整 AA 追踪需要更复杂的现金流逐行解析，留**未来 Spec**（可能 Spec 5）
+- **net_cash_ratio 分子口径**：上游用"广义净现金"（含定期存款、理财、其他流动性等价物）；当前用狭义 `cash - interest_bearing_debt`。对持有大量定期存款的公司（如部分物业管理）影响 ev_switch / cash_protection 偏保守。Spec 2 评估是否在范围（如果 extractor 能拿到 wealth_management / time_deposits 字段，可顺手扩；否则文档化偏离）
 
 ### Spec 4：turtle-data-view-frontend
 
@@ -130,6 +188,6 @@ start  ─────┤      （可并行）                ├── Spec 4 (
 
 ## 7. 当前进度
 
-- **当前焦点**：Spec 1 实施完成（15 个 task 全部 PASS，最终测试 379/379 全绿，含 buyback_amount 回归钉死、status 派生、payload 透传与持久化）。等待用户确认 push + 开 PR。
-- **已就绪**：所有 review 与 plan 文档 + Spec 1 完整实施 + 工作分支 `fix/turtle-v015-review-followups` 本地 commit 完整
-- **下一步**：用户授权后 push 到 origin、`gh pr create` 创建 PR
+- **当前焦点**：Spec 5 实施完成并开 PR #9（10 tasks + 独立 review 后 4 项修复：High graceful-failure 过滤 / M2 per-worker adapter 线程安全 / M3 strict rehydration / L1 copy_historical 深拷贝）。PR #9 审阅中；merge 后 Spec 2（model-recalibration）即可启动（multi-period 数据通道已就位）。
+- **已就绪**：Spec 1 在 main；roadmap 重组为 Spec 1 ✅ → Spec 5 🟠（PR #9）+ Spec 3 ⬜ + Spec 4 ⬜（三条并行链）→ Spec 2 ⬜（依赖 Spec 5）
+- **下一步**：PR #9 review/merge → 解锁 Spec 2；Spec 3 / Spec 4 可随时并行启动。L2（3y_avg per-period caveat）作为 Spec 2 wiring checklist 项（见 Spec 5 §10）

@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import logging
 from math import isfinite
-from typing import Any
+from typing import Any, Callable
+
+logger = logging.getLogger(__name__)
 
 from tradingagents.dataflows.financial_reports.adapter import create_financial_report_adapter
 from tradingagents.dataflows.financial_reports.config import get_financial_report_client_config
@@ -317,41 +320,41 @@ def build_report_facts_from_extraction(
     return TurtleReportFacts(fields=adapted, metadata=metadata, caveats=caveats, status=status)
 
 
-def get_turtle_report_facts(
+def _derive_historical_period_ends(latest_period_end: str, history_periods: int) -> list[str]:
+    """Compute historical period_ends from latest period_end.
+
+    Example: latest='2024-12-31', history_periods=2 -> ['2023-12-31', '2022-12-31']
+    Only supports YYYY-12-31 (annual reports).
+    """
+    if history_periods <= 0:
+        return []
+    latest_year = int(latest_period_end[:4])
+    return [f"{latest_year - n}-12-31" for n in range(1, history_periods + 1)]
+
+
+def _fetch_single_period_facts(
     *,
+    adapter: Any,
     ticker: str,
     market: str,
-    trade_date: str,
-    adapter: Any | None = None,
-    allow_llm_models: tuple[str, ...] | None = None,
+    period_end: str,
+    reference_date: str,
+    allow_llm_models: tuple[str, ...],
 ) -> TurtleReportFacts:
-    """Fetch annual report data and adapt it to Turtle report facts."""
-    config = None
-    active_adapter = adapter
-    if active_adapter is None:
-        config = get_financial_report_client_config()
-        active_adapter = create_financial_report_adapter(config)
-
-    allowed_models = allow_llm_models
-    if allowed_models is None:
-        config = config or get_financial_report_client_config()
-        allowed_models = config.allow_llm_models
-
-    period_end = infer_turtle_period_end(trade_date)
-    result = active_adapter.get_annual_report_data(
+    """Fetch + adapt one period's annual report. market is already normalized."""
+    result = adapter.get_annual_report_data(
         ticker=ticker,
-        market=_normalize_market(market),
+        market=market,
         period_end=period_end,
-        reference_date=trade_date,
+        reference_date=reference_date,
     )
     facts = build_report_facts_from_extraction(
         extraction=result.extraction,
-        allow_llm_models=allowed_models,
+        allow_llm_models=allow_llm_models,
         adapter_caveats=list(result.warnings) + list(result.errors),
     )
     if facts.metadata.get("period_end") is not None:
         return facts
-
     metadata = dict(facts.metadata)
     metadata["period_end"] = period_end
     return TurtleReportFacts(
@@ -359,4 +362,142 @@ def get_turtle_report_facts(
         metadata=metadata,
         caveats=facts.caveats,
         status=facts.status,
+        historical=facts.historical,
+    )
+
+
+def _fetch_periods_concurrently(
+    *,
+    adapter_factory: Callable[[], Any],
+    ticker: str,
+    market: str,
+    period_ends: list[str],
+    reference_date: str,
+    allow_llm_models: tuple[str, ...],
+) -> dict[str, TurtleReportFacts]:
+    """Fetch multiple periods in parallel, keyed by period_end.
+
+    Each worker creates its OWN adapter via adapter_factory() to avoid sharing a
+    requests.Session (ReportCollectorClient) across threads. Failed periods are
+    silently omitted (caller applies the >=2 threshold).
+    """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    results: dict[str, TurtleReportFacts] = {}
+    max_workers = min(len(period_ends), 3)
+    if max_workers <= 0:
+        return results
+
+    def _fetch_one(period_end: str) -> TurtleReportFacts:
+        return _fetch_single_period_facts(
+            adapter=adapter_factory(),
+            ticker=ticker, market=market,
+            period_end=period_end, reference_date=reference_date,
+            allow_llm_models=allow_llm_models,
+        )
+
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        future_to_period = {pool.submit(_fetch_one, pe): pe for pe in period_ends}
+        for future in as_completed(future_to_period):
+            pe = future_to_period[future]
+            try:
+                results[pe] = future.result()
+            except Exception as exc:
+                logger.warning(
+                    "Failed to fetch annual report for %s %s period_end=%s: %s",
+                    ticker, market, pe, exc,
+                )
+    return results
+
+
+def get_turtle_report_facts(
+    *,
+    ticker: str,
+    market: str,
+    trade_date: str,
+    adapter: Any | None = None,
+    allow_llm_models: tuple[str, ...] | None = None,
+    history_periods: int = 0,
+) -> TurtleReportFacts:
+    """Fetch annual report data and adapt it to Turtle report facts.
+
+    history_periods=0 -> latest period only (Spec 1 behavior)
+    history_periods=2 -> latest + 2 prior periods (populated as facts.historical)
+    """
+    config = (
+        get_financial_report_client_config()
+        if (adapter is None or allow_llm_models is None)
+        else None
+    )
+    allowed_models = (
+        allow_llm_models
+        if allow_llm_models is not None
+        else (config.allow_llm_models if config is not None else ())
+    )
+
+    def _make_adapter() -> Any:
+        if adapter is not None:
+            return adapter
+        cfg = config if config is not None else get_financial_report_client_config()
+        return create_financial_report_adapter(cfg)
+
+    latest_period_end = infer_turtle_period_end(trade_date)
+    market_normalized = _normalize_market(market)
+
+    if history_periods <= 0:
+        return _fetch_single_period_facts(
+            adapter=_make_adapter(), ticker=ticker, market=market_normalized,
+            period_end=latest_period_end, reference_date=trade_date,
+            allow_llm_models=allowed_models,
+        )
+
+    adapter_factory = _make_adapter
+
+    historical_period_ends = _derive_historical_period_ends(latest_period_end, history_periods)
+    all_periods = [latest_period_end] + historical_period_ends
+
+    period_facts_results = _fetch_periods_concurrently(
+        adapter_factory=adapter_factory, ticker=ticker, market=market_normalized,
+        period_ends=all_periods, reference_date=trade_date,
+        allow_llm_models=allowed_models,
+    )
+
+    latest_facts = period_facts_results.get(latest_period_end)
+
+    # Case 1: latest raised an exception during concurrent fetch (not in results)
+    if latest_facts is None:
+        return TurtleReportFacts(
+            fields={},
+            metadata={"period_end": latest_period_end},
+            caveats=[
+                f"latest period {latest_period_end} extraction raised exception during concurrent fetch"
+            ],
+            status="non_decisionable",
+            historical={},
+        )
+
+    # Case 2: latest fetched but unusable (adapter graceful failure / empty extraction).
+    # Latest drives the decision, so drop historical too — multi-period analysis can't proceed.
+    if latest_facts.status == "non_decisionable":
+        return TurtleReportFacts(
+            fields=latest_facts.fields,
+            metadata=latest_facts.metadata,
+            caveats=latest_facts.caveats,
+            status=latest_facts.status,
+            historical={},
+        )
+
+    # Case 3: latest usable -> keep, and drop non_decisionable (failed/empty) historical periods
+    historical_facts = {
+        pe: period_facts_results[pe]
+        for pe in historical_period_ends
+        if pe in period_facts_results
+        and period_facts_results[pe].status != "non_decisionable"
+    }
+    return TurtleReportFacts(
+        fields=latest_facts.fields,
+        metadata=latest_facts.metadata,
+        caveats=latest_facts.caveats,
+        status=latest_facts.status,
+        historical=historical_facts,
     )
