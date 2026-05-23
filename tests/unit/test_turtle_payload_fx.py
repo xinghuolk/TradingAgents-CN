@@ -95,3 +95,14 @@ def test_payload_snapshot_caveat_when_market_as_of_differs_from_trade_date():
          patch.object(tat, "resolve_fx_rates", return_value=({"HKD:CNY": 0.9}, {"HKD:CNY": {}}, [])):
         out = json.loads(tat.prepare_turtle_analysis_payload("00700", "HK", "2020-01-01", "x"))
     assert any("快照" in c for c in out["facts"]["report"]["caveats"])
+
+
+def test_market_facts_coercion_preserves_metadata():
+    class _Obj:
+        fields = {}
+        caveats = []
+        status = "complete"
+        metadata = {"market_as_of": "2026-05-23"}
+
+    mf = tat._market_facts(_Obj())
+    assert mf.metadata == {"market_as_of": "2026-05-23"}

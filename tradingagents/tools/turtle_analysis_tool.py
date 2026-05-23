@@ -43,6 +43,7 @@ def _market_facts(value: Any) -> TurtleMarketFacts:
         fields=getattr(value, "fields", {}) or {},
         caveats=getattr(value, "caveats", []) or [],
         status=getattr(value, "status", "complete"),
+        metadata=getattr(value, "metadata", {}) or {},
     )
 
 
