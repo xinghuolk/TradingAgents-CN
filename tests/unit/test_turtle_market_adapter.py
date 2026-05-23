@@ -469,3 +469,24 @@ def test_build_market_facts_provider_unknown_when_source_missing():
         dividend_data=None, buyback_data=None, industry=None,
     )
     assert "provider=unknown" in mf.fields["market_cap"].value.source_reference
+
+
+from tradingagents.dataflows.value_investment.turtle import market_adapter
+
+
+def test_fetch_turtle_market_data_stamps_ashare_source(monkeypatch):
+    monkeypatch.setattr(
+        "tradingagents.tools.value_investment_tool._fetch_market_data_structured",
+        lambda ticker, market: {"market_cap": 1e10, "close_price": 100.0, "total_shares": 1e8},
+    )
+    data = market_adapter._fetch_turtle_market_data("600519", "A")
+    assert data["source"] == "akshare.stock_individual_info_em"
+
+
+def test_fetch_turtle_market_data_keeps_existing_source(monkeypatch):
+    monkeypatch.setattr(
+        "tradingagents.tools.value_investment_tool._fetch_market_data_structured",
+        lambda ticker, market: {"market_cap": 1e10, "source": "custom"},
+    )
+    data = market_adapter._fetch_turtle_market_data("600519", "A")
+    assert data["source"] == "custom"

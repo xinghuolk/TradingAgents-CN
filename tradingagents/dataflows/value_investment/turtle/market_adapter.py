@@ -111,7 +111,10 @@ def _fetch_turtle_market_data(ticker: str, market: str) -> dict[str, Any]:
 
     from tradingagents.tools.value_investment_tool import _fetch_market_data_structured
 
-    return _fetch_market_data_structured(ticker, market)
+    data = _fetch_market_data_structured(ticker, market)
+    if isinstance(data, dict):
+        data.setdefault("source", "akshare.stock_individual_info_em")
+    return data
 
 
 def _fetch_turtle_dividend_data(ticker: str, market: str) -> dict[str, Any] | None:
