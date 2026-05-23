@@ -95,14 +95,14 @@ def normalize_currency(currency: str) -> str:
 
 - `to_hundred_million` 拼 pair 前对 `self.currency` 与 `target_currency` 归一化（对 `to_hundred_million` 的改动）。
 - `resolve_fx_rates` 与 `prepare_turtle_analysis_payload` 的币种收集复用同一函数。
-- **`calculations.py::_money_fact_currencies`（行 75）必须改用 `normalize_currency`，不能再用原始 `fact.value.currency.upper()`。** 否则 `"HK$"` 与 `"HKD"` 会被收成两种币 → `_money_target_currency`（行 80-84）判定为多币 → 强制 target=CNY → 纯 HKD 股的 `net_profit`/`market_cap` 双双触发 FX；一旦 FX 拉取失败，本可在 HKD 下算出的 R/GG 被错误降级。同理 `"RMB"` 单币种归一后 = `"CNY"`，`_money_target_currency` 返回 `"CNY"` → FormulaResult.unit 显示与已归一金额一致（避免「unit 显示 RMB 但金额已是 CNY」的错位）。这是本 Spec 对 `calculations.py` 的**唯一**改动；`_fx_rates` 等其余逻辑不动。
+- **`calculations.py::_money_fact_currencies`（行 75）必须改用 `normalize_currency`，不能再用原始 `fact.value.currency.upper()`。** 否则 `"HK$"` 与 `"HKD"` 会被收成两种币 → `_money_target_currency`（行 80-84）判定为多币 → 强制 target=CNY → 纯 HKD 股的 `net_profit`/`market_cap` 双双触发 FX；一旦 FX 拉取失败，本可在 HKD 下算出的 R/GG 被错误降级。同理 `"RMB"` 单币种归一后 = `"CNY"`，`_money_target_currency` 返回 `"CNY"` → FormulaResult.unit 显示与已归一金额一致（避免「unit 显示 RMB 但金额已是 CNY」的错位）。`_fx_rates` 等公式逻辑不动。（calculations.py 另持有 FX 币种收集的真相源——`FX_RELEVANT_MONEY_FIELDS` 常量、`_usable_money_currency` 与 `collect_fx_currencies`，见 §6——使 payload 层的 FX 币种集合与计算层实际换算口径不漂移。）
 - **不**修改各 fact 构造点的 currency 字段（避免大面积 ripple）；归一化只发生在比较 / pair 拼接 / 币种收集处。
 
 ## 6. 数据流与注入
 
 `prepare_turtle_analysis_payload` 内（build report + market facts 之后、构 TurtleFacts 之前）：
 
-1. 收集 report + market 两侧 money fact 的**归一化去重**币种集合（含 `report.historical` 各期的 money fact）→ `currencies = _collect_currencies(report, market_facts)`。
+1. `currencies = calculations.collect_fx_currencies(report, market_facts)`——**收集逻辑落在计算层**（单一真相源），仅纳入计算层实际会换算的币种：限定 `FX_RELEVANT_MONEY_FIELDS`（7 个公式输入字段）、归一化去重、跳过非 reliable / 非有限数值；当前期按 **report 优先取第一个可用候选**（与 `_field_candidates` + break 一致，同名 market fallback 仅在 report 不可用时采用），并纳入 `report.historical` 各期（report-only）。避免无关字段（如 `revenue`）或同名 market fallback 的币种触发无用 FX。`payload` 层只调用、不自行扫描。
 2. **FX 及其所有 caveat 一律门控于 `len(currencies) >= 2`**（单一归一币种——纯 CNY / 纯 HKD / 纯 USD——直接置 `fx_rates, fx_rates_meta = {}, {}`、不读 `market_as_of`、不拉 FX、不加任何 FX caveat）。门控内按序：
    - **a. 读 as-of + 缺失策略**：`market_as_of = market_facts.metadata.get("market_as_of")`（`build_market_facts` 写入的 `YYYY-MM-DD`，实时快照 = fetch date）。若为空 → **用 fetch date（今天）作为 FX 锚点并追加 caveat**（"market_as_of 缺失，FX 已对齐拉取日"）；**严禁 fallback 到 `trade_date`**（违反 §3 as-of 约束）。
    - **b. 拉 FX**：`fx_rates, fx_rates_meta, resolve_caveats = resolve_fx_rates(currencies, "CNY", market_as_of)`，并入 caveats。
