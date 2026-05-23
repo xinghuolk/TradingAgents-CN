@@ -66,6 +66,7 @@ def resolve_fx_rates(
     """
     dst = normalize_currency(target)
     to_target: dict[str, float] = {dst: 1.0}          # 各币种兑 target 的直连汇率（target 自身=1）
+    as_of_by_ccy: dict[str, str] = {dst: as_of_date}  # 各币种实际数据日期（target 用请求日，取数币种用 quote.as_of）
     fetched_meta: dict[str, dict] = {}                # 仅直连抓取的 pair 的真实 provenance
     caveats: list[str] = []
     seen: set[str] = set()
@@ -80,6 +81,7 @@ def resolve_fx_rates(
             caveats.append(f"FX {src}:{dst} 取数失败，跨币计算降级")
             continue
         to_target[src] = quote.rate
+        as_of_by_ccy[src] = quote.as_of
         fetched_meta[quote.pair] = {
             "provider": quote.provider,
             "as_of": quote.as_of,
@@ -102,10 +104,12 @@ def resolve_fx_rates(
             if pair in fetched_meta:
                 fx_rates_meta[pair] = fetched_meta[pair]
             else:
+                legs = [f"{c}:{dst}" for c in (a, b) if c != dst]
                 fx_rates_meta[pair] = {
                     "provider": f"derived(via {dst})",
-                    "as_of": as_of_date,
+                    "as_of": min(as_of_by_ccy[a], as_of_by_ccy[b]),  # 取底层最旧数据日期（YYYY-MM-DD 字典序=时序）
                     "fetched_at": derived_at,
                     "rate": rate,
+                    "derived_from": legs,
                 }
     return fx_rates, fx_rates_meta, caveats

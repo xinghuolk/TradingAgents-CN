@@ -137,3 +137,30 @@ def test_fx_helpers_exported_from_package():
     assert normalize_currency("RMB") == "CNY"
     q = FxQuote(pair="HKD:CNY", rate=0.9, provider="yfinance", as_of="2026-05-23", fetched_at="t")
     assert q.pair == "HKD:CNY"
+
+
+def test_resolve_fx_rates_derived_meta_uses_underlying_as_of(monkeypatch):
+    # 底层 HKD:CNY 实际取到 2026-05-22，派生 CNY:HKD 的 as_of 应跟随底层而非请求日 2026-05-23
+    def fake_fetch(frm, to, as_of):
+        return fxmod.FxQuote(pair=f"{frm}:{to}", rate=0.9, provider="yfinance", as_of="2026-05-22", fetched_at="t")
+
+    monkeypatch.setattr(fxmod, "fetch_fx_rate", fake_fetch)
+    rates, meta, _ = fxmod.resolve_fx_rates({"HKD", "CNY"}, "CNY", "2026-05-23")
+    assert meta["HKD:CNY"]["as_of"] == "2026-05-22"          # 直连：真实报价日
+    assert meta["CNY:HKD"]["as_of"] == "2026-05-22"          # 派生：跟随底层，非请求日
+    assert meta["CNY:HKD"]["derived_from"] == ["HKD:CNY"]
+
+
+def test_resolve_fx_rates_cross_derived_meta_uses_oldest_underlying(monkeypatch):
+    as_of_map = {"HKD": "2026-05-22", "USD": "2026-05-21"}
+    rate_map = {"HKD": 0.9, "USD": 7.2}
+
+    def fake_fetch(frm, to, as_of):
+        return fxmod.FxQuote(pair=f"{frm}:{to}", rate=rate_map[frm], provider="yfinance",
+                             as_of=as_of_map[frm], fetched_at="t")
+
+    monkeypatch.setattr(fxmod, "fetch_fx_rate", fake_fetch)
+    _, meta, _ = fxmod.resolve_fx_rates({"HKD", "USD", "CNY"}, "CNY", "2026-05-23")
+    # HKD:USD 由 HKD:CNY(05-22) 与 USD:CNY(05-21) 三角化 → 取最旧 05-21
+    assert meta["HKD:USD"]["as_of"] == "2026-05-21"
+    assert sorted(meta["HKD:USD"]["derived_from"]) == ["HKD:CNY", "USD:CNY"]
