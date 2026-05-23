@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
@@ -54,3 +55,34 @@ def fetch_fx_rate(from_currency: str, to_currency: str, as_of_date: str) -> FxQu
         return None
 
     return FxQuote(pair=f"{src}:{dst}", rate=rate, provider="yfinance", as_of=as_of, fetched_at=fetched_at)
+
+
+def resolve_fx_rates(
+    currencies: Iterable[str], target: str, as_of_date: str
+) -> tuple[dict[str, float], dict[str, dict], list[str]]:
+    """对每个 != target 的归一币种取 *:target 汇率。
+    返回 (fx_rates, fx_rates_meta, caveats)。失败的 pair 进 caveats、不进 fx_rates。
+    """
+    dst = normalize_currency(target)
+    fx_rates: dict[str, float] = {}
+    fx_rates_meta: dict[str, dict] = {}
+    caveats: list[str] = []
+    seen: set[str] = set()
+
+    for raw in currencies:
+        src = normalize_currency(raw)
+        if src == dst or src in seen:
+            continue
+        seen.add(src)
+        quote = fetch_fx_rate(src, dst, as_of_date)
+        if quote is None:
+            caveats.append(f"FX {src}:{dst} 取数失败，跨币计算降级")
+            continue
+        fx_rates[quote.pair] = quote.rate
+        fx_rates_meta[quote.pair] = {
+            "provider": quote.provider,
+            "as_of": quote.as_of,
+            "fetched_at": quote.fetched_at,
+            "rate": quote.rate,
+        }
+    return fx_rates, fx_rates_meta, caveats

@@ -66,3 +66,31 @@ def test_fetch_fx_rate_exception_returns_none(monkeypatch):
 
     monkeypatch.setitem(sys.modules, "yfinance", types.SimpleNamespace(Ticker=_Boom))
     assert fxmod.fetch_fx_rate("HKD", "CNY", "2026-05-23") is None
+
+
+def test_resolve_fx_rates_aggregates_and_skips_target(monkeypatch):
+    calls = []
+
+    def fake_fetch(frm, to, as_of):
+        calls.append((frm, to))
+        return fxmod.FxQuote(pair=f"{frm}:{to}", rate=0.9, provider="yfinance", as_of=as_of, fetched_at="t")
+
+    monkeypatch.setattr(fxmod, "fetch_fx_rate", fake_fetch)
+    rates, meta, caveats = fxmod.resolve_fx_rates({"CNY", "HKD"}, "CNY", "2026-05-23")
+    assert rates == {"HKD:CNY": 0.9}
+    assert meta["HKD:CNY"]["provider"] == "yfinance"
+    assert meta["HKD:CNY"]["rate"] == 0.9
+    assert caveats == []
+    assert ("CNY", "CNY") not in calls  # target 自身被跳过
+
+
+def test_resolve_fx_rates_partial_failure_adds_caveat(monkeypatch):
+    def fake_fetch(frm, to, as_of):
+        if frm == "USD":
+            return None
+        return fxmod.FxQuote(pair=f"{frm}:{to}", rate=0.9, provider="yfinance", as_of=as_of, fetched_at="t")
+
+    monkeypatch.setattr(fxmod, "fetch_fx_rate", fake_fetch)
+    rates, meta, caveats = fxmod.resolve_fx_rates({"HKD", "USD"}, "CNY", "2026-05-23")
+    assert rates == {"HKD:CNY": 0.9}
+    assert any("USD:CNY" in c for c in caveats)
