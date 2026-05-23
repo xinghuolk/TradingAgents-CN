@@ -70,7 +70,9 @@ def resolve_fx_rates(
     # 1) 对每个 normalize(ccy) != normalize(target) 的币种直连取 X:target（每币种一次网络）；失败 → caveat、排除出矩阵。
     # 2) 经 target 三角化产出**全部有序配对矩阵**（含倒数与交叉）：rate(a:b) = rate(a:target)/rate(b:target)，rate(target:target)=1。
     #    这保证 calculations 选任意 native target（见下）都能命中所需 pair，且零额外网络调用（FX 倒数/交叉为精确算术）。
-    # 直连 pair 保留真实 provenance（provider="yfinance"）；派生 pair 标 provider="derived(via {target})"。
+    # 直连 pair 保留真实 provenance（provider="yfinance"、真实 quote.as_of）；
+    # 派生 pair 标 provider="derived(via {target})"，as_of = 底层各 leg 的最旧报价日（非请求日），
+    # 并附 derived_from（计算所依据的直连 leg，如 ["HKD:CNY"] 或 ["HKD:CNY","USD:CNY"]）。
     # 返回 (fx_rates, fx_rates_meta, caveats)
     ...
 ```
