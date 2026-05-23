@@ -67,14 +67,17 @@ def fetch_fx_rate(from_currency: str, to_currency: str, as_of_date: str) -> FxQu
 def resolve_fx_rates(
     currencies: Iterable[str], target: str, as_of_date: str
 ) -> tuple[dict[str, float], dict[str, dict], list[str]]:
-    # 对每个 normalize(ccy) != normalize(target) 的币种取 pair
-    # 成功：fx_rates["FROM:TO"] = rate；fx_rates_meta["FROM:TO"] = {provider, as_of, fetched_at, rate}
-    # 失败：追加 caveat（"FX FROM:TO 取数失败，跨币计算降级"）
+    # 1) 对每个 normalize(ccy) != normalize(target) 的币种直连取 X:target（每币种一次网络）；失败 → caveat、排除出矩阵。
+    # 2) 经 target 三角化产出**全部有序配对矩阵**（含倒数与交叉）：rate(a:b) = rate(a:target)/rate(b:target)，rate(target:target)=1。
+    #    这保证 calculations 选任意 native target（见下）都能命中所需 pair，且零额外网络调用（FX 倒数/交叉为精确算术）。
+    # 直连 pair 保留真实 provenance（provider="yfinance"）；派生 pair 标 provider="derived(via {target})"。
     # 返回 (fx_rates, fx_rates_meta, caveats)
     ...
 ```
 
 `pair` 方向约定（与现有 `to_hundred_million` 一致）：`fx_rates["HKD:CNY"]` = 1 HKD 兑多少 CNY，乘到 HKD 数值上得 CNY。
+
+**为何要全矩阵（M3）**：calculations 的 `_money_target_currency` 逐 group 选 native target——R group（`net_profit`+`market_cap`）若二者同为 HKD 则 target=HKD，此时该 group 的 CNY 成员（如 buyback）需 `CNY:HKD`。若只存 `HKD:CNY`，CNY 成员会被误判 missing。三角化矩阵覆盖任意方向，杜绝此误降级。
 
 ## 5. 币种归一化
 
@@ -122,6 +125,7 @@ report = TurtleReportFacts(
 ## 7. 溯源标注（B.2 + B.4）
 
 - **B.2 市场**：`build_market_facts` 新增 `provider` 参数（HK 走 `info["source"]` 如 `yfinance_hk`；A股走对应 provider，缺失则 `"unknown"`），并计算 `market_as_of` + `fetched_at`。market_cap 等 money fact 的 `source_reference` 改为 `"market_data.market_cap; provider=yfinance_hk; fetched_at=<ISO>"`。`market_as_of` 写入 `TurtleMarketFacts.metadata`。行情是实时快照，as-of 语义即 fetch date。
+  - **已知近似（M4）**：`market_as_of` 取 `datetime.now(timezone.utc)` 的日期，而非 provider 报价单的真实交易日——当前 fetcher（`get_hk_stock_info`、akshare `stock_individual_info_em`）返回的是「最新」市值快照，**不暴露可靠的报价日期**，故以 fetch date 作为 live-snapshot 代理。周末/节假日/时区边界下 fetch date 可能比真实交易日晚 1 天，但 `fetch_fx_rate` 的「取最近 ≤ as_of 的交易日」会把 FX 与 market_cap **一并落到上一个交易日**，二者仍同源对齐，故无 FX 误配；偏差仅限 `market_as_of` 标签本身。若将来 fetcher 能提供真实报价日，应优先采用。
   - **A股 provider 必须落地**：`_fetch_market_data_structured`（`value_investment_tool.py:553`）当前返回的 dict **无 `source` 键**，若实现只在 market_adapter 读 `market_data["source"]`，A股 主路径会变成 `provider="unknown"`、B.2 形同虚设。因此 **`market_adapter._fetch_turtle_market_data` 的 A股 分支在拿到 structured data 后须 `data.setdefault("source", "akshare.stock_individual_info_em")`**（即 `_fetch_market_data_structured` 实际调用的 endpoint），再交给 `build_market_facts`。不改 `value_investment_tool.py`，把 provenance 契约收在 turtle 边界内。
 - **B.4 FX**：provenance 进 `metadata["fx_rates_meta"]`（provider / as_of / fetched_at / rate），供 Spec 4 中间页展示；`to_hundred_million` 现有的 `"; FX HKD:CNY=0.92"` source_reference 行保留。
 
@@ -135,6 +139,7 @@ report = TurtleReportFacts(
 
 - `_money_hm`（`calculations.py`）已 catch `to_hundred_million` 的 `(TypeError, ValueError, OverflowError)` → 缺 pair 的跨币 fact 自动进 `missing_inputs` → R / GG → `non_decisionable` → 整体降级。
 - Spec 3 仅在**确实需要 FX**（全局 ≥2 种归一币种，见 §6 step 3）且 `resolve_fx_rates` 失败时补**解释性 caveat**（"FX HKD:CNY 取数失败，跨币计算降级"），避免用户只看到泛化 missing input。
+- **FX 取数失败时 report.status 抬升（M2）**：当 `resolve_fx_rates` 返回失败 caveat（`fx_failed = bool(resolve_caveats)`）时，重建的 `report.status = merge_status(report.status, "degraded")`，`facts.status` 经 `merge_status(report.status, market.status)` 自动继承。避免「facts.status=complete 却带 FX 失败 caveat」的口径矛盾。**范围**：仅真实取数失败抬升；信息型 caveat（缺 `market_as_of` / snapshot / 历史-FX）**不**抬升（否则会误降级缺元数据的旧 payload）。
 - **单一归一币种（A股纯 CNY、港股纯 HKD、美股纯 USD）无需 FX → 不拉、不发网络、不加 caveat、不触发任何降级**——calculations 在该 group 选 native target 直接算出结果。
 
 ## 9. 测试策略
