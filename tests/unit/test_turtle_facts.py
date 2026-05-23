@@ -264,3 +264,22 @@ def test_to_hundred_million_hk_dollar_alias_uses_hkd_pair():
 def test_to_hundred_million_missing_fx_still_raises():
     with pytest.raises(ValueError):
         _money(100_000_000, "HKD").to_hundred_million(target_currency="CNY", fx_rates={})
+
+
+def test_market_facts_metadata_roundtrip():
+    mf = TurtleMarketFacts(fields={}, caveats=[], status="complete", metadata={"market_as_of": "2026-05-23"})
+    assert mf.metadata == {"market_as_of": "2026-05-23"}
+    assert mf.to_dict()["metadata"] == {"market_as_of": "2026-05-23"}
+
+
+def test_market_facts_metadata_defaults_empty():
+    mf = TurtleMarketFacts()
+    assert mf.metadata == {}
+    assert mf.to_dict()["metadata"] == {}
+
+
+def test_market_facts_metadata_defensive_copy():
+    src = {"market_as_of": "2026-05-23"}
+    mf = TurtleMarketFacts(metadata=src)
+    src["market_as_of"] = "MUTATED"
+    assert mf.metadata["market_as_of"] == "2026-05-23"

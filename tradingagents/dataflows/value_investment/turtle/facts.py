@@ -201,16 +201,19 @@ class TurtleMarketFacts:
     fields: dict[str, TurtleFactValue] = field(default_factory=dict)
     caveats: list[str] = field(default_factory=list)
     status: TurtleStatus = "complete"
+    metadata: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "fields", _copy_dict(self.fields))
         object.__setattr__(self, "caveats", _copy_list(self.caveats))
+        object.__setattr__(self, "metadata", _copy_dict(self.metadata))
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "fields": {key: value.to_dict() for key, value in self.fields.items()},
             "caveats": _copy_list(self.caveats),
             "status": self.status,
+            "metadata": _copy_dict(self.metadata),
         }
 
 
