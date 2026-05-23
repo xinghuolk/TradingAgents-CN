@@ -99,8 +99,9 @@ def normalize_currency(currency: str) -> str:
 
 1. `market_as_of = market_facts.metadata.get("market_as_of")`（由 `build_market_facts` 写入的日期串 `YYYY-MM-DD`；实时快照 = fetch date）。
    - **缺失策略（兼容旧 payload / 测试替身）**：若 `market_as_of` 为空，**用 fetch date（今天）作为 FX 锚点并追加一条 caveat**（"market_as_of 缺失，FX 已对齐拉取日"）。**严禁 fallback 到 `trade_date`**——那会违反 §3 的 as-of 约束（旧 trade_date 配当前快照）。选 fetch date 而非「跳过 FX 直接降级」，是为了不让缺元数据的旧对象在 FX 可用时被无谓降级。
-2. 收集 report + market 两侧 money fact 的币种集合（含 `report.historical` 各期的 money fact）→ `_collect_currencies(report, market_facts)`，归一化去重。
-3. `fx_rates, fx_rates_meta, fx_caveats = resolve_fx_rates(currencies, "CNY", market_as_of)`。
+2. 收集 report + market 两侧 money fact 的**归一化去重**币种集合（含 `report.historical` 各期的 money fact）→ `currencies = _collect_currencies(report, market_facts)`。
+3. **仅当 `len(currencies) >= 2` 时才拉 FX**：`fx_rates, fx_rates_meta, fx_caveats = resolve_fx_rates(currencies, "CNY", market_as_of)`；否则 `fx_rates, fx_rates_meta, fx_caveats = {}, {}, []`（**不拉、不加 caveat**）。
+   - **理由（关键，避免误降级）**：calculations 的 `_money_target_currency`（`calculations.py:80`）是**逐 formula group** 选 target——若某 group 归一后只有单一币种（如纯港币股 `net_profit`/`market_cap` 同为 HKD），它选 native HKD、**根本不需要 FX**。全局只有单一归一币种（无论 CNY 还是纯 HKD/USD）意味着所有 group 都统一币种、零跨币 → 不应拉 FX，更不应在 yfinance 失败时加「跨币降级」caveat 把本可计算的结果连累降级。≥2 种币种才意味着至少一个 group 会回退到 CNY target、确有 `*:CNY` 需求；此时 FX 失败的 caveat 才名副其实（对应 group 会经现成级联降级，详见 §8）。
 4. 若 `market_as_of` 与 `trade_date` 不一致，追加 snapshot caveat（§3）。
 5. 重建 report 注入 metadata：
 
@@ -126,15 +127,15 @@ report = TurtleReportFacts(
 
 `TurtleMarketFacts` 需新增 `metadata: dict[str, Any]` 字段（对齐 `TurtleReportFacts`）：`__post_init__` 深拷贝、`to_dict` 增加 `"metadata"` 键。**两处反序列化重建路径都必须透传 `metadata`**，否则 `market_as_of` / provider 会在该路径被丢、B.2/B.4 provenance 到不了分析师 prompt 与 Spec 4：
 - `turtle_analysis_tool._market_facts()`（强转分支）补传 `metadata`。
-- `value_analyst._plain_turtle_report_prompt()`（`value_analyst.py:192-196`）从 tool payload 重建 `TurtleMarketFacts` 时，须像 report 侧（行 187 `metadata=dict(report_metadata)`）一样补 `metadata=dict(_required_mapping(market_payload, "metadata"))`（`metadata` 现已在 `to_dict` 输出中，必有键）。
+- `value_analyst._plain_turtle_report_prompt()`（`value_analyst.py:192-196`）从 tool payload 重建 `TurtleMarketFacts` 时补 `metadata`，但用**可选读取**：`metadata=dict(market_payload.get("metadata") or {})`。**不**用 strict `_required_mapping`——`market.metadata` 是新增字段，旧 payload / 测试替身（如 `tests/unit/test_value_analyst_payload_propagation.py:66` 的 `"market": {"fields": {}, "caveats": []}`）没有该键，strict 会破坏向后兼容。report 侧保持原 strict 行为不变（report.metadata 一向必有）。
 
 ## 8. 失败处理与 status
 
 不新增 hard-fail，复用现成降级级联：
 
 - `_money_hm`（`calculations.py`）已 catch `to_hundred_million` 的 `(TypeError, ValueError, OverflowError)` → 缺 pair 的跨币 fact 自动进 `missing_inputs` → R / GG → `non_decisionable` → 整体降级。
-- Spec 3 仅在 `resolve_fx_rates` 失败时补**解释性 caveat**（"FX HKD:CNY 取数失败，跨币计算降级"），避免用户只看到泛化 missing input。
-- 同币种（A股 CNY → CNY）无需 FX → 不触发任何降级、不发网络。
+- Spec 3 仅在**确实需要 FX**（全局 ≥2 种归一币种，见 §6 step 3）且 `resolve_fx_rates` 失败时补**解释性 caveat**（"FX HKD:CNY 取数失败，跨币计算降级"），避免用户只看到泛化 missing input。
+- **单一归一币种（A股纯 CNY、港股纯 HKD、美股纯 USD）无需 FX → 不拉、不发网络、不加 caveat、不触发任何降级**——calculations 在该 group 选 native target 直接算出结果。
 
 ## 9. 测试策略
 
@@ -145,20 +146,21 @@ report = TurtleReportFacts(
   - `resolve_fx_rates`：多币种聚合；部分失败 → 对应 caveat + 成功项仍在 fx_rates。
   - `normalize_currency`：RMB/人民币→CNY、HK$/港币→HKD、US$/美元→USD、未知→upper。
 - **集成（`prepare_turtle_analysis_payload`）**：
-  - HK ticker + mock FX → `report.metadata["fx_rates"]` 含 `"HKD:CNY"`、`fx_rates_meta` 含 provenance、R 跨币算得出。
-  - FX 取数失败 → R `non_decisionable` + fx caveat 在场。
+  - **跨币（混币）**：`net_profit` CNY + `market_cap` HKD + mock FX → `report.metadata["fx_rates"]` 含 `"HKD:CNY"`、`fx_rates_meta` 含 provenance、R 跨币算得出。
+  - **纯 HKD 不拉 FX（防误降级回归）**：`net_profit` HKD + `market_cap` HKD（全局单一归一币种）→ **FX provider 完全不被调用**（patch `fetch_fx_rate`/`resolve_fx_rates` 断言未调用）、无 FX caveat、R 在 HKD 下算出；即便此时让 FX mock 抛错也不影响结果。
+  - FX 取数失败（混币场景）→ 依赖该 pair 的 R `non_decisionable` + fx caveat 在场。
   - `market_as_of` ≠ `trade_date` → snapshot caveat 在场。
   - `market_as_of` 缺失（构造无该 metadata 的 market facts）→ FX 锚定 fetch date、补「market_as_of 缺失」caveat、**不**用 trade_date。
 - **`calculations`**：构造 `net_profit` currency=`"HK$"` + `market_cap` currency=`"HKD"`（纯港币、无 fx_rates）→ `_money_fact_currencies` 归一为单一 `"HKD"` → `_money_target_currency` 返回 `"HKD"` → R 在 HKD 下算出、**不**因缺 FX 降级；对照组（未归一前的原始 `.upper()`）会误判多币——确保归一化生效。`net_profit` currency=`"RMB"` 单币 → target/unit 归一显示 `"CNY"`。
 - **`market_adapter`**：HK market_cap 的 `source_reference` 含 `provider=yfinance_hk` + `fetched_at`；**A股 `_fetch_turtle_market_data` 注入 `source="akshare.stock_individual_info_em"`** → market_cap source_reference 的 `provider` ≠ `unknown`；`TurtleMarketFacts.metadata["market_as_of"]` 写入。
-- **`value_analyst`**：用一段含 `market.metadata.market_as_of` 的 tool payload 调 `_plain_turtle_report_prompt` → 重建后的 `facts.market.metadata` 保留 `market_as_of`（回归保护：防止 market provenance 在分析师路径被丢）。
+- **`value_analyst`**：(a) 含 `market.metadata.market_as_of` 的 payload 调 `_plain_turtle_report_prompt` → 重建后 `facts.market.metadata` 保留 `market_as_of`（防 market provenance 在分析师路径被丢）；(b) **向后兼容**：market **无 `metadata` 键**的旧 payload 不报错、`facts.market.metadata == {}`（对应可选读取，见 §7）。
 - **`facts.py`**：`to_hundred_million` 归一化——currency `"RMB"` + target `"CNY"` 归一后同为 CNY → 不查 FX、直接免换算（不再误拼 `"RMB:CNY"`）；真正的 `HKD → CNY` 仍查 `fx_rates["HKD:CNY"]`；既有 FX 用例不回归。
 
 ## 10. 改动清单
 
 - **新增**
   - `tradingagents/dataflows/value_investment/turtle/fx.py`
-  - `tests/unit/dataflows/value_investment/turtle/test_turtle_fx.py`（按现有 turtle 测试目录就近放置）
+  - `tests/unit/test_turtle_fx.py`（与现有 `tests/unit/test_turtle_*.py` 扁平同级）
 - **修改**
   - `facts.py`：`normalize_currency()` helper；`to_hundred_million` pair 归一化；`TurtleMarketFacts` 增 `metadata` 字段（`__post_init__` + `to_dict`）。
   - `calculations.py`：`_money_fact_currencies`（行 75）改用 `normalize_currency`（详见 §5 High 修订）。`_fx_rates` 等不动。
