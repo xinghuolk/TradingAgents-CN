@@ -137,3 +137,36 @@ def test_payload_fx_success_keeps_report_status_complete():
     with patch.object(tat, "resolve_fx_rates", return_value=({"HKD:CNY": 0.9}, {"HKD:CNY": {}}, [])):
         out = _run(_report("CNY"), _market("HKD"))
     assert out["facts"]["report"]["status"] == "complete"
+
+
+def test_collect_currencies_ignores_non_formula_fields():
+    report = TurtleReportFacts(fields={
+        "net_profit": _money_fact("net_profit", 5e8, "HKD", "r"),
+        "revenue": _money_fact("revenue", 9e8, "USD", "rev"),  # not a formula input
+    })
+    market = TurtleMarketFacts(fields={"market_cap": _money_fact("market_cap", 1e10, "HKD", "m")})
+    assert tat._collect_currencies(report, market) == {"HKD"}
+
+
+def test_collect_currencies_skips_unreliable_money():
+    np_unreliable = TurtleFactValue(
+        name="net_profit",
+        value=MoneyAmount(value=5e8, currency="USD", unit="yuan", source_label="t",
+                          source_reference="r", reliability="display_only"),
+        source_label="t", source_reference="r", reliability="display_only",
+    )
+    report = TurtleReportFacts(fields={"net_profit": np_unreliable})
+    market = TurtleMarketFacts(fields={"market_cap": _money_fact("market_cap", 1e10, "HKD", "m")})
+    assert tat._collect_currencies(report, market) == {"HKD"}
+
+
+def test_payload_unrelated_currency_does_not_trigger_fx_or_degrade():
+    report = TurtleReportFacts(fields={
+        "net_profit": _money_fact("net_profit", 5e8, "HKD", "r"),
+        "revenue": _money_fact("revenue", 9e8, "USD", "rev"),
+    }, status="complete")
+    with patch.object(tat, "resolve_fx_rates") as rfx:
+        out = _run(report, _market("HKD"))
+    rfx.assert_not_called()
+    assert out["facts"]["report"]["status"] == "complete"
+    assert not any(("FX" in c or "取数失败" in c) for c in out["facts"]["report"]["caveats"])

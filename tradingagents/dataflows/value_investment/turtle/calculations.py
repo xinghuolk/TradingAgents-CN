@@ -7,6 +7,18 @@ from collections.abc import Iterable
 
 from .facts import FormulaResult, MoneyAmount, TurtleComputedSignals, TurtleFactValue, TurtleFacts, TurtleStatus, normalize_currency
 
+# FX 相关 money 字段：计算层实际会做跨币换算的字段集（_money_hm / _money_target_currency 的入参）。
+# turtle_analysis_tool._collect_currencies 据此收集需要解析 FX 的币种——新增/删除可换币字段时必须同步此集合。
+FX_RELEVANT_MONEY_FIELDS: frozenset[str] = frozenset({
+    "net_profit",
+    "market_cap",
+    "buyback_amount",
+    "operating_cash_flow",
+    "capex",
+    "cash",
+    "interest_bearing_debt",
+})
+
 
 def _field(facts: TurtleFacts, name: str) -> TurtleFactValue | None:
     return facts.report.fields.get(name) or facts.market.fields.get(name)
