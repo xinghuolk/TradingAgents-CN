@@ -91,6 +91,35 @@ def prepare_turtle_analysis_payload(
             holding_channel=holding_channel,
         )
     )
+
+    # --- Spec 3: FX 注入（锚定 market_as_of，绝不 fallback trade_date）---
+    fx_caveats: list[str] = []
+    currencies = _collect_currencies(report, market_facts)
+    if len(currencies) >= 2:
+        market_as_of = market_facts.metadata.get("market_as_of")
+        if not market_as_of:
+            market_as_of = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            fx_caveats.append("market_as_of 缺失，FX 已对齐拉取日")
+
+        fx_rates, fx_rates_meta, resolve_caveats = resolve_fx_rates(currencies, "CNY", market_as_of)
+        fx_caveats.extend(resolve_caveats)
+
+        if market_as_of != trade_date[:10]:
+            fx_caveats.append(
+                f"market_cap 为当前快照（as_of={market_as_of}），非 trade_date={trade_date} 当日历史值；FX 已对齐快照日期"
+            )
+    else:
+        fx_rates, fx_rates_meta = {}, {}
+
+    report = TurtleReportFacts(
+        fields=report.fields,
+        metadata={**report.metadata, "fx_rates": fx_rates, "fx_rates_meta": fx_rates_meta},
+        caveats=[*report.caveats, *fx_caveats],
+        status=report.status,
+        historical=report.historical,
+    )
+    # --- end Spec 3 ---
+
     facts = TurtleFacts(
         context=context,
         report=report,
