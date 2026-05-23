@@ -61,6 +61,19 @@ def default_holding_channel(market: str) -> str:
     return "unknown"
 
 
+def normalize_currency(currency: str) -> str:
+    """把币种别名归一到 ISO 码（CNY/HKD/USD）；未知币种回退 .upper()。"""
+    raw = str(currency or "").strip()
+    upper = raw.upper()
+    if upper in {"RMB", "CNY"} or raw in {"人民币", "元"}:
+        return "CNY"
+    if upper in {"HKD", "HK$"} or raw in {"港币", "港元"}:
+        return "HKD"
+    if upper in {"USD", "US$"} or raw in {"美元"}:
+        return "USD"
+    return upper
+
+
 @dataclass(frozen=True)
 class MoneyAmount:
     value: float

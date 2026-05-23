@@ -11,6 +11,7 @@ from tradingagents.dataflows.value_investment.turtle.facts import (
     TurtleRunContext,
     infer_turtle_period_end,
     merge_status,
+    normalize_currency,
 )
 
 
@@ -232,3 +233,13 @@ class TestTurtleReportFactsHistorical:
         parent = TurtleReportFacts(historical={"2023-12-31": child})
         child.caveats.append("leaked")
         assert parent.historical["2023-12-31"].caveats == ["original"]
+
+
+@pytest.mark.parametrize("raw,expected", [
+    ("RMB", "CNY"), ("rmb", "CNY"), ("CNY", "CNY"), ("人民币", "CNY"), ("元", "CNY"),
+    ("HKD", "HKD"), ("HK$", "HKD"), ("港币", "HKD"), ("港元", "HKD"),
+    ("USD", "USD"), ("US$", "USD"), ("美元", "USD"),
+    ("EUR", "EUR"), ("  hkd  ", "HKD"),
+])
+def test_normalize_currency_aliases(raw, expected):
+    assert normalize_currency(raw) == expected
