@@ -94,3 +94,14 @@ def test_resolve_fx_rates_partial_failure_adds_caveat(monkeypatch):
     rates, meta, caveats = fxmod.resolve_fx_rates({"HKD", "USD"}, "CNY", "2026-05-23")
     assert rates == {"HKD:CNY": 0.9}
     assert any("USD:CNY" in c for c in caveats)
+
+
+def test_fx_helpers_exported_from_package():
+    from tradingagents.dataflows.value_investment.turtle import (
+        fetch_fx_rate,
+        normalize_currency,
+        resolve_fx_rates,
+    )
+    assert callable(fetch_fx_rate)
+    assert callable(resolve_fx_rates)
+    assert normalize_currency("RMB") == "CNY"
