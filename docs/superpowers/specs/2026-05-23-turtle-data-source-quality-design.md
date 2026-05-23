@@ -88,15 +88,17 @@ def normalize_currency(currency: str) -> str:
     # 其余 → currency.upper()
 ```
 
-- `to_hundred_million` 拼 pair 前对 `self.currency` 与 `target_currency` 归一化（对 `to_hundred_million` 的唯一改动）。
+- `to_hundred_million` 拼 pair 前对 `self.currency` 与 `target_currency` 归一化（对 `to_hundred_million` 的改动）。
 - `resolve_fx_rates` 与 `prepare_turtle_analysis_payload` 的币种收集复用同一函数。
-- **不**修改各 fact 构造点的 currency 字段（避免大面积 ripple）；归一化只发生在比较 / pair 拼接处。
+- **`calculations.py::_money_fact_currencies`（行 75）必须改用 `normalize_currency`，不能再用原始 `fact.value.currency.upper()`。** 否则 `"HK$"` 与 `"HKD"` 会被收成两种币 → `_money_target_currency`（行 80-84）判定为多币 → 强制 target=CNY → 纯 HKD 股的 `net_profit`/`market_cap` 双双触发 FX；一旦 FX 拉取失败，本可在 HKD 下算出的 R/GG 被错误降级。同理 `"RMB"` 单币种归一后 = `"CNY"`，`_money_target_currency` 返回 `"CNY"` → FormulaResult.unit 显示与已归一金额一致（避免「unit 显示 RMB 但金额已是 CNY」的错位）。这是本 Spec 对 `calculations.py` 的**唯一**改动；`_fx_rates` 等其余逻辑不动。
+- **不**修改各 fact 构造点的 currency 字段（避免大面积 ripple）；归一化只发生在比较 / pair 拼接 / 币种收集处。
 
 ## 6. 数据流与注入
 
 `prepare_turtle_analysis_payload` 内（build report + market facts 之后、构 TurtleFacts 之前）：
 
 1. `market_as_of = market_facts.metadata.get("market_as_of")`（由 `build_market_facts` 写入的日期串 `YYYY-MM-DD`；实时快照 = fetch date）。
+   - **缺失策略（兼容旧 payload / 测试替身）**：若 `market_as_of` 为空，**用 fetch date（今天）作为 FX 锚点并追加一条 caveat**（"market_as_of 缺失，FX 已对齐拉取日"）。**严禁 fallback 到 `trade_date`**——那会违反 §3 的 as-of 约束（旧 trade_date 配当前快照）。选 fetch date 而非「跳过 FX 直接降级」，是为了不让缺元数据的旧对象在 FX 可用时被无谓降级。
 2. 收集 report + market 两侧 money fact 的币种集合（含 `report.historical` 各期的 money fact）→ `_collect_currencies(report, market_facts)`，归一化去重。
 3. `fx_rates, fx_rates_meta, fx_caveats = resolve_fx_rates(currencies, "CNY", market_as_of)`。
 4. 若 `market_as_of` 与 `trade_date` 不一致，追加 snapshot caveat（§3）。
@@ -119,9 +121,12 @@ report = TurtleReportFacts(
 ## 7. 溯源标注（B.2 + B.4）
 
 - **B.2 市场**：`build_market_facts` 新增 `provider` 参数（HK 走 `info["source"]` 如 `yfinance_hk`；A股走对应 provider，缺失则 `"unknown"`），并计算 `market_as_of` + `fetched_at`。market_cap 等 money fact 的 `source_reference` 改为 `"market_data.market_cap; provider=yfinance_hk; fetched_at=<ISO>"`。`market_as_of` 写入 `TurtleMarketFacts.metadata`。行情是实时快照，as-of 语义即 fetch date。
+  - **A股 provider 必须落地**：`_fetch_market_data_structured`（`value_investment_tool.py:553`）当前返回的 dict **无 `source` 键**，若实现只在 market_adapter 读 `market_data["source"]`，A股 主路径会变成 `provider="unknown"`、B.2 形同虚设。因此 **`market_adapter._fetch_turtle_market_data` 的 A股 分支在拿到 structured data 后须 `data.setdefault("source", "akshare.stock_individual_info_em")`**（即 `_fetch_market_data_structured` 实际调用的 endpoint），再交给 `build_market_facts`。不改 `value_investment_tool.py`，把 provenance 契约收在 turtle 边界内。
 - **B.4 FX**：provenance 进 `metadata["fx_rates_meta"]`（provider / as_of / fetched_at / rate），供 Spec 4 中间页展示；`to_hundred_million` 现有的 `"; FX HKD:CNY=0.92"` source_reference 行保留。
 
-`TurtleMarketFacts` 需新增 `metadata: dict[str, Any]` 字段（对齐 `TurtleReportFacts`）：`__post_init__` 深拷贝、`to_dict` 增加 `"metadata"` 键、`turtle_analysis_tool._market_facts()` 的强转分支补传 `metadata`。
+`TurtleMarketFacts` 需新增 `metadata: dict[str, Any]` 字段（对齐 `TurtleReportFacts`）：`__post_init__` 深拷贝、`to_dict` 增加 `"metadata"` 键。**两处反序列化重建路径都必须透传 `metadata`**，否则 `market_as_of` / provider 会在该路径被丢、B.2/B.4 provenance 到不了分析师 prompt 与 Spec 4：
+- `turtle_analysis_tool._market_facts()`（强转分支）补传 `metadata`。
+- `value_analyst._plain_turtle_report_prompt()`（`value_analyst.py:192-196`）从 tool payload 重建 `TurtleMarketFacts` 时，须像 report 侧（行 187 `metadata=dict(report_metadata)`）一样补 `metadata=dict(_required_mapping(market_payload, "metadata"))`（`metadata` 现已在 `to_dict` 输出中，必有键）。
 
 ## 8. 失败处理与 status
 
@@ -143,7 +148,10 @@ report = TurtleReportFacts(
   - HK ticker + mock FX → `report.metadata["fx_rates"]` 含 `"HKD:CNY"`、`fx_rates_meta` 含 provenance、R 跨币算得出。
   - FX 取数失败 → R `non_decisionable` + fx caveat 在场。
   - `market_as_of` ≠ `trade_date` → snapshot caveat 在场。
-- **`market_adapter`**：market_cap 的 `source_reference` 含 `provider` + `fetched_at`；`TurtleMarketFacts.metadata["market_as_of"]` 写入。
+  - `market_as_of` 缺失（构造无该 metadata 的 market facts）→ FX 锚定 fetch date、补「market_as_of 缺失」caveat、**不**用 trade_date。
+- **`calculations`**：构造 `net_profit` currency=`"HK$"` + `market_cap` currency=`"HKD"`（纯港币、无 fx_rates）→ `_money_fact_currencies` 归一为单一 `"HKD"` → `_money_target_currency` 返回 `"HKD"` → R 在 HKD 下算出、**不**因缺 FX 降级；对照组（未归一前的原始 `.upper()`）会误判多币——确保归一化生效。`net_profit` currency=`"RMB"` 单币 → target/unit 归一显示 `"CNY"`。
+- **`market_adapter`**：HK market_cap 的 `source_reference` 含 `provider=yfinance_hk` + `fetched_at`；**A股 `_fetch_turtle_market_data` 注入 `source="akshare.stock_individual_info_em"`** → market_cap source_reference 的 `provider` ≠ `unknown`；`TurtleMarketFacts.metadata["market_as_of"]` 写入。
+- **`value_analyst`**：用一段含 `market.metadata.market_as_of` 的 tool payload 调 `_plain_turtle_report_prompt` → 重建后的 `facts.market.metadata` 保留 `market_as_of`（回归保护：防止 market provenance 在分析师路径被丢）。
 - **`facts.py`**：`to_hundred_million` 归一化——currency `"RMB"` + target `"CNY"` 归一后同为 CNY → 不查 FX、直接免换算（不再误拼 `"RMB:CNY"`）；真正的 `HKD → CNY` 仍查 `fx_rates["HKD:CNY"]`；既有 FX 用例不回归。
 
 ## 10. 改动清单
@@ -153,12 +161,12 @@ report = TurtleReportFacts(
   - `tests/unit/dataflows/value_investment/turtle/test_turtle_fx.py`（按现有 turtle 测试目录就近放置）
 - **修改**
   - `facts.py`：`normalize_currency()` helper；`to_hundred_million` pair 归一化；`TurtleMarketFacts` 增 `metadata` 字段（`__post_init__` + `to_dict`）。
-  - `tools/turtle_analysis_tool.py`：`prepare_turtle_analysis_payload` 注入 FX；`_market_facts()` 强转补传 `metadata`。
-  - `market_adapter.py`：`build_market_facts` 增 `provider` 参数 + `market_as_of` / `fetched_at`；source_reference 增 provider/timestamp；HK 路径透传 `info["source"]`。
+  - `calculations.py`：`_money_fact_currencies`（行 75）改用 `normalize_currency`（详见 §5 High 修订）。`_fx_rates` 等不动。
+  - `tools/turtle_analysis_tool.py`：`prepare_turtle_analysis_payload` 注入 FX（含 `market_as_of` 缺失策略）；`_market_facts()` 强转补传 `metadata`。
+  - `agents/analysts/value_analyst.py`：`_plain_turtle_report_prompt`（行 192-196）重建 `TurtleMarketFacts` 时补传 `metadata`。
+  - `market_adapter.py`：`build_market_facts` 增 `provider` 参数 + `market_as_of` / `fetched_at`；source_reference 增 provider/timestamp；HK 路径透传 `info["source"]`；`_fetch_turtle_market_data` A股 分支 `setdefault("source", "akshare.stock_individual_info_em")`。
   - `turtle/__init__.py`：按需导出 `fetch_fx_rate` / `resolve_fx_rates` / `normalize_currency`。
   - 既有 turtle 测试：market facts `to_dict` 新增 `metadata` 键为 additive，更新断言。
-- **不动**
-  - `calculations.py`（`_fx_rates` 已读 `metadata["fx_rates"]`，级联现成）。
 
 ## 11. 与其他 Spec 的关系
 
