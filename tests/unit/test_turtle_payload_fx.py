@@ -106,3 +106,21 @@ def test_market_facts_coercion_preserves_metadata():
 
     mf = tat._market_facts(_Obj())
     assert mf.metadata == {"market_as_of": "2026-05-23"}
+
+
+def test_payload_historical_fx_caveat_when_multi_currency_with_history():
+    hist = {"2024-12-31": TurtleReportFacts(fields={"net_profit": _money_fact("net_profit", 4e8, "CNY", "r24")})}
+    report = TurtleReportFacts(
+        fields={"net_profit": _money_fact("net_profit", 5e8, "CNY", "report.net_profit")},
+        status="complete",
+        historical=hist,
+    )
+    with patch.object(tat, "resolve_fx_rates", return_value=({"HKD:CNY": 0.9}, {"HKD:CNY": {}}, [])):
+        out = _run(report, _market("HKD"))
+    assert any("历史各期" in c for c in out["facts"]["report"]["caveats"])
+
+
+def test_payload_no_historical_fx_caveat_when_no_history():
+    with patch.object(tat, "resolve_fx_rates", return_value=({"HKD:CNY": 0.9}, {"HKD:CNY": {}}, [])):
+        out = _run(_report("CNY"), _market("HKD"))  # _report has no historical
+    assert not any("历史各期" in c for c in out["facts"]["report"]["caveats"])

@@ -109,6 +109,11 @@ def prepare_turtle_analysis_payload(
             fx_caveats.append(
                 f"market_cap 为当前快照（as_of={market_as_of}），非 trade_date={trade_date} 当日历史值；FX 已对齐快照日期"
             )
+
+        if report.historical and fx_rates:
+            fx_caveats.append(
+                f"历史各期 money 统一使用快照日 FX（as_of={market_as_of}）换算"
+            )
     else:
         fx_rates, fx_rates_meta = {}, {}
 
