@@ -97,13 +97,13 @@ def normalize_currency(currency: str) -> str:
 
 `prepare_turtle_analysis_payload` 内（build report + market facts 之后、构 TurtleFacts 之前）：
 
-1. `market_as_of = market_facts.metadata.get("market_as_of")`（由 `build_market_facts` 写入的日期串 `YYYY-MM-DD`；实时快照 = fetch date）。
-   - **缺失策略（兼容旧 payload / 测试替身）**：若 `market_as_of` 为空，**用 fetch date（今天）作为 FX 锚点并追加一条 caveat**（"market_as_of 缺失，FX 已对齐拉取日"）。**严禁 fallback 到 `trade_date`**——那会违反 §3 的 as-of 约束（旧 trade_date 配当前快照）。选 fetch date 而非「跳过 FX 直接降级」，是为了不让缺元数据的旧对象在 FX 可用时被无谓降级。
-2. 收集 report + market 两侧 money fact 的**归一化去重**币种集合（含 `report.historical` 各期的 money fact）→ `currencies = _collect_currencies(report, market_facts)`。
-3. **仅当 `len(currencies) >= 2` 时才拉 FX**：`fx_rates, fx_rates_meta, fx_caveats = resolve_fx_rates(currencies, "CNY", market_as_of)`；否则 `fx_rates, fx_rates_meta, fx_caveats = {}, {}, []`（**不拉、不加 caveat**）。
-   - **理由（关键，避免误降级）**：calculations 的 `_money_target_currency`（`calculations.py:80`）是**逐 formula group** 选 target——若某 group 归一后只有单一币种（如纯港币股 `net_profit`/`market_cap` 同为 HKD），它选 native HKD、**根本不需要 FX**。全局只有单一归一币种（无论 CNY 还是纯 HKD/USD）意味着所有 group 都统一币种、零跨币 → 不应拉 FX，更不应在 yfinance 失败时加「跨币降级」caveat 把本可计算的结果连累降级。≥2 种币种才意味着至少一个 group 会回退到 CNY target、确有 `*:CNY` 需求；此时 FX 失败的 caveat 才名副其实（对应 group 会经现成级联降级，详见 §8）。
-4. 若 `market_as_of` 与 `trade_date` 不一致，追加 snapshot caveat（§3）。
-5. 重建 report 注入 metadata：
+1. 收集 report + market 两侧 money fact 的**归一化去重**币种集合（含 `report.historical` 各期的 money fact）→ `currencies = _collect_currencies(report, market_facts)`。
+2. **FX 及其所有 caveat 一律门控于 `len(currencies) >= 2`**（单一归一币种——纯 CNY / 纯 HKD / 纯 USD——直接置 `fx_rates, fx_rates_meta = {}, {}`、不读 `market_as_of`、不拉 FX、不加任何 FX caveat）。门控内按序：
+   - **a. 读 as-of + 缺失策略**：`market_as_of = market_facts.metadata.get("market_as_of")`（`build_market_facts` 写入的 `YYYY-MM-DD`，实时快照 = fetch date）。若为空 → **用 fetch date（今天）作为 FX 锚点并追加 caveat**（"market_as_of 缺失，FX 已对齐拉取日"）；**严禁 fallback 到 `trade_date`**（违反 §3 as-of 约束）。
+   - **b. 拉 FX**：`fx_rates, fx_rates_meta, resolve_caveats = resolve_fx_rates(currencies, "CNY", market_as_of)`，并入 caveats。
+   - **c. snapshot caveat**：若 `market_as_of != trade_date[:10]` → 追加（"market_cap 为当前快照... 非 trade_date... FX 已对齐快照日期"，§3）。
+   - **理由（关键，避免误降级 + 避免 FX 噪声）**：calculations 的 `_money_target_currency`（`calculations.py:80`）逐 formula group 选 target——若某 group 归一后单一币种（如纯港币股 `net_profit`/`market_cap` 同为 HKD）选 native target、**根本不需要 FX**。全局单一归一币种 ⇒ 所有 group 统一币种、零跨币 → 不拉 FX，更不应在 yfinance 失败时加「跨币降级」caveat 连累本可计算的结果。**这些 caveat（缺失 as-of / 失败 / snapshot）全是 FX 语义的（文本含「FX 已对齐…」），对单一币种 payload 无意义**，故与 FX 一并门控；`market_as_of` 仅被 `resolve_fx_rates` 消费，单币时不读、其缺失也无关。≥2 种币种才意味着至少一个 group 回退 CNY target、确有 `*:CNY` 需求，caveat 才名副其实（对应 group 经现成级联降级，详见 §8）。
+3. 重建 report 注入 metadata（**始终执行**，单币时 fx_rates/fx_rates_meta 为 `{}`）：
 
 ```python
 report = TurtleReportFacts(
@@ -115,7 +115,7 @@ report = TurtleReportFacts(
 )
 ```
 
-6. 照旧构 `TurtleFacts` + `compute_turtle_signals`。
+4. 照旧构 `TurtleFacts` + `compute_turtle_signals`。
 
 `report.historical` 各期的 money 也用同一 `market_as_of` 的 FX 换算（`_money_hm_report_3y_avg` 走 `_fx_rates(facts)` 读同一 `fx_rates`）——与 as-of 决策一致；加一句 caveat 说明历史各期统一用快照日 FX。
 
