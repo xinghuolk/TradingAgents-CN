@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from typing import Annotated, Any
 
 from langchain_core.tools import tool
 
 from tradingagents.dataflows.value_investment.turtle import (
+    MoneyAmount,
+    TurtleFactValue,
     TurtleFacts,
     TurtleMarketFacts,
     TurtleReportFacts,
@@ -16,6 +19,8 @@ from tradingagents.dataflows.value_investment.turtle import (
     get_turtle_market_facts,
     get_turtle_report_facts,
     merge_status,
+    normalize_currency,
+    resolve_fx_rates,
 )
 
 
@@ -39,6 +44,23 @@ def _market_facts(value: Any) -> TurtleMarketFacts:
         caveats=getattr(value, "caveats", []) or [],
         status=getattr(value, "status", "complete"),
     )
+
+
+def _collect_currencies(report: TurtleReportFacts, market_facts: TurtleMarketFacts) -> set[str]:
+    """收集 report+market（含 historical 各期）money fact 的归一化去重币种集合。"""
+    currencies: set[str] = set()
+
+    def _scan(fields: dict[str, TurtleFactValue]) -> None:
+        for fact in fields.values():
+            value = getattr(fact, "value", None)
+            if isinstance(value, MoneyAmount):
+                currencies.add(normalize_currency(value.currency))
+
+    _scan(report.fields)
+    _scan(market_facts.fields)
+    for hist in report.historical.values():
+        _scan(hist.fields)
+    return currencies
 
 
 def prepare_turtle_analysis_payload(
