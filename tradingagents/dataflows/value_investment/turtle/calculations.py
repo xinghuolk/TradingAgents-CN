@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 from collections.abc import Iterable
 
-from .facts import FormulaResult, MoneyAmount, TurtleComputedSignals, TurtleFactValue, TurtleFacts, TurtleStatus
+from .facts import FormulaResult, MoneyAmount, TurtleComputedSignals, TurtleFactValue, TurtleFacts, TurtleStatus, normalize_currency
 
 
 def _field(facts: TurtleFacts, name: str) -> TurtleFactValue | None:
@@ -72,7 +72,7 @@ def _money_fact_currencies(facts: TurtleFacts, names: Iterable[str]) -> set[str]
                 continue
             if not math.isfinite(amount.value):
                 continue
-            currencies.add(fact.value.currency.upper())
+            currencies.add(normalize_currency(fact.value.currency))
             break
     return currencies
 
