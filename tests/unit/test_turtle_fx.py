@@ -98,6 +98,7 @@ def test_resolve_fx_rates_partial_failure_adds_caveat(monkeypatch):
 
 def test_fx_helpers_exported_from_package():
     from tradingagents.dataflows.value_investment.turtle import (
+        FxQuote,
         fetch_fx_rate,
         normalize_currency,
         resolve_fx_rates,
@@ -105,3 +106,5 @@ def test_fx_helpers_exported_from_package():
     assert callable(fetch_fx_rate)
     assert callable(resolve_fx_rates)
     assert normalize_currency("RMB") == "CNY"
+    q = FxQuote(pair="HKD:CNY", rate=0.9, provider="yfinance", as_of="2026-05-23", fetched_at="t")
+    assert q.pair == "HKD:CNY"

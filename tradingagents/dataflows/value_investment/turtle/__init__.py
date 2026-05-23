@@ -23,6 +23,7 @@ from .report_adapter import build_report_facts_from_extraction, get_turtle_repor
 
 __all__ = [
     "FormulaResult",
+    "FxQuote",
     "MoneyAmount",
     "TurtleComputedSignals",
     "TurtleFactValue",
@@ -34,7 +35,6 @@ __all__ = [
     "build_non_decisionable_report",
     "build_report_facts_from_extraction",
     "build_turtle_decision_prompt",
-    "FxQuote",
     "compute_turtle_signals",
     "default_holding_channel",
     "default_tax_rate",
