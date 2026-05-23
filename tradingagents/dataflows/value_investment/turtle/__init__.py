@@ -1,6 +1,6 @@
 """Turtle v0.15 value-investment flow helpers."""
 
-from .calculations import FX_RELEVANT_MONEY_FIELDS, compute_turtle_signals
+from .calculations import FX_RELEVANT_MONEY_FIELDS, collect_fx_currencies, compute_turtle_signals
 from .decision import build_non_decisionable_report, build_turtle_decision_prompt
 from .facts import (
     FormulaResult,
@@ -25,6 +25,7 @@ __all__ = [
     "FX_RELEVANT_MONEY_FIELDS",
     "FormulaResult",
     "FxQuote",
+    "collect_fx_currencies",
     "MoneyAmount",
     "TurtleComputedSignals",
     "TurtleFactValue",

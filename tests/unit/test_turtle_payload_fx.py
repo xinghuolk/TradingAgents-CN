@@ -1,4 +1,5 @@
 from tradingagents.tools import turtle_analysis_tool as tat
+from tradingagents.dataflows.value_investment.turtle import collect_fx_currencies
 from tradingagents.dataflows.value_investment.turtle.facts import (
     MoneyAmount,
     TurtleFactValue,
@@ -19,7 +20,7 @@ def _money_fact(name, value, currency, ref):
 def test_collect_currencies_normalizes_and_dedups():
     report = TurtleReportFacts(fields={"net_profit": _money_fact("net_profit", 5e8, "HK$", "r")})
     market = TurtleMarketFacts(fields={"market_cap": _money_fact("market_cap", 1e10, "HKD", "m")})
-    assert tat._collect_currencies(report, market) == {"HKD"}
+    assert collect_fx_currencies(report, market) == {"HKD"}
 
 
 import json
@@ -145,7 +146,7 @@ def test_collect_currencies_ignores_non_formula_fields():
         "revenue": _money_fact("revenue", 9e8, "USD", "rev"),  # not a formula input
     })
     market = TurtleMarketFacts(fields={"market_cap": _money_fact("market_cap", 1e10, "HKD", "m")})
-    assert tat._collect_currencies(report, market) == {"HKD"}
+    assert collect_fx_currencies(report, market) == {"HKD"}
 
 
 def test_collect_currencies_skips_unreliable_money():
@@ -157,7 +158,31 @@ def test_collect_currencies_skips_unreliable_money():
     )
     report = TurtleReportFacts(fields={"net_profit": np_unreliable})
     market = TurtleMarketFacts(fields={"market_cap": _money_fact("market_cap", 1e10, "HKD", "m")})
-    assert tat._collect_currencies(report, market) == {"HKD"}
+    assert collect_fx_currencies(report, market) == {"HKD"}
+
+
+def test_collect_fx_currencies_report_priority_over_market_fallback():
+    # 计算层 report 优先：同名 market_cap 在 report=HKD 时，market fallback=USD 应被忽略
+    report = TurtleReportFacts(fields={"market_cap": _money_fact("market_cap", 1e10, "HKD", "r")})
+    market = TurtleMarketFacts(fields={"market_cap": _money_fact("market_cap", 2e10, "USD", "m")})
+    assert collect_fx_currencies(report, market) == {"HKD"}
+
+
+def test_payload_market_fallback_currency_does_not_trigger_fx():
+    report = TurtleReportFacts(fields={
+        "net_profit": _money_fact("net_profit", 5e8, "HKD", "rnp"),
+        "market_cap": _money_fact("market_cap", 1e10, "HKD", "rmc"),  # report market_cap=HKD (calc uses this)
+    }, status="complete")
+    market = TurtleMarketFacts(
+        fields={"market_cap": _money_fact("market_cap", 2e10, "USD", "mmc")},  # market fallback=USD
+        status="complete",
+        metadata={"market_as_of": "2026-05-23"},
+    )
+    with patch.object(tat, "resolve_fx_rates") as rfx:
+        out = _run(report, market)
+    rfx.assert_not_called()                                  # USD fallback must NOT trigger FX
+    assert out["facts"]["report"]["status"] == "complete"    # not falsely degraded
+    assert not any(("FX" in c or "取数失败" in c) for c in out["facts"]["report"]["caveats"])
 
 
 def test_payload_unrelated_currency_does_not_trigger_fx_or_degrade():

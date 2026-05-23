@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 from collections.abc import Iterable
 
-from .facts import FormulaResult, MoneyAmount, TurtleComputedSignals, TurtleFactValue, TurtleFacts, TurtleStatus, normalize_currency
+from .facts import FormulaResult, MoneyAmount, TurtleComputedSignals, TurtleFactValue, TurtleFacts, TurtleMarketFacts, TurtleReportFacts, TurtleStatus, normalize_currency
 
 # FX 相关 money 字段：计算层实际会做跨币换算的字段集（_money_hm / _money_target_currency 的入参）。
 # turtle_analysis_tool._collect_currencies 据此收集需要解析 FX 的币种——新增/删除可换币字段时必须同步此集合。
@@ -66,26 +66,52 @@ def _fx_rates(facts: TurtleFacts) -> dict[str, float]:
     return rates
 
 
+def _usable_money_currency(fact: TurtleFactValue | None) -> str | None:
+    """fact 若为 reliable、有限数值且可换算的 MoneyAmount，返回其归一化币种；否则 None。
+    与 _money_hm / _money_fact_currencies 的可用性口径一致。"""
+    if fact is None or not isinstance(fact.value, MoneyAmount):
+        return None
+    if fact.reliability != "reliable" or fact.value.reliability != "reliable":
+        return None
+    inner = fact.value.value
+    if isinstance(inner, bool) or not isinstance(inner, (int, float)) or not math.isfinite(float(inner)):
+        return None
+    try:
+        amount = fact.value.to_hundred_million(target_currency=fact.value.currency, fx_rates={})
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if not math.isfinite(amount.value):
+        return None
+    return normalize_currency(fact.value.currency)
+
+
 def _money_fact_currencies(facts: TurtleFacts, names: Iterable[str]) -> set[str]:
     currencies: set[str] = set()
     for name in names:
         for fact in _field_candidates(facts, name):
-            if not isinstance(fact.value, MoneyAmount):
-                continue
-            if fact.reliability != "reliable" or fact.value.reliability != "reliable":
-                continue
-            if isinstance(fact.value.value, bool) or not isinstance(fact.value.value, (int, float)):
-                continue
-            if not math.isfinite(float(fact.value.value)):
-                continue
-            try:
-                amount = fact.value.to_hundred_million(target_currency=fact.value.currency, fx_rates={})
-            except (TypeError, ValueError, OverflowError):
-                continue
-            if not math.isfinite(amount.value):
-                continue
-            currencies.add(normalize_currency(fact.value.currency))
-            break
+            cur = _usable_money_currency(fact)
+            if cur is not None:
+                currencies.add(cur)
+                break
+    return currencies
+
+
+def collect_fx_currencies(report: TurtleReportFacts, market: TurtleMarketFacts) -> set[str]:
+    """payload 层据此决定需解析 FX 的币种。对每个 FX_RELEVANT_MONEY_FIELDS：
+    当前期按 report 优先取第一个可用候选（与计算层 _field_candidates + break 一致，
+    同名 market fallback 仅在 report 不可用时才采用）；并纳入 historical 各期（report-only）。
+    无关字段 / 同名 market fallback 的币种不会触发无用 FX。"""
+    currencies: set[str] = set()
+    for name in FX_RELEVANT_MONEY_FIELDS:
+        cur = _usable_money_currency(report.fields.get(name))
+        if cur is None:
+            cur = _usable_money_currency(market.fields.get(name))
+        if cur is not None:
+            currencies.add(cur)
+        for hist in report.historical.values():
+            hist_cur = _usable_money_currency(hist.fields.get(name))
+            if hist_cur is not None:
+                currencies.add(hist_cur)
     return currencies
 
 

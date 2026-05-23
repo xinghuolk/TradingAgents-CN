@@ -3,25 +3,21 @@
 from __future__ import annotations
 
 import json
-import math
 from datetime import datetime, timezone
 from typing import Annotated, Any
 
 from langchain_core.tools import tool
 
 from tradingagents.dataflows.value_investment.turtle import (
-    FX_RELEVANT_MONEY_FIELDS,
-    MoneyAmount,
-    TurtleFactValue,
     TurtleFacts,
     TurtleMarketFacts,
     TurtleReportFacts,
     TurtleRunContext,
+    collect_fx_currencies,
     compute_turtle_signals,
     get_turtle_market_facts,
     get_turtle_report_facts,
     merge_status,
-    normalize_currency,
     resolve_fx_rates,
 )
 
@@ -47,34 +43,6 @@ def _market_facts(value: Any) -> TurtleMarketFacts:
         status=getattr(value, "status", "complete"),
         metadata=getattr(value, "metadata", {}) or {},
     )
-
-
-def _collect_currencies(report: TurtleReportFacts, market_facts: TurtleMarketFacts) -> set[str]:
-    """收集计算层实际会做跨币换算的 money 字段的归一化去重币种集合。
-    仅扫描 FX_RELEVANT_MONEY_FIELDS 中、reliable 且有限数值的 MoneyAmount（含 historical 各期），
-    与 calculations._money_fact_currencies 的过滤口径一致——无关/不可计算字段不应触发 FX。
-    """
-    currencies: set[str] = set()
-
-    def _scan(fields: dict[str, TurtleFactValue]) -> None:
-        for name, fact in fields.items():
-            if name not in FX_RELEVANT_MONEY_FIELDS:
-                continue
-            value = getattr(fact, "value", None)
-            if not isinstance(value, MoneyAmount):
-                continue
-            if getattr(fact, "reliability", "reliable") != "reliable" or value.reliability != "reliable":
-                continue
-            inner = value.value
-            if isinstance(inner, bool) or not isinstance(inner, (int, float)) or not math.isfinite(float(inner)):
-                continue
-            currencies.add(normalize_currency(value.currency))
-
-    _scan(report.fields)
-    _scan(market_facts.fields)
-    for hist in report.historical.values():
-        _scan(hist.fields)
-    return currencies
 
 
 def prepare_turtle_analysis_payload(
@@ -109,7 +77,7 @@ def prepare_turtle_analysis_payload(
     # --- Spec 3: FX 注入（锚定 market_as_of，绝不 fallback trade_date）---
     fx_caveats: list[str] = []
     fx_failed = False
-    currencies = _collect_currencies(report, market_facts)
+    currencies = collect_fx_currencies(report, market_facts)
     if len(currencies) >= 2:
         market_as_of = market_facts.metadata.get("market_as_of")
         if not market_as_of:
