@@ -124,3 +124,16 @@ def test_payload_no_historical_fx_caveat_when_no_history():
     with patch.object(tat, "resolve_fx_rates", return_value=({"HKD:CNY": 0.9}, {"HKD:CNY": {}}, [])):
         out = _run(_report("CNY"), _market("HKD"))  # _report has no historical
     assert not any("历史各期" in c for c in out["facts"]["report"]["caveats"])
+
+
+def test_payload_fx_failure_degrades_report_status():
+    with patch.object(tat, "resolve_fx_rates", return_value=({}, {}, ["FX HKD:CNY 取数失败，跨币计算降级"])):
+        out = _run(_report("CNY"), _market("HKD"))
+    assert out["facts"]["report"]["status"] == "degraded"
+    assert out["facts"]["status"] in ("degraded", "non_decisionable")
+
+
+def test_payload_fx_success_keeps_report_status_complete():
+    with patch.object(tat, "resolve_fx_rates", return_value=({"HKD:CNY": 0.9}, {"HKD:CNY": {}}, [])):
+        out = _run(_report("CNY"), _market("HKD"))
+    assert out["facts"]["report"]["status"] == "complete"

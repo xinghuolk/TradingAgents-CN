@@ -95,6 +95,7 @@ def prepare_turtle_analysis_payload(
 
     # --- Spec 3: FX 注入（锚定 market_as_of，绝不 fallback trade_date）---
     fx_caveats: list[str] = []
+    fx_failed = False
     currencies = _collect_currencies(report, market_facts)
     if len(currencies) >= 2:
         market_as_of = market_facts.metadata.get("market_as_of")
@@ -104,6 +105,7 @@ def prepare_turtle_analysis_payload(
 
         fx_rates, fx_rates_meta, resolve_caveats = resolve_fx_rates(currencies, "CNY", market_as_of)
         fx_caveats.extend(resolve_caveats)
+        fx_failed = bool(resolve_caveats)
 
         if market_as_of != trade_date[:10]:
             fx_caveats.append(
@@ -121,7 +123,7 @@ def prepare_turtle_analysis_payload(
         fields=report.fields,
         metadata={**report.metadata, "fx_rates": fx_rates, "fx_rates_meta": fx_rates_meta},
         caveats=[*report.caveats, *fx_caveats],
-        status=report.status,
+        status=merge_status(report.status, "degraded") if fx_failed else report.status,
         historical=report.historical,
     )
     # --- end Spec 3 ---
