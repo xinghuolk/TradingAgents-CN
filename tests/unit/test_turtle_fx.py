@@ -77,9 +77,11 @@ def test_resolve_fx_rates_aggregates_and_skips_target(monkeypatch):
 
     monkeypatch.setattr(fxmod, "fetch_fx_rate", fake_fetch)
     rates, meta, caveats = fxmod.resolve_fx_rates({"CNY", "HKD"}, "CNY", "2026-05-23")
-    assert rates == {"HKD:CNY": 0.9}
+    assert rates["HKD:CNY"] == pytest.approx(0.9)
+    assert rates["CNY:HKD"] == pytest.approx(1 / 0.9)     # reciprocal now present (M3 fix)
     assert meta["HKD:CNY"]["provider"] == "yfinance"
     assert meta["HKD:CNY"]["rate"] == 0.9
+    assert meta["CNY:HKD"]["provider"].startswith("derived")
     assert caveats == []
     assert ("CNY", "CNY") not in calls  # target 自身被跳过
 
@@ -92,8 +94,35 @@ def test_resolve_fx_rates_partial_failure_adds_caveat(monkeypatch):
 
     monkeypatch.setattr(fxmod, "fetch_fx_rate", fake_fetch)
     rates, meta, caveats = fxmod.resolve_fx_rates({"HKD", "USD"}, "CNY", "2026-05-23")
-    assert rates == {"HKD:CNY": 0.9}
+    assert rates["HKD:CNY"] == pytest.approx(0.9)
+    assert rates["CNY:HKD"] == pytest.approx(1 / 0.9)
+    assert all("USD" not in pair for pair in rates)  # USD 取数失败 → 不参与矩阵
     assert any("USD:CNY" in c for c in caveats)
+
+
+def test_resolve_fx_rates_reciprocal_enables_native_hkd_target(monkeypatch):
+    # 复现 M3：net_profit/market_cap 同为 HKD → calculations 选 native HKD target，
+    # 此时 CNY buyback 需 CNY:HKD。矩阵必须同时含 HKD:CNY 与 CNY:HKD。
+    def fake_fetch(frm, to, as_of):
+        return fxmod.FxQuote(pair=f"{frm}:{to}", rate=0.9, provider="yfinance", as_of=as_of, fetched_at="t")
+
+    monkeypatch.setattr(fxmod, "fetch_fx_rate", fake_fetch)
+    rates, _, _ = fxmod.resolve_fx_rates({"HKD", "CNY"}, "CNY", "2026-05-23")
+    assert "HKD:CNY" in rates and "CNY:HKD" in rates
+    assert rates["HKD:CNY"] * rates["CNY:HKD"] == pytest.approx(1.0)
+
+
+def test_resolve_fx_rates_cross_pair_via_triangulation(monkeypatch):
+    rate_map = {"HKD": 0.9, "USD": 7.2}  # HKD:CNY=0.9, USD:CNY=7.2
+
+    def fake_fetch(frm, to, as_of):
+        return fxmod.FxQuote(pair=f"{frm}:{to}", rate=rate_map[frm], provider="yfinance", as_of=as_of, fetched_at="t")
+
+    monkeypatch.setattr(fxmod, "fetch_fx_rate", fake_fetch)
+    rates, _, _ = fxmod.resolve_fx_rates({"HKD", "USD", "CNY"}, "CNY", "2026-05-23")
+    # 交叉对经 CNY 三角化：HKD:USD = (HKD:CNY)/(USD:CNY)
+    assert rates["HKD:USD"] == pytest.approx(0.9 / 7.2)
+    assert rates["USD:HKD"] == pytest.approx(7.2 / 0.9)
 
 
 def test_fx_helpers_exported_from_package():

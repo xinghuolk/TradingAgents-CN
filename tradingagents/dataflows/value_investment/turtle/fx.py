@@ -60,12 +60,13 @@ def fetch_fx_rate(from_currency: str, to_currency: str, as_of_date: str) -> FxQu
 def resolve_fx_rates(
     currencies: Iterable[str], target: str, as_of_date: str
 ) -> tuple[dict[str, float], dict[str, dict], list[str]]:
-    """对每个 != target 的归一币种取 *:target 汇率。
-    返回 (fx_rates, fx_rates_meta, caveats)。失败的 pair 进 caveats、不进 fx_rates。
+    """解析跨币 FX。先取每个非 target 币种的 X:target 直连汇率，再经 target 三角化产出
+    全部有序配对（含倒数与交叉），使 calculations 选任意 native target 都能命中所需 pair。
+    返回 (fx_rates, fx_rates_meta, caveats)；失败的币种进 caveats、不参与矩阵。
     """
     dst = normalize_currency(target)
-    fx_rates: dict[str, float] = {}
-    fx_rates_meta: dict[str, dict] = {}
+    to_target: dict[str, float] = {dst: 1.0}          # 各币种兑 target 的直连汇率（target 自身=1）
+    fetched_meta: dict[str, dict] = {}                # 仅直连抓取的 pair 的真实 provenance
     caveats: list[str] = []
     seen: set[str] = set()
 
@@ -78,11 +79,33 @@ def resolve_fx_rates(
         if quote is None:
             caveats.append(f"FX {src}:{dst} 取数失败，跨币计算降级")
             continue
-        fx_rates[quote.pair] = quote.rate
-        fx_rates_meta[quote.pair] = {
+        to_target[src] = quote.rate
+        fetched_meta[quote.pair] = {
             "provider": quote.provider,
             "as_of": quote.as_of,
             "fetched_at": quote.fetched_at,
             "rate": quote.rate,
         }
+
+    # 经 target 三角化产出全部有序配对（含倒数与交叉），exact。
+    fx_rates: dict[str, float] = {}
+    fx_rates_meta: dict[str, dict] = {}
+    derived_at = datetime.now(timezone.utc).isoformat()
+    universe = list(to_target.keys())
+    for a in universe:
+        for b in universe:
+            if a == b:
+                continue
+            rate = to_target[a] / to_target[b]
+            pair = f"{a}:{b}"
+            fx_rates[pair] = rate
+            if pair in fetched_meta:
+                fx_rates_meta[pair] = fetched_meta[pair]
+            else:
+                fx_rates_meta[pair] = {
+                    "provider": f"derived(via {dst})",
+                    "as_of": as_of_date,
+                    "fetched_at": derived_at,
+                    "rate": rate,
+                }
     return fx_rates, fx_rates_meta, caveats
