@@ -243,3 +243,24 @@ class TestTurtleReportFactsHistorical:
 ])
 def test_normalize_currency_aliases(raw, expected):
     assert normalize_currency(raw) == expected
+
+
+def _money(value, currency, unit="yuan"):
+    return MoneyAmount(value=value, currency=currency, unit=unit, source_label="t", source_reference="ref")
+
+
+def test_to_hundred_million_rmb_alias_normalizes_no_fx():
+    m = _money(100_000_000, "RMB").to_hundred_million(target_currency="CNY", fx_rates={})
+    assert m.currency == "CNY"
+    assert m.value == pytest.approx(1.0)
+
+
+def test_to_hundred_million_hk_dollar_alias_uses_hkd_pair():
+    m = _money(100_000_000, "HK$").to_hundred_million(target_currency="CNY", fx_rates={"HKD:CNY": 0.9})
+    assert m.currency == "CNY"
+    assert m.value == pytest.approx(0.9)
+
+
+def test_to_hundred_million_missing_fx_still_raises():
+    with pytest.raises(ValueError):
+        _money(100_000_000, "HKD").to_hundred_million(target_currency="CNY", fx_rates={})

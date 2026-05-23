@@ -100,8 +100,8 @@ class MoneyAmount:
             raise ValueError(f"Unsupported money unit: {self.unit}")
 
         normalized_value = float(self.value) * multipliers[self.unit]
-        normalized_currency = self.currency.upper()
-        desired_currency = target_currency.upper()
+        normalized_currency = normalize_currency(self.currency)
+        desired_currency = normalize_currency(target_currency)
         source_reference = self.source_reference
 
         if normalized_currency != desired_currency:
