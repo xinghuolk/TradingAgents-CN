@@ -11,7 +11,7 @@
 目标：
 
 1. 在 `ReportDetail.vue` 和 `SingleAnalysis.vue` 两个入口复用同一个前端组件。
-2. 后端只做最小 API 透传，把已有 `value_turtle_payload` 原样暴露给前端。
+2. 后端做最小持久化标准化与 API 透传，把已有 `value_turtle_payload` 原样暴露给前端。
 3. 前端在“价值投资分析”内部提供 `报告 / 数据 / 计算 / 状态` 四个子 Tab。
 4. 对旧报告、非 Turtle 报告、空 payload、坏 payload 安静降级，不破坏现有 markdown 报告体验。
 
@@ -21,6 +21,8 @@
 
 - `/api/reports/{id}/detail` 返回 canonical `value_turtle_payload` 字段。
 - `/api/analysis/tasks/{id}/result` 返回 canonical `value_turtle_payload` 字段。
+- 保存新分析结果时，把 canonical `value_turtle_payload` 写入 `analysis_reports.value_turtle_payload`，并同步保留到 `analysis_tasks.result.value_turtle_payload`。
+- 为旧记录提供 `reports/value_turtle_payload.json` 磁盘 fallback，避免只有落盘 JSON、MongoDB 无 payload 的历史结果无法展示。
 - 新增共享前端组件 `TurtlePayloadPanel.vue`（建议放在 `frontend/src/components/Analysis/`）。
 - `ReportDetail.vue` 的 `value_report` 模块使用 `TurtlePayloadPanel` 渲染。
 - `SingleAnalysis.vue` 的 `value_report` 报告内容使用同一组件渲染。
@@ -36,15 +38,17 @@
 - 不实现真实 PDF 打开和跳页定位；缺少 PDF URL/page mapping 时只提供提示。
 - 不改变 Turtle payload schema，不调整 Turtle 计算口径。
 - 不重构其他报告模块的 tab/rendering 逻辑。
+- 不引入新的前端测试工具链；若后续单独启用 Vitest / Vue Test Utils，再补组件自动化测试。
 
 ## 3. 核心设计决策
 
 1. **共享组件优先**：`ReportDetail` 和 `SingleAnalysis` 必须复用同一个 `TurtlePayloadPanel`，避免两套解析/展示逻辑漂移。
-2. **后端最小透传**：API 返回 raw `{facts, signals}` JSON 字符串；解析、分组、展示属于前端组件职责。
+2. **后端最小标准化 + 透传**：保存时把 raw `{facts, signals}` JSON 字符串写入 canonical 顶层字段；API 只返回该字符串，不解析、不重排。解析、分组、展示属于前端组件职责。
 3. **语义绑定 value_report**：`value_report` 是 Turtle 价值分析正文；结构化数据视图只在该报告内部出现，不作为顶层并列报告模块。
 4. **无 payload 安静退化**：没有有效 payload 时只显示原 markdown，不显示 `报告 / 数据 / 计算 / 状态` 子 Tab。
 5. **历史期轻量呈现**：当前期 facts 默认展示；historical facts 放在可折叠“历史期间”区域，不做首版完整多期对比表。
 6. **PDF 定位预留而不扩大范围**：页码 chip 先形成交互入口，真实定位留给后续 spec/API 数据完善。
+7. **原始 payload 不作为报告模块展示**：即使旧数据或 fallback 路径仍带有 `reports.value_turtle_payload`，前端两个入口都必须从普通报告 tab 列表中过滤它。
 
 ## 4. API 边界
 
@@ -56,18 +60,31 @@ Canonical 响应字段：
 }
 ```
 
-后端可新增一个小 helper，按优先级从以下位置提取非空字符串：
+### 4.1 保存时标准化
+
+新分析结果保存时，使用同一个 payload extraction helper 从运行结果中提取非空 payload，并写入两个 canonical durable 位置：
+
+1. `analysis_reports.value_turtle_payload`
+2. `analysis_tasks.result.value_turtle_payload`
+
+这两个位置都保存原始 JSON 字符串，不解析、不压缩、不重排。`reports.value_turtle_payload` 不作为新的 canonical 存储位置；若现有路径仍将其放入 `reports`，API 和前端都要防御性过滤，避免原始 JSON 出现在普通报告 tab。
+
+### 4.2 API 提取优先级
+
+后端新增一个小 helper，按优先级从以下位置提取非空字符串：
 
 1. `result.value_turtle_payload`
 2. `state.value_turtle_payload`
 3. `reports.value_turtle_payload`
+4. `reports/value_turtle_payload.json` 磁盘文件（旧记录 fallback）
 
 `/api/reports/{id}/detail` 需要覆盖两条数据路径：
 
 - `analysis_reports` 命中时，从 report document 及其 `reports` 中提取。
 - `analysis_tasks.result` 兜底时，从 task result 及其 `state/reports` 中提取。
+- 如果 MongoDB 路径没有 payload，但能定位到该分析的 data-dir `reports/value_turtle_payload.json`，读取文件内容作为 fallback。
 
-`/api/analysis/tasks/{id}/result` 需要在最终 `final_result_data` 中保留 `value_turtle_payload`，不要被 reports 清洗逻辑吞掉。
+`/api/analysis/tasks/{id}/result` 需要在最终 `final_result_data` 中保留 `value_turtle_payload`，不要被 reports 清洗逻辑吞掉。该 endpoint 当前优先读取 `analysis_reports`；因此实现不能只在选中的 `result_data` 分支上取值：如果 `analysis_reports` 存在但没有 payload，仍需从 `analysis_tasks.result` 或磁盘 fallback 补查，或者依赖保存时标准化保证 `analysis_reports.value_turtle_payload` 已存在。
 
 接口不解析 JSON，不因 payload 非法而报错；响应始终包含 `value_turtle_payload` 字符串字段，空或缺失 payload 返回 `""`，前端统一按无有效 payload 处理。
 
@@ -167,7 +184,16 @@ interface Props {
 - `valueReport = report.reports.value_report`。
 - `valueTurtlePayload = report.value_turtle_payload`，必要时 fallback `report.reports.value_turtle_payload`。
 
-其他模块沿用现有 markdown/json 渲染。
+其他模块沿用现有 markdown/json 渲染。模块列表必须先过滤 `value_turtle_payload`，避免旧数据中的 `reports.value_turtle_payload` 被渲染成一个顶层报告 tab。推荐使用 computed `displayReports`：
+
+```ts
+const displayReports = computed(() => {
+  const reports = report.value?.reports || {}
+  return Object.fromEntries(
+    Object.entries(reports).filter(([key]) => key !== 'value_turtle_payload')
+  )
+})
+```
 
 ### 6.2 `SingleAnalysis.vue`
 
@@ -177,7 +203,22 @@ interface Props {
 - `valueReport = report.content`。
 - `valueTurtlePayload = analysisResults.value_turtle_payload`，必要时 fallback `analysisResults.reports.value_turtle_payload`。
 
-避免把 `value_turtle_payload` 当成普通报告 tab 加入 `getAnalysisReports()`。
+`getAnalysisReports()` 需要从 `Array<{ title: string, content: any }>` 升级为保留稳定 key：
+
+```ts
+Array<{ key: string; title: string; content: any }>
+```
+
+模板用 `report.key` 作为判断和测试锚点：`report.key === 'value_report'` 时渲染 `TurtlePayloadPanel`。不要靠中文标题或 emoji 文案匹配。`value_turtle_payload` 也必须从普通报告列表中过滤。
+
+### 6.3 样式隔离
+
+`SingleAnalysis.vue` 当前外层 `.analysis-tabs` 对 Element Plus tab 使用较宽的 `:deep(.el-tabs__item)` 样式。`TurtlePayloadPanel` 的嵌套 tabs 不能继承外层的大尺寸、渐变 active、transform 等样式。实现必须采用以下任一方式：
+
+- 收窄 `SingleAnalysis.vue` 外层 tab selector，只作用于第一层 `.analysis-tabs > ...`。
+- 或在 `TurtlePayloadPanel` 根节点加明确 class（如 `.turtle-payload-panel`），为内部 tabs 写隔离样式/override。
+
+验收时需要在 `SingleAnalysis` 页面确认嵌套 `报告 / 数据 / 计算 / 状态` tabs 的高度、边框和 active 状态不会被外层报告 tabs 样式污染。
 
 ## 7. 兼容与错误处理
 
@@ -193,15 +234,25 @@ interface Props {
 
 Focused pytest 覆盖：
 
+- 保存新分析结果时，`analysis_reports.value_turtle_payload` 被写入。
+- `analysis_tasks.result.value_turtle_payload` 兼容结果被写入或更新。
 - reports detail 从顶层 `value_turtle_payload` 返回 canonical 字段。
 - reports detail 从 `state.value_turtle_payload` 返回 canonical 字段。
 - reports detail 从 `reports.value_turtle_payload` 返回 canonical 字段。
+- reports detail 从 `reports/value_turtle_payload.json` 磁盘 fallback 返回 canonical 字段。
 - analysis task result 返回 canonical `value_turtle_payload`。
+- analysis task result 在 `analysis_reports` 存在但没有 payload、`analysis_tasks.result` 或磁盘 fallback 有 payload 时仍返回 canonical 字段。
 - 空字符串/纯空白 payload 不误判为有效 payload。
 
 ### 8.2 前端
 
-优先给纯解析/格式化函数加单测：
+当前 frontend 没有可执行的测试脚本，也没有 Vitest / Vue Test Utils 依赖；Spec 4 不引入新的前端测试工具链。前端自动化测试仅在项目已有 test runner 或本 spec 明确新增 test runner 时执行。否则必须执行：
+
+- `npm run type-check`
+- `npm run build`
+- 手动 smoke（见 §8.3）
+
+如果后续单独启用 Vitest，优先给纯解析/格式化函数加单测：
 
 - valid payload → parsed result。
 - invalid JSON / 空白 → `null`。
@@ -209,8 +260,10 @@ Focused pytest 覆盖：
 - historical periods 转为可展示列表。
 - status/reliability tag 映射。
 - `source_reference` 页码识别：`net_profit p.7` → `[7]`。
+- `getAnalysisReports()` 返回稳定 `key`，且过滤 `value_turtle_payload`。
+- ReportDetail display reports 过滤 `value_turtle_payload`。
 
-如果当前测试栈支持 Vue component test，补 `TurtlePayloadPanel` 组件测试：
+如果项目已支持 Vue component test，补 `TurtlePayloadPanel` 组件测试：
 
 - 有 payload 时显示 `报告 / 数据 / 计算 / 状态` 子 Tab。
 - 无 payload 时只显示 markdown，不显示子 Tab。
@@ -222,6 +275,8 @@ Focused pytest 覆盖：
 - 已完成 Turtle 分析在 `ReportDetail` 的“价值投资分析”中显示四个子 Tab。
 - 同一分析在 `SingleAnalysis` 完成页显示一致的四个子 Tab。
 - 旧报告或无 payload 报告仍只显示原 markdown。
+- `reports.value_turtle_payload` 不会作为普通报告 tab 出现在 `ReportDetail` 或 `SingleAnalysis`。
+- `SingleAnalysis` 的外层报告 tabs 和内层 Turtle 子 tabs 样式互不污染。
 - `数据` Tab 当前期字段可读，历史期间可折叠查看。
 - `计算` Tab 能看到公式、代入、结果、缺失项。
 - `状态` Tab 能看到 status 和 caveats。
@@ -230,16 +285,20 @@ Focused pytest 覆盖：
 ## 9. 实施风险
 
 - 当前后端多个路径会清洗 `reports` 为字符串，`value_turtle_payload` 不能只依赖 `reports` 字段传递；需要 canonical 字段避免被普通报告渲染吞掉。
+- 历史记录可能只有磁盘 `value_turtle_payload.json`，MongoDB 无 payload；没有文件 fallback 会导致历史报告无法显示结构化视图。
+- `/api/analysis/tasks/{id}/result` 优先读取 `analysis_reports`，如果保存时没有写入 canonical 字段，需要跨源补查避免丢 payload。
 - `SingleAnalysis.vue` 体量较大，集成时应尽量把逻辑放到共享组件和小 helper 中，减少页面内新增复杂度。
+- `SingleAnalysis.vue` 现有 tab 样式较宽，嵌套 tabs 必须隔离样式。
 - Payload schema 是 additive 演进，前端解析必须宽松，不能因为新增/缺失可选字段导致整个报告不可见。
 
 ## 10. 后续 plan 入口
 
 Implementation plan 应按以下任务拆分：
 
-1. 后端 payload extraction helper + 两个 API 返回字段。
-2. 前端 payload parser/format helper + 单测。
-3. `TurtlePayloadPanel.vue` 组件。
-4. `ReportDetail.vue` 集成。
-5. `SingleAnalysis.vue` 集成。
-6. focused backend/frontend verification + 手动验收。
+1. 后端 payload extraction helper + 保存时 canonical 持久化 + 磁盘 fallback。
+2. 两个 API 返回 canonical `value_turtle_payload` 字段，并覆盖跨源补查。
+3. 前端 payload parser/format helper。
+4. `TurtlePayloadPanel.vue` 组件。
+5. `ReportDetail.vue` 集成 + 过滤 `value_turtle_payload` 普通 tab。
+6. `SingleAnalysis.vue` 集成 + report item 稳定 key + 样式隔离。
+7. focused backend tests + frontend type-check/build + 手动验收。

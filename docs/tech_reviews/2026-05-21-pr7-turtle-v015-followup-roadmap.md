@@ -176,7 +176,7 @@
 - 数据 Tab：TurtleFacts 字段表（按 report / market 分组、历史期折叠展示、页码 chip 预留 PDF 定位）
 - 计算 Tab：TurtleComputedSignals 公式表
 - 状态 Tab：facts.status + signals.status + caveats / missing_inputs 高亮
-- 与 Spec 1 backend 透传配套；Spec 4 允许最小 API 透传 canonical `value_turtle_payload`，前端属 proprietary `frontend/`
+- 与 Spec 1 backend 透传配套；Spec 4 允许最小持久化标准化 + API 透传 canonical `value_turtle_payload`，前端属 proprietary `frontend/`
 
 ## 6. 使用本路线图
 
