@@ -11,6 +11,7 @@ from tradingagents.dataflows.value_investment.turtle.facts import (
     TurtleRunContext,
     infer_turtle_period_end,
     merge_status,
+    normalize_currency,
 )
 
 
@@ -232,3 +233,53 @@ class TestTurtleReportFactsHistorical:
         parent = TurtleReportFacts(historical={"2023-12-31": child})
         child.caveats.append("leaked")
         assert parent.historical["2023-12-31"].caveats == ["original"]
+
+
+@pytest.mark.parametrize("raw,expected", [
+    ("RMB", "CNY"), ("rmb", "CNY"), ("CNY", "CNY"), ("人民币", "CNY"), ("元", "CNY"),
+    ("HKD", "HKD"), ("HK$", "HKD"), ("港币", "HKD"), ("港元", "HKD"),
+    ("USD", "USD"), ("US$", "USD"), ("美元", "USD"),
+    ("EUR", "EUR"), ("  hkd  ", "HKD"),
+])
+def test_normalize_currency_aliases(raw, expected):
+    assert normalize_currency(raw) == expected
+
+
+def _money(value, currency, unit="yuan"):
+    return MoneyAmount(value=value, currency=currency, unit=unit, source_label="t", source_reference="ref")
+
+
+def test_to_hundred_million_rmb_alias_normalizes_no_fx():
+    m = _money(100_000_000, "RMB").to_hundred_million(target_currency="CNY", fx_rates={})
+    assert m.currency == "CNY"
+    assert m.value == pytest.approx(1.0)
+
+
+def test_to_hundred_million_hk_dollar_alias_uses_hkd_pair():
+    m = _money(100_000_000, "HK$").to_hundred_million(target_currency="CNY", fx_rates={"HKD:CNY": 0.9})
+    assert m.currency == "CNY"
+    assert m.value == pytest.approx(0.9)
+
+
+def test_to_hundred_million_missing_fx_still_raises():
+    with pytest.raises(ValueError):
+        _money(100_000_000, "HKD").to_hundred_million(target_currency="CNY", fx_rates={})
+
+
+def test_market_facts_metadata_roundtrip():
+    mf = TurtleMarketFacts(fields={}, caveats=[], status="complete", metadata={"market_as_of": "2026-05-23"})
+    assert mf.metadata == {"market_as_of": "2026-05-23"}
+    assert mf.to_dict()["metadata"] == {"market_as_of": "2026-05-23"}
+
+
+def test_market_facts_metadata_defaults_empty():
+    mf = TurtleMarketFacts()
+    assert mf.metadata == {}
+    assert mf.to_dict()["metadata"] == {}
+
+
+def test_market_facts_metadata_defensive_copy():
+    src = {"market_as_of": "2026-05-23"}
+    mf = TurtleMarketFacts(metadata=src)
+    src["market_as_of"] = "MUTATED"
+    assert mf.metadata["market_as_of"] == "2026-05-23"

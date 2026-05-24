@@ -61,6 +61,19 @@ def default_holding_channel(market: str) -> str:
     return "unknown"
 
 
+def normalize_currency(currency: str) -> str:
+    """把币种别名归一到 ISO 码（CNY/HKD/USD）；未知币种回退 .upper()。"""
+    raw = str(currency or "").strip()
+    upper = raw.upper()
+    if upper in {"RMB", "CNY"} or raw in {"人民币", "元"}:
+        return "CNY"
+    if upper in {"HKD", "HK$"} or raw in {"港币", "港元"}:
+        return "HKD"
+    if upper in {"USD", "US$"} or raw in {"美元"}:
+        return "USD"
+    return upper
+
+
 @dataclass(frozen=True)
 class MoneyAmount:
     value: float
@@ -87,8 +100,8 @@ class MoneyAmount:
             raise ValueError(f"Unsupported money unit: {self.unit}")
 
         normalized_value = float(self.value) * multipliers[self.unit]
-        normalized_currency = self.currency.upper()
-        desired_currency = target_currency.upper()
+        normalized_currency = normalize_currency(self.currency)
+        desired_currency = normalize_currency(target_currency)
         source_reference = self.source_reference
 
         if normalized_currency != desired_currency:
@@ -188,16 +201,19 @@ class TurtleMarketFacts:
     fields: dict[str, TurtleFactValue] = field(default_factory=dict)
     caveats: list[str] = field(default_factory=list)
     status: TurtleStatus = "complete"
+    metadata: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "fields", _copy_dict(self.fields))
         object.__setattr__(self, "caveats", _copy_list(self.caveats))
+        object.__setattr__(self, "metadata", _copy_dict(self.metadata))
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "fields": {key: value.to_dict() for key, value in self.fields.items()},
             "caveats": _copy_list(self.caveats),
             "status": self.status,
+            "metadata": _copy_dict(self.metadata),
         }
 
 

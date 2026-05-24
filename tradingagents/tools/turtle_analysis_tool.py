@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from typing import Annotated, Any
 
 from langchain_core.tools import tool
@@ -12,10 +13,12 @@ from tradingagents.dataflows.value_investment.turtle import (
     TurtleMarketFacts,
     TurtleReportFacts,
     TurtleRunContext,
+    collect_fx_currencies,
     compute_turtle_signals,
     get_turtle_market_facts,
     get_turtle_report_facts,
     merge_status,
+    resolve_fx_rates,
 )
 
 
@@ -38,6 +41,7 @@ def _market_facts(value: Any) -> TurtleMarketFacts:
         fields=getattr(value, "fields", {}) or {},
         caveats=getattr(value, "caveats", []) or [],
         status=getattr(value, "status", "complete"),
+        metadata=getattr(value, "metadata", {}) or {},
     )
 
 
@@ -69,6 +73,42 @@ def prepare_turtle_analysis_payload(
             holding_channel=holding_channel,
         )
     )
+
+    # --- Spec 3: FX 注入（锚定 market_as_of，绝不 fallback trade_date）---
+    fx_caveats: list[str] = []
+    fx_failed = False
+    currencies = collect_fx_currencies(report, market_facts)
+    if len(currencies) >= 2:
+        market_as_of = market_facts.metadata.get("market_as_of")
+        if not market_as_of:
+            market_as_of = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            fx_caveats.append("market_as_of 缺失，FX 已对齐拉取日")
+
+        fx_rates, fx_rates_meta, resolve_caveats = resolve_fx_rates(currencies, "CNY", market_as_of)
+        fx_caveats.extend(resolve_caveats)
+        fx_failed = bool(resolve_caveats)
+
+        if market_as_of != trade_date[:10]:
+            fx_caveats.append(
+                f"market_cap 为当前快照（as_of={market_as_of}），非 trade_date={trade_date} 当日历史值；FX 已对齐快照日期"
+            )
+
+        if report.historical and fx_rates:
+            fx_caveats.append(
+                f"历史各期 money 统一使用快照日 FX（as_of={market_as_of}）换算"
+            )
+    else:
+        fx_rates, fx_rates_meta = {}, {}
+
+    report = TurtleReportFacts(
+        fields=report.fields,
+        metadata={**report.metadata, "fx_rates": fx_rates, "fx_rates_meta": fx_rates_meta},
+        caveats=[*report.caveats, *fx_caveats],
+        status=merge_status(report.status, "degraded") if fx_failed else report.status,
+        historical=report.historical,
+    )
+    # --- end Spec 3 ---
+
     facts = TurtleFacts(
         context=context,
         report=report,

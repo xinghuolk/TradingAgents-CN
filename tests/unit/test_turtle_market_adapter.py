@@ -1,3 +1,5 @@
+import re
+
 from tradingagents.dataflows.value_investment.turtle.market_adapter import (
     build_market_facts,
     default_tax_rate,
@@ -446,3 +448,45 @@ class TestMarketAdapterStatus:
             rf_rate=None,
         )
         assert facts.status == "non_decisionable"
+
+
+def test_build_market_facts_carries_provider_and_market_as_of():
+    mf = build_market_facts(
+        ticker="00700", market="HK", holding_channel="stock_connect",
+        market_data={"market_cap": 1e10, "close_price": 100.0, "source": "yfinance_hk"},
+        dividend_data=None, buyback_data=None, industry=None,
+    )
+    cap_ref = mf.fields["market_cap"].value.source_reference
+    assert "provider=yfinance_hk" in cap_ref
+    assert "fetched_at=" in cap_ref
+    assert re.fullmatch(r"\d{4}-\d{2}-\d{2}", mf.metadata["market_as_of"])
+
+
+def test_build_market_facts_provider_unknown_when_source_missing():
+    mf = build_market_facts(
+        ticker="600519", market="A", holding_channel="long_term_domestic",
+        market_data={"market_cap": 1e10},
+        dividend_data=None, buyback_data=None, industry=None,
+    )
+    assert "provider=unknown" in mf.fields["market_cap"].value.source_reference
+
+
+from tradingagents.dataflows.value_investment.turtle import market_adapter
+
+
+def test_fetch_turtle_market_data_stamps_ashare_source(monkeypatch):
+    monkeypatch.setattr(
+        "tradingagents.tools.value_investment_tool._fetch_market_data_structured",
+        lambda ticker, market: {"market_cap": 1e10, "close_price": 100.0, "total_shares": 1e8},
+    )
+    data = market_adapter._fetch_turtle_market_data("600519", "A")
+    assert data["source"] == "akshare.stock_individual_info_em"
+
+
+def test_fetch_turtle_market_data_keeps_existing_source(monkeypatch):
+    monkeypatch.setattr(
+        "tradingagents.tools.value_investment_tool._fetch_market_data_structured",
+        lambda ticker, market: {"market_cap": 1e10, "source": "custom"},
+    )
+    data = market_adapter._fetch_turtle_market_data("600519", "A")
+    assert data["source"] == "custom"

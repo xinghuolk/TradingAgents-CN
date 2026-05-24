@@ -655,3 +655,31 @@ class TestNumber3yAvg:
         value, sources, missing = _number_report_3y_avg(facts, "payout_ratio", caveats)
         assert value is None
         assert missing == ["payout_ratio_3y_avg"]
+
+
+import tradingagents.dataflows.value_investment.turtle.calculations as calc
+
+
+def _facts_single_currency(report_currency, market_currency):
+    ctx = TurtleRunContext.for_ticker(ticker="X", market="HK", trade_date="2026-05-23", company_name="X")
+    np_ = MoneyAmount(value=1e8, currency=report_currency, unit="yuan", source_label="t", source_reference="r")
+    mc = MoneyAmount(value=2e8, currency=market_currency, unit="yuan", source_label="t", source_reference="m")
+    report = TurtleReportFacts(fields={
+        "net_profit": TurtleFactValue(name="net_profit", value=np_, source_label="t", source_reference="r"),
+    })
+    market = TurtleMarketFacts(fields={
+        "market_cap": TurtleFactValue(name="market_cap", value=mc, source_label="t", source_reference="m"),
+    })
+    return TurtleFacts(context=ctx, report=report, market=market, status="complete")
+
+
+def test_money_fact_currencies_collapses_hk_dollar_alias():
+    facts = _facts_single_currency("HK$", "HKD")
+    assert calc._money_fact_currencies(facts, ("net_profit", "market_cap")) == {"HKD"}
+    assert calc._money_target_currency(facts, ("net_profit", "market_cap")) == "HKD"
+
+
+def test_money_fact_currencies_rmb_alias_is_cny():
+    facts = _facts_single_currency("RMB", "CNY")
+    assert calc._money_fact_currencies(facts, ("net_profit", "market_cap")) == {"CNY"}
+    assert calc._money_target_currency(facts, ("net_profit", "market_cap")) == "CNY"

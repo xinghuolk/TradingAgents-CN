@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+from datetime import datetime, timezone
 from math import isfinite
 from typing import Any
 
@@ -110,7 +111,10 @@ def _fetch_turtle_market_data(ticker: str, market: str) -> dict[str, Any]:
 
     from tradingagents.tools.value_investment_tool import _fetch_market_data_structured
 
-    return _fetch_market_data_structured(ticker, market)
+    data = _fetch_market_data_structured(ticker, market)
+    if isinstance(data, dict):
+        data.setdefault("source", "akshare.stock_individual_info_em")
+    return data
 
 
 def _fetch_turtle_dividend_data(ticker: str, market: str) -> dict[str, Any] | None:
@@ -205,6 +209,12 @@ def build_market_facts(
     safe_market_data = market_data or {}
     currency = _currency_for_market(market)
 
+    provider = str(safe_market_data.get("source") or "unknown")
+    fetched_at = datetime.now(timezone.utc).isoformat()
+    market_as_of = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    market_cap_ref = f"market_data.market_cap; provider={provider}; fetched_at={fetched_at}"
+    close_price_ref = f"market_data.close_price; provider={provider}; fetched_at={fetched_at}"
+
     stripped_channel = holding_channel.strip() if holding_channel else ""
     channel_is_explicit = bool(stripped_channel)
     active_channel = stripped_channel or default_holding_channel(market)
@@ -219,9 +229,9 @@ def build_market_facts(
                 currency=currency,
                 unit="yuan",
                 source_label=SOURCE_LABEL,
-                source_reference="market_data.market_cap",
+                source_reference=market_cap_ref,
             ),
-            "market_data.market_cap",
+            market_cap_ref,
         )
     elif has_market_cap:
         _append_caveat(caveats, "market_cap invalid")
@@ -230,7 +240,7 @@ def build_market_facts(
 
     close_price = safe_market_data.get("close_price")
     if _is_numeric(close_price):
-        fields["close_price"] = _field("close_price", float(close_price), "market_data.close_price")
+        fields["close_price"] = _field("close_price", float(close_price), close_price_ref)
 
     tax_rate_known = _is_known_tax_rate_combination(market, active_channel)
     if not tax_rate_known:
@@ -347,7 +357,12 @@ def build_market_facts(
     else:
         status = "complete"
 
-    return TurtleMarketFacts(fields=fields, caveats=caveats, status=status)
+    return TurtleMarketFacts(
+        fields=fields,
+        caveats=caveats,
+        status=status,
+        metadata={"market_as_of": market_as_of, "provider": provider},
+    )
 
 
 def get_turtle_market_facts(ticker: str, market: str, holding_channel: str | None = None) -> TurtleMarketFacts:

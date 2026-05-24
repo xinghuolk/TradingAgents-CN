@@ -521,3 +521,43 @@ class TestValueAnalystRehydratesHistorical:
 
         prompt = _plain_turtle_report_prompt("X", "600519", payload)
         assert "2023-12-31" in prompt
+
+
+# ---------------------------------------------------------------------------
+# Task 13: market metadata propagation on payload rebuild
+# ---------------------------------------------------------------------------
+import tradingagents.agents.analysts.value_analyst as va  # noqa: E402
+
+
+def _va_payload(with_market_metadata: bool) -> str:
+    market = {"fields": {}, "caveats": [], "status": "complete"}
+    if with_market_metadata:
+        market["metadata"] = {"market_as_of": "2026-05-23"}
+    return json.dumps({
+        "facts": {
+            "context": {
+                "ticker": "00700", "market": "HK", "trade_date": "2026-05-23",
+                "period_end": "2025-12-31", "holding_channel": "stock_connect", "company_name": "腾讯",
+            },
+            "report": {"fields": {}, "metadata": {}, "caveats": [], "status": "complete", "historical": {}},
+            "market": market,
+            "status": "complete", "caveats": [],
+        },
+        "signals": {"status": "complete", "results": {}, "veto_reasons": [], "caveats": []},
+    })
+
+
+def test_plain_prompt_preserves_market_metadata():
+    captured = {}
+    with patch.object(va, "build_turtle_decision_prompt",
+                      side_effect=lambda facts, signals: captured.update(facts=facts) or "PROMPT"):
+        va._plain_turtle_report_prompt("腾讯", "00700", _va_payload(with_market_metadata=True))
+    assert captured["facts"].market.metadata == {"market_as_of": "2026-05-23"}
+
+
+def test_plain_prompt_legacy_payload_without_market_metadata():
+    captured = {}
+    with patch.object(va, "build_turtle_decision_prompt",
+                      side_effect=lambda facts, signals: captured.update(facts=facts) or "PROMPT"):
+        va._plain_turtle_report_prompt("腾讯", "00700", _va_payload(with_market_metadata=False))
+    assert captured["facts"].market.metadata == {}
