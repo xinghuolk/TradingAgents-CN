@@ -80,7 +80,7 @@ services:
       # - ./config:/app/config
       - ./data:/app/data
       # 复用本机 financial-report-llm-extractor 的 PDF、缓存和 LLM 配置
-      - ${FINANCIAL_REPORT_EXTRACTOR_HOST_ROOT:-/home/like/git/financial-report-llm-extractor}:/app/external/financial-report-llm-extractor
+      - ${FINANCIAL_REPORT_EXTRACTOR_HOST_ROOT:-./external/financial-report-llm-extractor}:/app/external/financial-report-llm-extractor
     env_file:
       - .env
     environment:
@@ -134,17 +134,17 @@ services:
       BAOSTOCK_ENABLED: "${BAOSTOCK_ENABLED:-true}"
       FINNHUB_API_KEY: "${FINNHUB_API_KEY}"
       FINNHUB_ENABLED: "${FINNHUB_ENABLED:-false}"
-      # 价值投资/龟龟投资：financial-report-llm-extractor 集成
-      FINANCIAL_REPORT_CLIENT_ENABLED: "true"
-      FINANCIAL_REPORT_CACHE_ONLY: "false"
-      FINANCIAL_REPORT_FORCE_REFRESH: "false"
-      FINANCIAL_REPORT_INCLUDE_LLM_SUPPLEMENT: "true"
-      FINANCIAL_REPORT_ALLOW_LLM_MODELS: "gpt-5.5,codex"
-      FINANCIAL_REPORT_PDF_ROOT: "/app/external/financial-report-llm-extractor/downloads"
-      FINANCIAL_REPORT_EXTRACTOR_CACHE_ROOT: "/app/external/financial-report-llm-extractor/tmp/.cache"
-      FINANCIAL_REPORT_LLM_CONFIG_PATH: "/app/external/financial-report-llm-extractor/tmp/runs/quick_validation/00001_2025_en/llm_config_deepseek.json"
-      TURTLE_RF_RATE_CN: "0.02"
-      TURTLE_RF_RATE_HK: "0.04"
+      # 价值投资/龟龟投资：financial-report-llm-extractor 集成（默认关闭，按需在 .env 中启用）
+      FINANCIAL_REPORT_CLIENT_ENABLED: "${FINANCIAL_REPORT_CLIENT_ENABLED:-false}"
+      FINANCIAL_REPORT_CACHE_ONLY: "${FINANCIAL_REPORT_CACHE_ONLY:-false}"
+      FINANCIAL_REPORT_FORCE_REFRESH: "${FINANCIAL_REPORT_FORCE_REFRESH:-false}"
+      FINANCIAL_REPORT_INCLUDE_LLM_SUPPLEMENT: "${FINANCIAL_REPORT_INCLUDE_LLM_SUPPLEMENT:-false}"
+      FINANCIAL_REPORT_ALLOW_LLM_MODELS: "${FINANCIAL_REPORT_ALLOW_LLM_MODELS:-}"
+      FINANCIAL_REPORT_PDF_ROOT: "${FINANCIAL_REPORT_PDF_ROOT:-/app/external/financial-report-llm-extractor/downloads}"
+      FINANCIAL_REPORT_EXTRACTOR_CACHE_ROOT: "${FINANCIAL_REPORT_EXTRACTOR_CACHE_ROOT:-/app/external/financial-report-llm-extractor/tmp/.cache}"
+      FINANCIAL_REPORT_LLM_CONFIG_PATH: "${FINANCIAL_REPORT_LLM_CONFIG_PATH:-}"
+      TURTLE_RF_RATE_CN: "${TURTLE_RF_RATE_CN:-0.02}"
+      TURTLE_RF_RATE_HK: "${TURTLE_RF_RATE_HK:-0.04}"
     depends_on:
       mongodb:
         condition: service_healthy
@@ -210,9 +210,12 @@ services:
 volumes:
   tradingagents_mongodb_data:
     driver: local
+    name: tradingagents_mongodb_data
   tradingagents_redis_data:
     driver: local
+    name: tradingagents_redis_data
 
 networks:
   tradingagents-network:
     driver: bridge
+    name: tradingagents-network
