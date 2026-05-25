@@ -8,7 +8,10 @@ FROM python:3.11-slim-bookworm
 ARG DEBIAN_MIRROR=http://mirrors.tuna.tsinghua.edu.cn/debian
 ARG DEBIAN_SECURITY_MIRROR=http://mirrors.tuna.tsinghua.edu.cn/debian-security
 ARG PYPI_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
-ARG GITHUB_PROXY=https://gh-proxy.com/
+# GitHub 代理：默认直连 GitHub（rev 已 pin，tarball 由 GitHub 内容寻址保证）。
+# 第三方代理（如 gh-proxy.com）返回的可执行字节不经哈希/签名校验，故仅 opt-in：
+# 需要时显式 --build-arg GITHUB_PROXY=https://gh-proxy.com/
+ARG GITHUB_PROXY=
 ARG FINANCIAL_REPORT_EXTRACTOR_REV=b03775925a5be22f31c4d67e90f88c5842ecaec6
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
