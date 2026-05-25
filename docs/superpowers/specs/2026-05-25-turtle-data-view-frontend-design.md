@@ -1,6 +1,6 @@
 # Spec 4：Turtle Data View Frontend 设计
 
-> 状态：设计已与用户确认（2026-05-25）。下一步转 writing-plans。
+> 状态：设计已与用户确认（2026-05-25）；2026-05-25 review 修订（M1 provenance 展示 / M2 source_reference 解析 / M3 附带 infra 说明）。下一步转 writing-plans。
 > 工作分支：`feat/turtle-spec4-data-view-frontend`（基于 `main` 创建）。
 > 路线图：`docs/tech_reviews/2026-05-21-pr7-turtle-v015-followup-roadmap.md` Spec 4。
 
@@ -40,7 +40,15 @@
 - 不重构其他报告模块的 tab/rendering 逻辑。
 - 不引入新的前端测试工具链；若后续单独启用 Vitest / Vue Test Utils，再补组件自动化测试。
 
-## 3. 核心设计决策
+### 2.3 附带的基础设施变更（M3，逻辑独立）
+
+本分支含 commit `f5a4761`「financial report extraction configuration for Turtle investment」，改动 `.env.docker` / `.env.example` / `Dockerfile.backend` / `Dockerfile.frontend` / `docker-compose.yml` / `docker-compose.hub.nginx.yml`。这是**为产出真实 Turtle payload 所需的财报提取配置 / 部署改动，与本 Spec 的前端数据视图逻辑无关**。
+
+处理口径：
+
+- 这部分**不属于** Spec 4 的前端/透传实现范围，也不在本 spec 的测试/验收清单内。
+- 推荐在开 PR 时**拆为独立 commit/PR**（或独立审阅），避免基础设施 + 前端展示混在同一评审单元；若保留在同一 PR，需在 PR 描述中显式标注其为独立的提取配置变更。
+- writing-plans 阶段不要把它当作 Spec 4 的任务步骤。
 
 1. **共享组件优先**：`ReportDetail` 和 `SingleAnalysis` 必须复用同一个 `TurtlePayloadPanel`，避免两套解析/展示逻辑漂移。
 2. **后端最小标准化 + 透传**：保存时把 raw `{facts, signals}` JSON 字符串写入 canonical 顶层字段；API 只返回该字符串，不解析、不重排。解析、分组、展示属于前端组件职责。
@@ -115,7 +123,10 @@ interface Props {
 
 - `parseTurtlePayload(raw: string): ParsedTurtlePayload | null`
 - `formatFactValue(value: unknown): string`
-- `extractPageRefs(sourceReference: string): number[]`
+- `extractPageRefs(sourceReference: string): number[]`（保留；亦可并入 `parseSourceReference`）
+- `parseSourceReference(raw: string): { pages: number[]; provider?: string; fetchedAt?: string; fx?: string; rest: string }`（M2：拆解复合 source_reference）
+- `extractFxRates(reportMetadata: unknown): Array<{ pair: string; rate: number; provider: string; asOf?: string; fetchedAt?: string; derivedFrom?: string[] }>`（M1：合并 fx_rates + fx_rates_meta 成 FX 表行；宽松解析、缺失返回空数组）
+- `extractMarketProvenance(marketMetadata: unknown): { marketAsOf?: string; provider?: string }`（M1）
 - `statusTagType(status: string): 'success' | 'warning' | 'danger' | 'info'`
 - `reliabilityTagType(reliability: string): 'success' | 'warning' | 'info'`
 
@@ -133,10 +144,24 @@ interface Props {
 - 值（MoneyAmount 展示 value + currency + unit）
 - reliability
 - source_label
-- source_reference（页码 chip + 原始来源文本）
+- source_reference（见下「source_reference 解析」）
 - caveat
 
-历史期间以 collapse/accordion 展示，每个 period 一个面板。首版不做跨期对比表。
+**source_reference 解析（M2）**：Spec 3 之后 `source_reference` 是复合串，形如
+`"market_data.market_cap; provider=yfinance_hk; fetched_at=2026-05-23T...; FX HKD:CNY=0.92"` 或 `"net_profit p.7"`。
+不要原样堆给用户：用 `parseSourceReference` 轻解析出 `pages`（→ 页码 chip）、`provider`、`fetched_at`、`fx` 段分列/分行展示，
+原始整串作为 hover/title 兜底。解析失败时回退为纯文本展示。页码正则 `p.<number>` 与 provider/FX 段互不干扰。
+
+**汇率与数据来源 metadata（M1，Spec 3 provenance）**：数据 Tab 增加一个「汇率与来源」区块，渲染 Spec 3 写入 metadata 的 provenance（不在 fields 里）：
+
+- `facts.market.metadata`：`market_as_of`（market_cap 快照日）、`provider`（如 `yfinance_hk` / `akshare.stock_individual_info_em`）。
+- `facts.report.metadata.fx_rates`（pair→rate）配合 `facts.report.metadata.fx_rates_meta`（每 pair 的 `provider` / `as_of` / `fetched_at` / `rate` / `derived_from`）合成一张 FX 表：
+  - **直连 pair**（`provider=yfinance`，真实 `as_of`）与**派生 pair**（`provider=derived(via CNY)`，带 `derived_from` 列指明底层 leg、`as_of` 取底层最旧）需视觉区分。
+  - 无 `fx_rates`（单一币种 / 未触发 FX）时该区块显示空状态或隐藏。
+- 该区块属「数据来源」性质，归数据 Tab；状态 Tab 仍只管 status / caveats / missing_inputs。
+- metadata 中除 `fx_rates` / `fx_rates_meta` / `market_as_of` / `provider` 外的其它键（如 `period_end`）按需以小字辅助信息展示，缺失不报错（宽松解析）。
+
+历史期间以 collapse/accordion 展示，每个 period 一个面板。首版不做跨期对比表（historical 不强制展示 FX provenance，沿用顶层 fx_rates）。
 
 ### 5.3 计算 Tab
 
@@ -260,6 +285,9 @@ Focused pytest 覆盖：
 - historical periods 转为可展示列表。
 - status/reliability tag 映射。
 - `source_reference` 页码识别：`net_profit p.7` → `[7]`。
+- `parseSourceReference` 复合串（M2）：`"market_data.market_cap; provider=yfinance_hk; fetched_at=2026-05-23T..; FX HKD:CNY=0.92"` → `provider=yfinance_hk` / `fetchedAt` / `fx="HKD:CNY=0.92"`，页码为空；纯 `"net_profit p.7"` → `pages=[7]`、其余 undefined。
+- `extractFxRates`（M1）：`fx_rates`+`fx_rates_meta` → 行列表；直连 pair 带 `provider=yfinance`，派生 pair 带 `provider=derived(via CNY)` + `derivedFrom`；无 fx_rates → `[]`。
+- `extractMarketProvenance`（M1）：`market.metadata` → `marketAsOf` / `provider`；缺失键返回 undefined 而非抛错。
 - `getAnalysisReports()` 返回稳定 `key`，且过滤 `value_turtle_payload`。
 - ReportDetail display reports 过滤 `value_turtle_payload`。
 
@@ -297,8 +325,8 @@ Implementation plan 应按以下任务拆分：
 
 1. 后端 payload extraction helper + 保存时 canonical 持久化 + 磁盘 fallback。
 2. 两个 API 返回 canonical `value_turtle_payload` 字段，并覆盖跨源补查。
-3. 前端 payload parser/format helper。
-4. `TurtlePayloadPanel.vue` 组件。
+3. 前端 payload parser/format helper（含 M2 `parseSourceReference`、M1 `extractFxRates` / `extractMarketProvenance`）。
+4. `TurtlePayloadPanel.vue` 组件（数据 Tab 含「汇率与来源」provenance 区块，见 §5.2）。
 5. `ReportDetail.vue` 集成 + 过滤 `value_turtle_payload` 普通 tab。
 6. `SingleAnalysis.vue` 集成 + report item 稳定 key + 样式隔离。
 7. focused backend tests + frontend type-check/build + 手动验收。
