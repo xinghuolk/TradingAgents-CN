@@ -292,6 +292,8 @@ async def get_task_result(
                     "updated_at": mongo_result.get("updated_at"),
                     "status": mongo_result.get("status", "completed"),
                     "decision": mongo_result.get("decision", {}),
+                    "value_turtle_payload": mongo_result.get("value_turtle_payload", ""),
+                    "state": mongo_result.get("state", {}),
                     "source": "mongodb"  # 标记数据来源
                 }
 
