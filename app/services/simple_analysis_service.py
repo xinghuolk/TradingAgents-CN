@@ -32,6 +32,7 @@ from app.services.config_service import ConfigService
 from app.services.memory_state_manager import get_memory_state_manager, TaskStatus
 from app.services.redis_progress_tracker import RedisProgressTracker, get_progress_by_id
 from app.services.progress_log_handler import register_analysis_tracker, unregister_analysis_tracker
+from app.services.turtle_payload_helper import extract_turtle_payload
 
 # 股票基础信息获取（用于补充显示名称）
 try:
@@ -2583,6 +2584,14 @@ class SimpleAnalysisService:
                 logger.warning(f"⚠️ 获取股票名称失败: {stock_symbol} - {e}")
                 stock_name = stock_symbol
 
+            # Extract canonical turtle payload (Spec 4 §4.1)
+            _state_for_payload = result.get('state', {})
+            _canonical_turtle_payload = extract_turtle_payload({
+                "value_turtle_payload": _state_for_payload.get("value_turtle_payload", "") if isinstance(_state_for_payload, dict) else "",
+                "state": {},
+                "reports": {},
+            })
+
             # 构建文档（与web目录的MongoDBReportManager保持一致）
             document = {
                 "analysis_id": analysis_id,
@@ -2620,7 +2629,10 @@ class SimpleAnalysisService:
                 "tokens_used": result.get("tokens_used", 0),
 
                 # 🆕 性能指标数据
-                "performance_metrics": result.get("performance_metrics", {})
+                "performance_metrics": result.get("performance_metrics", {}),
+
+                # Spec 4: canonical turtle payload (raw JSON string, never parsed server-side)
+                "value_turtle_payload": _canonical_turtle_payload,
             }
 
             # 保存到analysis_reports集合（与web目录保持一致）
@@ -2647,7 +2659,9 @@ class SimpleAnalysisService:
                         "tokens_used": result.get("tokens_used", 0),
                         "reports": reports,  # 包含提取的报告内容
                         # 🔥 关键修复：添加格式化后的decision字段！
-                        "decision": result.get("decision", {})
+                        "decision": result.get("decision", {}),
+                        # Spec 4: canonical turtle payload
+                        "value_turtle_payload": _canonical_turtle_payload,
                     }}}
                 )
                 logger.info(f"💾 分析结果已保存 (web风格): {task_id}")
