@@ -605,9 +605,9 @@
                       :key="analysisResults?.id || 'default'"
                     >
                       <el-tab-pane
-                        v-for="(report, key) in getAnalysisReports(analysisResults)"
-                        :key="key"
-                        :name="key.toString()"
+                        v-for="report in getAnalysisReports(analysisResults)"
+                        :key="report.key"
+                        :name="report.key"
                         :label="report.title"
                         class="report-tab-pane"
                       >
@@ -622,14 +622,24 @@
 
                         <!-- 报告内容 -->
                         <div class="report-content-wrapper">
-                          <div
-                            class="report-content"
-                            v-html="formatReportContent(report.content)"
-                            v-if="report.content"
-                          ></div>
-                          <div v-else class="no-content">
-                            <el-empty description="暂无内容" />
-                          </div>
+                          <!-- value_report: use TurtlePayloadPanel (Spec 4 §6.2) -->
+                          <template v-if="report.key === 'value_report'">
+                            <TurtlePayloadPanel
+                              :value-report="typeof report.content === 'string' ? report.content : ''"
+                              :value-turtle-payload="analysisResults?.value_turtle_payload ?? analysisResults?.reports?.value_turtle_payload ?? ''"
+                            />
+                          </template>
+                          <!-- All other reports: existing rendering -->
+                          <template v-else>
+                            <div
+                              class="report-content"
+                              v-html="formatReportContent(report.content)"
+                              v-if="report.content"
+                            ></div>
+                            <div v-else class="no-content">
+                              <el-empty description="暂无内容" />
+                            </div>
+                          </template>
                         </div>
                       </el-tab-pane>
                     </el-tabs>
@@ -712,6 +722,7 @@ import { useAppStore } from '@/stores/app'
 import { useAuthStore } from '@/stores/auth'
 import { configApi } from '@/api/config'
 import DeepModelSelector from '@/components/DeepModelSelector.vue'
+import TurtlePayloadPanel from '@/components/Analysis/TurtlePayloadPanel.vue'
 import { ANALYSTS, convertAnalystNamesToIds } from '@/constants/analysts'
 import { marked } from 'marked'
 import { recommendModels, validateModels, type ModelRecommendationResponse } from '@/api/modelCapabilities'
@@ -1242,10 +1253,10 @@ const getActionTagType = (action: string): 'primary' | 'success' | 'warning' | '
   return actionTypes[action] || 'info'
 }
 
-// 获取分析报告
-const getAnalysisReports = (data: any) => {
+// 获取分析报告（返回带稳定 key 的列表，过滤 value_turtle_payload）
+const getAnalysisReports = (data: any): Array<{ key: string; title: string; content: any }> => {
   console.log('📊 getAnalysisReports 输入数据:', data)
-  const reports: Array<{title: string, content: any}> = []
+  const reports: Array<{ key: string; title: string; content: any }> = []
 
   // 优先从 reports 字段获取数据（新的API格式）
   let reportsData = data
@@ -1289,17 +1300,19 @@ const getAnalysisReports = (data: any) => {
     // 兼容旧格式
     { key: 'investment_plan', title: '📋 投资建议', category: '其他' },
     { key: 'investment_debate_state', title: '🔬 研究团队决策（旧）', category: '其他' },
-    { key: 'risk_debate_state', title: '⚖️ 风险管理团队（旧）', category: '其他' }
+    { key: 'risk_debate_state', title: '⚖️ 风险管理团队（旧）', category: '其他' },
   ]
 
-  // 遍历所有可能的报告
+  // Spec 4: value_turtle_payload must never appear as a report tab
   reportMappings.forEach(mapping => {
+    if (mapping.key === 'value_turtle_payload') return
     const content = reportsData[mapping.key]
     if (content) {
       console.log(`📊 找到报告: ${mapping.key} -> ${mapping.title}`)
       reports.push({
+        key: mapping.key,
         title: mapping.title,
-        content: content
+        content: content,
       })
     }
   })
@@ -1308,7 +1321,7 @@ const getAnalysisReports = (data: any) => {
 
   // 设置第一个报告为默认激活标签页
   if (reports.length > 0 && !activeReportTab.value) {
-    activeReportTab.value = '0'
+    activeReportTab.value = reports[0].key
   }
 
   return reports
@@ -3213,7 +3226,8 @@ onMounted(async () => {
   }
 
   /* 单个标签页样式 */
-  :deep(.el-tabs__item) {
+  /* Spec 4 §6.3: scope to ONLY first-level tabs, not nested turtle sub-tabs */
+  > :deep(.el-tabs__header .el-tabs__item) {
     height: 55px !important;
     line-height: 55px !important;
     padding: 0 20px !important;
