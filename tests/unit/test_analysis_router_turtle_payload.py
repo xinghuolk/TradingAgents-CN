@@ -190,3 +190,105 @@ class TestAnalysisReportsBranchPayloadPersistence:
         )
         # The payload must NOT be exposed inside the reports dict (filtered at save time)
         assert "value_turtle_payload" not in data["reports"]
+
+
+class TestAnalysisTasksFallbackPayloadPersistence:
+    """
+    Regression test for the analysis_tasks.result FALLBACK branch in get_task_result.
+
+    The bug: when analysis_reports returns None for BOTH task_id and analysis_id lookups,
+    the router falls back to analysis_tasks.result to build result_data.  Before the fix,
+    that dict omitted value_turtle_payload, so the frontend lost its Turtle sub-tabs.
+
+    The fix: copy value_turtle_payload from r (tasks_doc["result"]) into result_data in
+    the analysis_tasks else-branch, alongside the other r.get(...) fields.
+
+    Test approach: mirrors TestAnalysisReportsBranchPayloadPersistence — same app fixture,
+    same patch targets — but forces the analysis_reports path to return None so the
+    else-branch is taken.
+
+    RED before fix  → endpoint returns value_turtle_payload == ""  (field absent / dropped)
+    GREEN after fix → endpoint returns value_turtle_payload == VALID_PAYLOAD
+    """
+
+    @pytest.fixture(scope="class")
+    def analysis_app(self):
+        """Minimal FastAPI app with just the analysis router, auth stubbed out."""
+        from fastapi import FastAPI
+        from app.routers import analysis as analysis_module
+        from app.routers.auth_db import get_current_user
+
+        _app = FastAPI()
+        _app.include_router(analysis_module.router, prefix="/api/analysis")
+        _app.dependency_overrides[get_current_user] = lambda: {
+            "username": "test", "id": "test-id"
+        }
+        return _app
+
+    def _make_tasks_doc(self) -> dict:
+        """Simulate an analysis_tasks document where result carries value_turtle_payload."""
+        return {
+            "task_id": "t-fallback",
+            "stock_code": "600519",
+            "result": {
+                "analysis_id": "ana-fallback",
+                "stock_symbol": "600519",
+                "analysis_date": "2026-05-25",
+                "summary": "兜底摘要",
+                "recommendation": "买入",
+                "confidence_score": 0.85,
+                "risk_level": "中等",
+                "key_points": [],
+                "execution_time": 2,
+                "tokens_used": 500,
+                "analysts": [],
+                "research_depth": "快速",
+                "state": {},
+                "decision": {},
+                "reports": {"value_report": "# 价值分析\n\n内容。"},
+                # save-time persistence writes value_turtle_payload to top-level of result
+                "value_turtle_payload": VALID_PAYLOAD,
+            },
+        }
+
+    def test_result_endpoint_returns_payload_from_analysis_tasks_fallback_branch(
+        self, analysis_app
+    ):
+        """Fallback path: when analysis_reports is absent, the analysis_tasks.result
+        branch must still carry value_turtle_payload into the response.
+
+        RED before fix  → data["value_turtle_payload"] == ""  (field dropped)
+        GREEN after fix → data["value_turtle_payload"] == VALID_PAYLOAD
+        """
+        tasks_doc = self._make_tasks_doc()
+
+        fake_service = MagicMock()
+        fake_service.get_task_status = AsyncMock(
+            return_value={"status": "completed", "result_data": None}
+        )
+
+        fake_db = MagicMock()
+        # Both analysis_reports lookups return None → forces the else-branch
+        fake_db.analysis_reports.find_one = AsyncMock(return_value=None)
+        # First analysis_tasks lookup: fetch analysis_id (for compat probe)
+        # Second analysis_tasks lookup: fetch the full result doc
+        fake_db.analysis_tasks.find_one = AsyncMock(side_effect=[
+            tasks_doc,  # tasks_doc_for_id lookup (returns analysis_id)
+            tasks_doc,  # full result lookup
+        ])
+
+        with patch(
+            "app.routers.analysis.get_simple_analysis_service",
+            return_value=fake_service,
+        ), patch("app.core.database.get_mongo_db", return_value=fake_db):
+            client = TestClient(analysis_app)
+            resp = client.get("/api/analysis/tasks/t-fallback/result")
+
+        assert resp.status_code == 200, resp.text
+        data = resp.json()["data"]
+        assert data["value_turtle_payload"] == VALID_PAYLOAD, (
+            "analysis_tasks fallback branch must copy value_turtle_payload from r; "
+            "got: " + repr(data.get("value_turtle_payload"))
+        )
+        # The payload must NOT be inside the reports dict
+        assert "value_turtle_payload" not in data["reports"]

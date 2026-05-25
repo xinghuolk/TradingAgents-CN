@@ -185,7 +185,9 @@ export function extractPageRefs(sourceReference: string | null | undefined): num
   if (!sourceReference) return []
   const matches = sourceReference.match(/p\.(\d+)/g)
   if (!matches) return []
-  return matches.map(m => parseInt(m.replace('p.', ''), 10)).filter(n => !isNaN(n))
+  const nums = matches.map(m => parseInt(m.replace('p.', ''), 10)).filter(n => !isNaN(n))
+  // De-duplicate while preserving order (avoids duplicate Vue keys and duplicate chips)
+  return [...new Set(nums)]
 }
 
 // ---------------------------------------------------------------------------

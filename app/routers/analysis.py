@@ -338,6 +338,7 @@ async def get_task_result(
                         "updated_at": tasks_doc.get("completed_at"),
                         "status": r.get("status", "completed"),
                         "decision": r.get("decision", {}),
+                        "value_turtle_payload": r.get("value_turtle_payload", ""),
                         "source": "analysis_tasks"  # 数据来源标记
                     }
 
