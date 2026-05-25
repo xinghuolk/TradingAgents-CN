@@ -210,12 +210,9 @@ services:
 volumes:
   tradingagents_mongodb_data:
     driver: local
-    name: tradingagents_mongodb_data
   tradingagents_redis_data:
     driver: local
-    name: tradingagents_redis_data
 
 networks:
   tradingagents-network:
     driver: bridge
-    name: tradingagents-network

@@ -3208,8 +3208,8 @@ onMounted(async () => {
 }
 
 .analysis-tabs {
-  /* 标签页头部样式 — Spec 4 §6.3: scope to ONLY first-level header */
-  > :deep(.el-tabs__header) {
+  /* 标签页头部样式 */
+  :deep(.el-tabs__header) {
     margin: 0 0 20px 0;
     background: var(--el-fill-color-light);
     padding: 12px;
@@ -3226,8 +3226,7 @@ onMounted(async () => {
   }
 
   /* 单个标签页样式 */
-  /* Spec 4 §6.3: scope to ONLY first-level tabs, not nested turtle sub-tabs */
-  > :deep(.el-tabs__header .el-tabs__item) {
+  :deep(.el-tabs__item) {
     height: 55px !important;
     line-height: 55px !important;
     padding: 0 20px !important;
@@ -3272,12 +3271,12 @@ onMounted(async () => {
     }
   }
 
-  /* 标签页内容区域 — Spec 4 §6.3: scope to ONLY first-level content/pane */
-  > :deep(.el-tabs__content) {
+  /* 标签页内容区域 */
+  :deep(.el-tabs__content) {
     padding: 0;
   }
 
-  > :deep(.el-tabs__content) > .el-tab-pane {
+  :deep(.el-tab-pane) {
     padding: 25px;
     background: var(--el-bg-color);
     border-radius: 15px;
