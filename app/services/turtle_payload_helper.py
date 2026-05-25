@@ -11,10 +11,39 @@ Returns "" when no valid (non-blank) payload found; never raises.
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
 from typing import Any, Optional
 
 logger = logging.getLogger("app.turtle_payload_helper")
+
+
+def resolve_reports_dir(stock_symbol: str | None, analysis_date: str | None) -> Path | None:
+    """Resolve the disk reports directory for a given stock/date (spec §4.2 disk fallback).
+
+    Checks TRADINGAGENTS_RESULTS_DIR env var and several candidate paths.
+    Returns the first existing directory, or None when stock/date is missing or
+    no candidate exists.
+    """
+    if not stock_symbol or not analysis_date:
+        return None
+    date_str = str(analysis_date)[:10]
+    base_env = os.getenv("TRADINGAGENTS_RESULTS_DIR")
+    project_root = Path.cwd()
+    base_path = (
+        Path(base_env)
+        if base_env and Path(base_env).is_absolute()
+        else (project_root / (base_env or "results"))
+    )
+    candidates = [
+        base_path / stock_symbol / date_str / "reports",
+        project_root / "data" / "analysis_results" / stock_symbol / date_str / "reports",
+        project_root / "data" / "analysis_results" / "detailed" / stock_symbol / date_str / "reports",
+    ]
+    for d in candidates:
+        if d.exists() and d.is_dir():
+            return d
+    return None
 
 
 def extract_turtle_payload(

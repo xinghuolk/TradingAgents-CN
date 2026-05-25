@@ -1,11 +1,9 @@
 """
 分析报告管理API路由
 """
-import os
 import json
 from datetime import datetime, timedelta
 from typing import List, Optional, Dict, Any
-from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from fastapi.responses import FileResponse, StreamingResponse
@@ -14,29 +12,10 @@ from pydantic import BaseModel
 from .auth_db import get_current_user
 from ..core.database import get_mongo_db
 from ..utils.timezone import to_config_tz
-from ..services.turtle_payload_helper import extract_turtle_payload
+from ..services.turtle_payload_helper import extract_turtle_payload, resolve_reports_dir
 import logging
 
 logger = logging.getLogger("webapi")
-
-
-def _resolve_reports_dir(stock_symbol: str | None, analysis_date: str | None) -> Path | None:
-    """Resolve the disk reports directory for a given stock/date (spec §4.2 disk fallback)."""
-    if not stock_symbol or not analysis_date:
-        return None
-    date_str = str(analysis_date)[:10]
-    base_env = os.getenv("TRADINGAGENTS_RESULTS_DIR")
-    project_root = Path.cwd()
-    base_path = Path(base_env) if base_env and Path(base_env).is_absolute() else (project_root / (base_env or "results"))
-    candidates = [
-        base_path / stock_symbol / date_str / "reports",
-        project_root / "data" / "analysis_results" / stock_symbol / date_str / "reports",
-        project_root / "data" / "analysis_results" / "detailed" / stock_symbol / date_str / "reports",
-    ]
-    for d in candidates:
-        if d.exists() and d.is_dir():
-            return d
-    return None
 
 # 股票名称缓存
 _stock_name_cache = {}
@@ -323,7 +302,7 @@ async def get_report_detail(
             }
             # Spec 4: extract canonical turtle payload (cross-source + disk fallback)
             _task_result = tasks_doc.get("result") or {}
-            _reports_dir = _resolve_reports_dir(
+            _reports_dir = resolve_reports_dir(
                 _task_result.get("stock_symbol") or tasks_doc.get("stock_code"),
                 _task_result.get("analysis_date"),
             )
@@ -370,7 +349,7 @@ async def get_report_detail(
                 "tokens_used": doc.get("tokens_used", 0)
             }
             # Spec 4: extract canonical turtle payload (cross-source + disk fallback)
-            _reports_dir = _resolve_reports_dir(
+            _reports_dir = resolve_reports_dir(
                 doc.get("stock_symbol"),
                 doc.get("analysis_date"),
             )

@@ -101,7 +101,9 @@
               </el-table-column>
               <el-table-column label="来源引用">
                 <template #default="{ row }">
-                  <div class="source-ref-cell">
+                  <div class="source-ref-cell" :title="row.source_reference">
+                    <!-- Field path (always shown when non-empty) -->
+                    <span v-if="row.parsedRef.rest" class="ref-segment">{{ row.parsedRef.rest }}</span>
                     <!-- Page chips (M2) -->
                     <el-tag
                       v-for="page in row.parsedRef.pages"
@@ -120,11 +122,6 @@
                     <span v-if="row.parsedRef.fx" class="ref-segment ref-fx">FX {{ row.parsedRef.fx }}</span>
                     <!-- fetched_at -->
                     <span v-if="row.parsedRef.fetchedAt" class="ref-segment ref-date">{{ row.parsedRef.fetchedAt }}</span>
-                    <!-- Raw fallback if nothing parsed -->
-                    <span
-                      v-if="!row.parsedRef.pages.length && !row.parsedRef.provider && !row.parsedRef.fx && row.parsedRef.rest"
-                      :title="row.source_reference"
-                    >{{ row.parsedRef.rest }}</span>
                   </div>
                 </template>
               </el-table-column>
@@ -155,7 +152,9 @@
               </el-table-column>
               <el-table-column label="来源引用">
                 <template #default="{ row }">
-                  <div class="source-ref-cell">
+                  <div class="source-ref-cell" :title="row.source_reference">
+                    <!-- Field path (always shown when non-empty) -->
+                    <span v-if="row.parsedRef.rest" class="ref-segment">{{ row.parsedRef.rest }}</span>
                     <el-tag
                       v-for="page in row.parsedRef.pages"
                       :key="page"
@@ -170,10 +169,6 @@
                     <span v-if="row.parsedRef.provider" class="ref-segment">{{ row.parsedRef.provider }}</span>
                     <span v-if="row.parsedRef.fx" class="ref-segment ref-fx">FX {{ row.parsedRef.fx }}</span>
                     <span v-if="row.parsedRef.fetchedAt" class="ref-segment ref-date">{{ row.parsedRef.fetchedAt }}</span>
-                    <span
-                      v-if="!row.parsedRef.pages.length && !row.parsedRef.provider && !row.parsedRef.fx && row.parsedRef.rest"
-                      :title="row.source_reference"
-                    >{{ row.parsedRef.rest }}</span>
                   </div>
                 </template>
               </el-table-column>
@@ -251,6 +246,20 @@
                       size="small"
                       style="margin-right: 4px; margin-bottom: 2px;"
                     >{{ mi }}</el-tag>
+                  </template>
+                  <span v-else>—</span>
+                </template>
+              </el-table-column>
+              <el-table-column label="来源" min-width="160">
+                <template #default="{ row }">
+                  <template v-if="row.sources && row.sources.length > 0">
+                    <el-tag
+                      v-for="src in row.sources"
+                      :key="src"
+                      type="info"
+                      size="small"
+                      style="margin-right: 4px; margin-bottom: 2px;"
+                    >{{ src }}</el-tag>
                   </template>
                   <span v-else>—</span>
                 </template>
