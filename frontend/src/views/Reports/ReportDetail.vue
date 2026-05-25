@@ -225,18 +225,28 @@
         
         <el-tabs v-model="activeModule" type="border-card">
           <el-tab-pane
-            v-for="(content, moduleName) in report.reports"
+            v-for="(content, moduleName) in displayReports"
             :key="moduleName"
-            :label="getModuleDisplayName(moduleName)"
-            :name="moduleName"
+            :label="getModuleDisplayName(String(moduleName))"
+            :name="String(moduleName)"
           >
             <div class="module-content">
-              <div v-if="typeof content === 'string'" class="markdown-content">
-                <div v-html="renderMarkdown(content)"></div>
-              </div>
-              <div v-else class="json-content">
-                <pre>{{ JSON.stringify(content, null, 2) }}</pre>
-              </div>
+              <!-- value_report: use TurtlePayloadPanel (Spec 4 §6.1) -->
+              <template v-if="String(moduleName) === 'value_report'">
+                <TurtlePayloadPanel
+                  :value-report="typeof content === 'string' ? content : ''"
+                  :value-turtle-payload="(report as any)?.value_turtle_payload ?? (report as any)?.reports?.value_turtle_payload ?? ''"
+                />
+              </template>
+              <!-- All other modules: existing rendering -->
+              <template v-else>
+                <div v-if="typeof content === 'string'" class="markdown-content">
+                  <div v-html="renderMarkdown(String(content))"></div>
+                </div>
+                <div v-else class="json-content">
+                  <pre>{{ JSON.stringify(content, null, 2) }}</pre>
+                </div>
+              </template>
             </div>
           </el-tab-pane>
         </el-tabs>
@@ -289,6 +299,7 @@ import { useAuthStore } from '@/stores/auth'
 import { marked } from 'marked'
 import { getMarketByStockCode } from '@/utils/market'
 import type { CurrencyAmount } from '@/api/paper'
+import TurtlePayloadPanel from '@/components/Analysis/TurtlePayloadPanel.vue'
 
 // 路由和认证
 const route = useRoute()
@@ -302,6 +313,13 @@ marked.setOptions({ breaks: true, gfm: true })
 const loading = ref(true)
 const report = ref(null)
 const activeModule = ref('')
+// Spec 4 §6.1: filter value_turtle_payload from normal report tab list
+const displayReports = computed(() => {
+  const reports = (report.value as any)?.reports || {}
+  return Object.fromEntries(
+    Object.entries(reports).filter(([key]) => key !== 'value_turtle_payload')
+  )
+})
 const llmConfigs = ref<LLMConfig[]>([]) // 存储所有模型配置
 
 // 获取模型配置列表
@@ -340,7 +358,7 @@ const fetchReportDetail = async () => {
 
       // 设置默认激活的模块
       const reports = result.data.reports || {}
-      const moduleNames = Object.keys(reports)
+      const moduleNames = Object.keys(reports).filter(k => k !== 'value_turtle_payload')
       if (moduleNames.length > 0) {
         activeModule.value = moduleNames[0]
       }
