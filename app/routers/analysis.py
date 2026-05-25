@@ -17,6 +17,7 @@ from app.services.queue_service import get_queue_service, QueueService
 from app.services.analysis_service import get_analysis_service
 from app.services.simple_analysis_service import get_simple_analysis_service
 from app.services.websocket_manager import get_websocket_manager
+from app.services.turtle_payload_helper import extract_turtle_payload
 from app.models.analysis import (
     SingleAnalysisRequest, BatchAnalysisRequest, AnalysisParameters,
     AnalysisTaskResponse, AnalysisBatchResponse, AnalysisHistoryQuery
@@ -660,7 +661,9 @@ async def get_task_result(
             "detailed_analysis": safe_dict(result_data.get("detailed_analysis")),
             "state": safe_dict(result_data.get("state")),
             # 🔥 关键修复：添加decision字段！
-            "decision": safe_dict(result_data.get("decision"))
+            "decision": safe_dict(result_data.get("decision")),
+            # Spec 4: canonical turtle payload (cross-source extraction)
+            "value_turtle_payload": extract_turtle_payload(result_data),
         }
 
         # 特别处理reports字段 - 确保每个报告都是有效字符串
@@ -670,6 +673,10 @@ async def get_task_result(
         for report_key, report_content in reports_data.items():
             # 确保报告键是字符串
             safe_key = safe_string(report_key, "unknown_report")
+
+            # Spec 4: filter value_turtle_payload from normal reports tab list
+            if safe_key == "value_turtle_payload":
+                continue
 
             # 确保报告内容是非空字符串
             if report_content is None:
