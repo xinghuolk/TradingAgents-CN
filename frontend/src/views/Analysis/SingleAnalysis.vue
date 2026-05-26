@@ -2826,6 +2826,90 @@ onMounted(async () => {
 .step-current .step-icon {
   animation: pulse 2s ease-in-out infinite;
 }
+
+/* 分析报告标签页样式 */
+.analysis-tabs-container {
+  margin-top: 16px;
+}
+
+.analysis-tabs {
+  /* 标签页头部样式 */
+  > :deep(.el-tabs__header) {
+    margin: 0 0 20px 0;
+    background: var(--el-fill-color-light);
+    padding: 12px;
+    border-radius: 15px;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+    border: 1px solid var(--el-border-color);
+  }
+
+  /* 标签页导航 */
+  > :deep(.el-tabs__header .el-tabs__nav-wrap) {
+    &::after {
+      display: none; /* 隐藏默认的底部边框 */
+    }
+  }
+
+  /* 单个标签页样式 */
+  > :deep(.el-tabs__header .el-tabs__item) {
+    height: 55px !important;
+    line-height: 55px !important;
+    padding: 0 20px !important;
+    margin-right: 8px !important;
+    background: var(--el-bg-color) !important;
+    border: 2px solid var(--el-border-color) !important;
+    border-radius: 12px !important;
+    color: var(--el-text-color-regular) !important;
+    font-weight: 600 !important;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.1) !important;
+    position: relative !important;
+    overflow: hidden !important;
+    border-bottom: 2px solid var(--el-border-color) !important; /* 确保底部边框存在 */
+
+    &:hover {
+      background: var(--el-fill-color-light) !important;
+      border-color: #2196f3 !important;
+      transform: translateY(-2px) scale(1.02) !important;
+      box-shadow: 0 4px 15px rgba(33,150,243,0.3) !important;
+      color: #1976d2 !important;
+    }
+
+    &.is-active {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%) !important;
+      color: white !important;
+      border-color: #667eea !important;
+      box-shadow: 0 6px 20px rgba(102,126,234,0.4) !important;
+      transform: translateY(-3px) scale(1.05) !important;
+
+      &::before {
+        content: '';
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: linear-gradient(135deg, rgba(255,255,255,0.2) 0%, rgba(255,255,255,0.1) 100%);
+        border-radius: 10px;
+        pointer-events: none;
+      }
+    }
+  }
+
+  /* 标签页内容区域 */
+  > :deep(.el-tabs__content) {
+    padding: 0;
+  }
+
+  > :deep(.el-tabs__content) > .el-tab-pane {
+    padding: 25px;
+    background: var(--el-bg-color);
+    border-radius: 15px;
+    border: 1px solid var(--el-border-color);
+    box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+    margin-top: 10px;
+  }
+}
 </style>
 
 <style>
@@ -3200,90 +3284,6 @@ onMounted(async () => {
   justify-content: center;
   padding-top: 24px;
   border-top: 1px solid #e5e7eb;
-}
-
-/* 分析报告标签页样式 */
-.analysis-tabs-container {
-  margin-top: 16px;
-}
-
-.analysis-tabs {
-  /* 标签页头部样式 */
-  :deep(.el-tabs__header) {
-    margin: 0 0 20px 0;
-    background: var(--el-fill-color-light);
-    padding: 12px;
-    border-radius: 15px;
-    box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-    border: 1px solid var(--el-border-color);
-  }
-
-  /* 标签页导航 */
-  :deep(.el-tabs__nav-wrap) {
-    &::after {
-      display: none; /* 隐藏默认的底部边框 */
-    }
-  }
-
-  /* 单个标签页样式 */
-  :deep(.el-tabs__item) {
-    height: 55px !important;
-    line-height: 55px !important;
-    padding: 0 20px !important;
-    margin-right: 8px !important;
-    background: var(--el-bg-color) !important;
-    border: 2px solid var(--el-border-color) !important;
-    border-radius: 12px !important;
-    color: var(--el-text-color-regular) !important;
-    font-weight: 600 !important;
-    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.1) !important;
-    position: relative !important;
-    overflow: hidden !important;
-    border-bottom: 2px solid var(--el-border-color) !important; /* 确保底部边框存在 */
-
-    &:hover {
-      background: var(--el-fill-color-light) !important;
-      border-color: #2196f3 !important;
-      transform: translateY(-2px) scale(1.02) !important;
-      box-shadow: 0 4px 15px rgba(33,150,243,0.3) !important;
-      color: #1976d2 !important;
-    }
-
-    &.is-active {
-      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%) !important;
-      color: white !important;
-      border-color: #667eea !important;
-      box-shadow: 0 6px 20px rgba(102,126,234,0.4) !important;
-      transform: translateY(-3px) scale(1.05) !important;
-
-      &::before {
-        content: '';
-        position: absolute;
-        top: 0;
-        left: 0;
-        right: 0;
-        bottom: 0;
-        background: linear-gradient(135deg, rgba(255,255,255,0.2) 0%, rgba(255,255,255,0.1) 100%);
-        border-radius: 10px;
-        pointer-events: none;
-      }
-    }
-  }
-
-  /* 标签页内容区域 */
-  :deep(.el-tabs__content) {
-    padding: 0;
-  }
-
-  :deep(.el-tab-pane) {
-    padding: 25px;
-    background: var(--el-bg-color);
-    border-radius: 15px;
-    border: 1px solid var(--el-border-color);
-    box-shadow: 0 4px 15px rgba(0,0,0,0.1);
-    margin-top: 10px;
-  }
 }
 
 /* 报告头部样式 */
