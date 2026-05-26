@@ -304,20 +304,22 @@
       _derive_report_payout_fields(adapted, caveats)
   ```
 
-- [ ] **Step 1.5: Run report adapter tests**
+- [ ] **Step 1.5: Migrate existing caveat assertions, then run report adapter tests**
 
-  Run:
-
-  ```bash
-  python -m pytest tests/unit/test_turtle_report_adapter.py -v
-  ```
-
-  Expected: all report adapter tests pass. Update the existing expected caveat strings exactly as follows:
+  Step 1.4 renamed the skip caveats from `"report payout proxy skipped: ..."` to `"report payout ratio skipped: ..."`. First update the existing assertions in `test_turtle_report_adapter.py` that use the old `proxy` wording:
 
   ```python
   assert "report payout ratio skipped: invalid payout ratio" in facts.caveats
   assert "report payout ratio skipped: currency mismatch" in facts.caveats
   ```
+
+  Then run:
+
+  ```bash
+  python -m pytest tests/unit/test_turtle_report_adapter.py -v
+  ```
+
+  Expected: all report adapter tests pass.
 
 - [ ] **Step 1.6: Commit**
 
@@ -463,6 +465,8 @@
 
 ## Task 3: Calculation Input Resolvers And `payout_M`
 
+> **Green-at-commit unit (Tasks 3–5):** Step 3.1 rewrites the shared `base_facts(...)` fixture, which payout (Task 3), buyback (Task 4), and status aggregation (Task 5) all depend on. These three tasks all touch the same two files (`calculations.py` + `test_turtle_calculations.py`) and the suite is **intentionally red between Step 3.1 and Step 5.4**. **Do NOT commit at the end of Task 3 or Task 4** — there is a single commit at **Step 5.5** once the whole file is green. Treat the red checks in Steps 3.3 / 4.2 / 5.2 as in-unit TDD red bars, not commit points.
+
 **Files:**
 - Modify: `tradingagents/dataflows/value_investment/turtle/calculations.py`
 - Test: `tests/unit/test_turtle_calculations.py`
@@ -482,7 +486,7 @@
       )
 
 
-  def report_history(*period_ratios, buyback_values=(10, 8)):
+  def report_history(*period_ratios, buyback_values=(10, 8), currency="CNY"):
       historical = {}
       for offset, payout_ratio in enumerate(period_ratios, start=1):
           fields = {}
@@ -497,9 +501,18 @@
                   "buyback_amount",
                   buyback_values[offset - 1],
                   f"report.buyback.{offset}",
+                  currency=currency,
               )
           historical[f"{2025 - offset}-12-31"] = TurtleReportFacts(fields=fields)
       return historical
+  ```
+
+  Add a `report_currency="CNY"` keyword to the `base_facts(...)` signature so report-side payout/buyback defaults and history can match a test's report currency (HK/FX tests need this — see the migration table below):
+
+  ```python
+  def base_facts(*, market="A", report_fields=None, market_fields=None,
+                 report_metadata=None, caveats=None, status="complete",
+                 report_currency="CNY"):
   ```
 
   Update `report_defaults` inside `base_facts(...)`:
@@ -516,19 +529,21 @@
               0.5,
               "report.payout.latest",
           ),
-          "buyback_amount": money("buyback_amount", 12, "report.buyback.latest"),
+          "buyback_amount": money("buyback_amount", 12, "report.buyback.latest", currency=report_currency),
       }
   ```
 
-  When constructing the report in `base_facts(...)`, pass default history:
+  When constructing the report in `base_facts(...)`, pass default history in the same currency:
 
   ```python
       report = TurtleReportFacts(
           fields=report_defaults,
           metadata=report_metadata or {},
-          historical=report_history(0.4, 0.6),
+          historical=report_history(0.4, 0.6, currency=report_currency),
       )
   ```
+
+  With these defaults the report-side buyback 3y average is `mean(latest 12, hist 10, hist 8) = 10` and `payout_3y_avg = mean(0.5, 0.4, 0.6) = 0.5`, so the happy-path `R = (100·0.5·0.8 + 10)/1000·100 = 5.0` (and `GG = 5.0`, `HH = 0.0`).
 
   Remove `buyback_amount`, `avg_payout_ratio_3y`, and `dividend_avg_payout_ratio_3y` from `market_defaults`. Keep only:
 
@@ -539,6 +554,35 @@
           "rf_rate": number("rf_rate", 0.03, "market.rf"),
       }
   ```
+
+- [ ] **Step 3.1b: Migrate existing `test_turtle_calculations.py` tests broken by the fixture change**
+
+  The new `base_facts` (report-side payout/buyback, no market payout/buyback) breaks the existing tests below. Apply each verdict **in this same edit** so the file reaches green by Step 5.4. Recompute rule for any kept R/GG: `buyback_amount_3y_avg = mean(report latest + historical buyback)`, payout from report `dividend_payout_ratio_current_year`; market-side buyback/payout never used.
+
+  **DELETE (behavior removed by Spec 2 or superseded by a new test):**
+
+  | Test | Reason |
+  |------|--------|
+  | `test_compute_turtle_signals_calculates_r_gg_hh` | superseded by `..._calculates_payout_m_r_gg_hh` (asserts old `payout_anchor`) |
+  | `test_compute_turtle_signals_accepts_integrated_dividend_payout_field` | market payout fallback removed |
+  | `test_compute_turtle_signals_uses_reliable_later_numeric_alias_when_first_alias_display_only` | market payout alias fallback removed |
+  | `test_compute_turtle_signals_degrades_without_buyback` | superseded by `..._report_buyback_missing_degrades_r_gg_only` (Task 4) |
+  | `test_compute_turtle_signals_degrades_when_only_buyback_currency_needs_missing_fx` | market buyback no longer feeds formula/FX; superseded by Task 6 + `..._market_buyback_only_is_excluded_from_formula` |
+  | `test_compute_turtle_signals_keeps_hh_complete_without_buyback` | superseded by Task 4's `report_buyback_missing_degrades_r_gg_only` (asserts HH complete) |
+  | `test_compute_turtle_signals_degrades_when_caveats_exist_with_complete_critical_results` | replaced by Task 5.1 (material vs context-only) |
+
+  **REWRITE the 6 HK/FX tests** — for each: (a) remove the market-side `"buyback_amount": money(...)` line from `market_fields`; (b) pass `report_currency="HKD"` when the report core money is HKD (so report-side buyback/history matches), else leave default `"CNY"`. Values/statuses are otherwise unchanged because report buyback (3y avg 10) replaces the old market buyback (10) in the same currency:
+
+  | Test | `report_currency` | Unchanged assertions |
+  |------|-------------------|----------------------|
+  | `..._converts_mixed_hkd_money_with_report_fx_rates` | `"CNY"` (report CNY, market_cap HKD) | R/GG=5.0, FX `HKD:CNY=0.92` source present |
+  | `..._uses_common_hkd_currency_without_fx_rates` | `"HKD"` | R/GG=5.0, owner_earnings unit `hundred_million HKD`, no HKD:CNY FX |
+  | `..._keeps_r_gg_complete_when_only_net_cash_currency_mixed` | `"HKD"` | R/GG complete=5.0, net_cash non_decisionable, FX HKD:CNY caveat |
+  | `..._ignores_unrelated_money_field_currency_for_hkd_native_calculation` | `"HKD"` | R=5.0, no HKD:CNY FX |
+  | `..._ignores_unrelated_fx_rates_for_hkd_native_calculation` | `"HKD"` | R=5.0, no HKD:CNY FX |
+  | `..._mixed_formula_currencies_require_relevant_fx` | `"CNY"` | non_decisionable, FX HKD:CNY required |
+
+  **KEEP unchanged** (do not touch payout/buyback semantics): `switches_to_ev_when_cash_is_large`, `is_non_decisionable_without_market_cap`, `rejects_zero_market_cap`, `rejects_negative_market_cap`, `marks_ev_related_results_non_decisionable_without_market_cap`, `preserves_unsupported_input_status`, `treats_money_conversion_failure_as_missing`, `target_currency_ignores_invalid_first_money_candidate`, `rejects_bool_money_value`, `rejects_display_only_money_fact_for_critical_formula`, `rejects_display_only_numeric_fact_for_critical_formula`, `uses_reliable_market_fallback_when_report_fact_display_only` (R stays 5.0), `is_non_decisionable_when_hk_fx_rate_missing`, the `TestEvSwitchAndCashProtectionNonDecisionable` class, the `_money_hm_report_3y_avg`/`_number_report_3y_avg` helper test classes, and the `money_fact_currencies_*` tests. Run them after the code lands; if any KEEP test fails, recompute with the rule above before editing an assertion.
 
 - [ ] **Step 3.2: Write failing payout_M tests**
 
@@ -554,8 +598,8 @@
       assert signals.results["payout_M"].value == pytest.approx(0.5)
       assert signals.results["payout_M"].status == "complete"
       assert "commitment_ratio=null" in signals.results["payout_M"].substitution
-      assert signals.results["R"].value == pytest.approx(4.9)
-      assert signals.results["GG"].value == pytest.approx(4.9)
+      assert signals.results["R"].value == pytest.approx(5.0)
+      assert signals.results["GG"].value == pytest.approx(5.0)
       assert signals.results["HH"].value == pytest.approx(0.0)
 
 
@@ -622,7 +666,10 @@
 
       signals = compute_turtle_signals(facts)
 
-      assert signals.results["payout_M"].value == pytest.approx(0.45)
+      # payout_3y_avg = mean(latest 0.5, hist 0.4) = 0.45 (2/3 periods);
+      # payout_M = max(0.45, latest_signal 0.5) = 0.5
+      assert signals.results["payout_M"].value == pytest.approx(0.5)
+      assert "payout_3y_avg=0.45" in signals.results["payout_M"].substitution
       assert signals.results["payout_M"].status == "degraded"
       assert "dividend_payout_ratio_current_year_3y_avg computed from 2/3 periods" in signals.caveats
 
@@ -754,6 +801,8 @@
   def _new_caveats(before: set[str], caveats: list[str]) -> list[str]:
       return [caveat for caveat in caveats if caveat not in before]
   ```
+
+  ⚠️ The first six strings in `CONTEXT_ONLY_CAVEATS` are the **same** action-caveat strings as `market_adapter.CONTEXT_ONLY_ACTION_CAVEATS` (Task 2). They must stay in sync — if a market action caveat string is reworded, update both sets. A regression test (Step 5.1's `..._does_not_degrade_for_context_only_action_caveat`) locks the shared subset; keep it.
 
 - [ ] **Step 3.5: Add report-only numeric helper and payout resolver**
 
@@ -893,23 +942,11 @@
     -k "payout_m or calculates_payout" -v
   ```
 
-  Expected: the payout tests pass. Other calculation tests still fail until buyback and status tasks migrate old assumptions.
+  Expected: the payout_M tests pass. Other calculation tests are still red until the buyback (Task 4) and status (Task 5) code lands — this is expected within the Tasks 3–5 green-at-commit unit (the DELETE/REWRITE/KEEP migration was already applied in Step 3.1b). Do not commit here (Step 3.8).
 
-  Delete these old tests after the new market-ignore coverage above exists:
+- [ ] **Step 3.8: Do not commit yet**
 
-  ```text
-  test_compute_turtle_signals_accepts_integrated_dividend_payout_field
-  test_compute_turtle_signals_uses_reliable_later_numeric_alias_when_first_alias_display_only
-  ```
-
-  They verify market payout fallback, which Spec 2 intentionally removes.
-
-- [ ] **Step 3.8: Commit**
-
-  ```bash
-  git add tradingagents/dataflows/value_investment/turtle/calculations.py tests/unit/test_turtle_calculations.py
-  git commit -m "feat(turtle): resolve report-side payout_M"
-  ```
+  Tasks 3–5 are one green-at-commit unit (see the note under the Task 3 heading). `test_turtle_calculations.py` is still red here (buyback and status migration land in Tasks 4–5). **Do not commit.** Proceed to Task 4. The single commit for Tasks 3–5 is Step 5.5.
 
 ---
 
@@ -927,8 +964,8 @@
   def test_compute_turtle_signals_uses_report_side_buyback_3y_average():
       signals = compute_turtle_signals(base_facts())
 
-      assert signals.results["R"].value == pytest.approx(4.9)
-      assert signals.results["GG"].value == pytest.approx(4.9)
+      assert signals.results["R"].value == pytest.approx(5.0)
+      assert signals.results["GG"].value == pytest.approx(5.0)
       assert "buyback_amount_3y_avg" in signals.results["R"].formula
       assert "+ 10" in signals.results["R"].substitution
       assert "market.buyback" not in signals.results["R"].sources
@@ -939,7 +976,7 @@
           "buyback_amount": money("buyback_amount", 999, "market.buyback"),
       }))
 
-      assert signals.results["R"].value == pytest.approx(4.9)
+      assert signals.results["R"].value == pytest.approx(5.0)
       assert "market.buyback" not in signals.results["R"].sources
 
 
@@ -1109,7 +1146,7 @@
       formula="GG = (owner_earnings * M * (1 - Q) + buyback_amount_3y_avg) / market_cap * 100",
   ```
 
-  Leave HH `missing_inputs` built only from `r_critical_missing` and `gg_critical_missing`; do not merge `r_degraded_buyback_missing` or `gg_degraded_buyback_missing` into HH.
+  Keep merging the degraded-buyback missing key into **R's** and **GG's** own `missing_inputs` (so each reports `buyback_amount_3y_avg` when 0-substituted) — i.e. `r_missing` still merges `r_degraded_buyback_missing`, and `gg_missing` still merges `gg_degraded_buyback_missing`, exactly as the current code merges the old buyback-missing key. But leave **HH** `missing_inputs` built only from `r_critical_missing` and `gg_critical_missing` (the existing `_merge_missing(r_critical_missing, gg_critical_missing)` at the HH result); do **not** merge `r_degraded_buyback_missing`/`gg_degraded_buyback_missing` into HH. The variable was only renamed from the old buyback flow; do not drop the R/GG merge while renaming.
 
 - [ ] **Step 4.6: Run buyback and HH tests**
 
@@ -1122,12 +1159,9 @@
 
   Expected: buyback/HH tests pass. Some status aggregation tests may still fail until Task 5.
 
-- [ ] **Step 4.7: Commit**
+- [ ] **Step 4.7: Do not commit yet**
 
-  ```bash
-  git add tradingagents/dataflows/value_investment/turtle/calculations.py tests/unit/test_turtle_calculations.py
-  git commit -m "feat(turtle): use report-side buyback amount 3y average"
-  ```
+  Still inside the Tasks 3–5 unit; status aggregation (Task 5) has not landed, so the suite is still red. **Do not commit.** Proceed to Task 5; the single commit is Step 5.5.
 
 ---
 
@@ -1227,13 +1261,15 @@
   python -m pytest tests/unit/test_turtle_calculations.py -v
   ```
 
-  Expected: all calculation tests pass after updating old expectations from `payout_anchor` to `payout_M`, from market payout to report payout, and from `buyback_amount` missing key to `buyback_amount_3y_avg`.
+  Expected: **all** of `test_turtle_calculations.py` is green. The old-expectation migration (DELETE/REWRITE/KEEP) was already applied in Step 3.1b; if anything is still red, fix it here per that table before committing.
 
-- [ ] **Step 5.5: Commit**
+- [ ] **Step 5.5: Commit Tasks 3–5 (single green commit)**
+
+  This is the one commit for the entire Tasks 3–5 unit (payout_M + report buyback + core status aggregation). Only commit once Step 5.4 is fully green.
 
   ```bash
   git add tradingagents/dataflows/value_investment/turtle/calculations.py tests/unit/test_turtle_calculations.py
-  git commit -m "fix(turtle): aggregate signal status from core material results"
+  git commit -m "feat(turtle): report-side payout_M, buyback 3y avg, and core-material status aggregation"
   ```
 
 ---
@@ -1382,7 +1418,7 @@
       )
       prompt = build_turtle_decision_prompt(facts, signals)
 
-      assert "分红按 holding_channel 扣税" in prompt
+      assert "分红按 holding_channel 对应 tax_rate 扣税" in prompt
       assert "注销型回购" in prompt
       assert "buyback_amount_3y_avg" in prompt
       assert "repurchase_of_stock" in prompt
@@ -1400,7 +1436,7 @@
   def test_plain_turtle_report_prompt_rehydrates_new_payout_m_payload():
       from tradingagents.agents.analysts import value_analyst as va
 
-      payload = _va_payload()
+      payload = _va_payload(with_market_metadata=True)
       data = json.loads(payload)
       data["signals"]["results"] = {
           "payout_M": {
@@ -1426,7 +1462,7 @@
   def test_plain_turtle_report_prompt_rehydrates_legacy_payout_anchor_payload():
       from tradingagents.agents.analysts import value_analyst as va
 
-      payload = _va_payload()
+      payload = _va_payload(with_market_metadata=True)
       data = json.loads(payload)
       data["signals"]["results"] = {
           "payout_anchor": {
@@ -1462,9 +1498,18 @@
 
 - [ ] **Step 7.4: Add Spec 2 caveat instructions to decision prompt**
 
-  In `build_turtle_decision_prompt(...)`, add this paragraph before `"## 输出结构\n"`:
+  `build_turtle_decision_prompt(...)` is a single `return "\n\n".join([...string-literal list...])` (`decision.py:47-77`). Insert a new list element right after `signals_to_markdown(signals),` and before the `"## 输出结构\n"` element. Replace:
 
   ```python
+              signals_to_markdown(signals),
+              (
+                  "## 输出结构\n"
+  ```
+
+  with:
+
+  ```python
+              signals_to_markdown(signals),
               (
                   "## Turtle v0.15 Spec 2 口径说明\n"
                   "- 分红按 holding_channel 对应 tax_rate 扣税；注销型回购对继续持有股东无即时税务事件，"
@@ -1477,7 +1522,11 @@
                   "且它同时是 payout_3y_avg 的成员；在支付率上行、亏损年被排除或承诺上限缺失时，"
                   "payout_M 与 R/GG 可能偏高。"
               ),
+              (
+                  "## 输出结构\n"
   ```
+
+  (The trailing `"## 输出结构\n"` line is kept only to anchor the insertion; do not duplicate the rest of that element.)
 
 - [ ] **Step 7.5: Run prompt/rehydration tests**
 
@@ -1522,6 +1571,16 @@
   ```
 
   Expected: all selected tests pass.
+
+- [ ] **Step 8.1b: Run the full Turtle suite to catch cross-module regressions**
+
+  The base_facts / payout_M / status changes could affect tests outside the six focused files (e.g. `test_turtle_facts.py`, `test_turtle_multi_period.py`, `test_turtle_payload_helper.py`, `test_turtle_fx.py`, `test_turtle_save_canonical_payload.py`, and the router/service payload suites). Run:
+
+  ```bash
+  python -m pytest tests/unit -k turtle -v
+  ```
+
+  Expected: all turtle tests pass. If a router/service/payload-helper test (hardcoded JSON fixtures) or a multi-period test breaks, fix it here before proceeding.
 
 - [ ] **Step 8.2: Run frontend type-check**
 
@@ -1624,3 +1683,5 @@
 - [ ] Spec §6.1/§6.2: `signals.status` ignores `facts.status` and only material caveats degrade it.
 - [ ] Spec §9: market-only buyback does not trigger formula FX and gets a context-only exclusion caveat.
 - [ ] Spec §10.4: old `payout_anchor` payload rehydrates, but new production results do not produce it.
+- [ ] Spec §10.1 coverage: add a `test_turtle_report_adapter.py` test asserting an **unreliable** `dividends_paid` does not derive `dividend_payout_ratio_current_year` (the `_reliable_money_field` guard). Not yet in the Task 1 test block.
+- [ ] Spec §5.1/§10.2 coverage: add a `test_turtle_calculations.py` test for the "only 3y-avg present, latest_signal missing → `degraded` decisionable" row (latest report lacks `dividend_payout_ratio_current_year` while ≥2 historical periods carry it). Not yet in the Task 3 test block.
