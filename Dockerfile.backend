@@ -5,8 +5,14 @@
 # 使用 Debian Bookworm (稳定版) 而不是 Trixie (测试版)
 FROM python:3.11-slim-bookworm
 
-# 获取构建架构信息
-ARG TARGETARCH
+ARG DEBIAN_MIRROR=http://mirrors.tuna.tsinghua.edu.cn/debian
+ARG DEBIAN_SECURITY_MIRROR=http://mirrors.tuna.tsinghua.edu.cn/debian-security
+ARG PYPI_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
+# GitHub 代理：默认直连 GitHub（rev 已 pin，tarball 由 GitHub 内容寻址保证）。
+# 第三方代理（如 gh-proxy.com）返回的可执行字节不经哈希/签名校验，故仅 opt-in：
+# 需要时显式 --build-arg GITHUB_PROXY=https://gh-proxy.com/
+ARG GITHUB_PROXY=
+ARG FINANCIAL_REPORT_EXTRACTOR_REV=b03775925a5be22f31c4d67e90f88c5842ecaec6
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -17,10 +23,14 @@ WORKDIR /app
 
 # 创建必需的目录并安装系统依赖
 # - curl: 健康检查
-# - pandoc: 从 GitHub 下载最新版本（避免 Debian 仓库问题）
-# - wkhtmltopdf: 从官方下载（用于 PDF 生成）
+# - pandoc/wkhtmltopdf: 从 Debian 国内镜像安装，避免 Docker 构建访问 GitHub Release
 # - 中文字体: 用于 PDF 中文显示
 RUN mkdir -p /app/logs /app/data /app/config && \
+    # 切换 Debian apt 源到国内镜像
+    sed -i \
+        -e "s|http://deb.debian.org/debian|${DEBIAN_MIRROR}|g" \
+        -e "s|http://deb.debian.org/debian-security|${DEBIAN_SECURITY_MIRROR}|g" \
+        /etc/apt/sources.list.d/debian.sources && \
     # 配置 apt 重试和超时
     echo 'Acquire::Retries "3";' > /etc/apt/apt.conf.d/80-retries && \
     echo 'Acquire::http::Timeout "30";' >> /etc/apt/apt.conf.d/80-retries && \
@@ -32,25 +42,10 @@ RUN mkdir -p /app/logs /app/data /app/config && \
         curl \
         fontconfig \
         fonts-noto-cjk \
-        wget \
+        git \
+        pandoc \
+        wkhtmltopdf \
         xvfb && \
-    # 根据架构设置变量
-    if [ "$TARGETARCH" = "arm64" ]; then \
-        PANDOC_ARCH="arm64"; \
-        WKHTMLTOPDF_ARCH="arm64"; \
-    else \
-        PANDOC_ARCH="amd64"; \
-        WKHTMLTOPDF_ARCH="amd64"; \
-    fi && \
-    # 下载并安装 pandoc
-    wget -q https://github.com/jgm/pandoc/releases/download/3.8.2.1/pandoc-3.8.2.1-1-${PANDOC_ARCH}.deb && \
-    dpkg -i pandoc-3.8.2.1-1-${PANDOC_ARCH}.deb && \
-    rm pandoc-3.8.2.1-1-${PANDOC_ARCH}.deb && \
-    # 下载并安装 wkhtmltopdf
-    wget -q https://github.com/wkhtmltopdf/packaging/releases/download/0.12.6.1-3/wkhtmltox_0.12.6.1-3.bookworm_${WKHTMLTOPDF_ARCH}.deb && \
-    apt-get install -y --no-install-recommends \
-        ./wkhtmltox_0.12.6.1-3.bookworm_${WKHTMLTOPDF_ARCH}.deb && \
-    rm wkhtmltox_0.12.6.1-3.bookworm_${WKHTMLTOPDF_ARCH}.deb && \
     # 更新字体缓存
     fc-cache -fv && \
     rm -rf /var/lib/apt/lists/*
@@ -63,10 +58,12 @@ COPY pyproject.toml README.md ./
 # 1. 使用清华镜像加速下载
 # 2. 优先使用预编译的二进制wheel包（--prefer-binary）
 # 3. 避免从源码编译，大幅提升ARM架构构建速度
-# 4. 安装 PDF 导出工具: pdfkit
-RUN pip install --upgrade pip -i https://pypi.tuna.tsinghua.edu.cn/simple && \
-    pip install --prefer-binary . -i https://pypi.tuna.tsinghua.edu.cn/simple && \
-    pip install --prefer-binary pdfkit -i https://pypi.tuna.tsinghua.edu.cn/simple
+# 4. 显式安装 GitHub pin 的 financial-report-llm-extractor；pip 不读取 [tool.uv.sources]，默认走 GitHub 代理
+# 5. 安装 PDF 导出工具: pdfkit
+RUN pip install --upgrade pip -i "${PYPI_INDEX_URL}" && \
+    pip install --prefer-binary "${GITHUB_PROXY}https://github.com/xinghuolk/financial-report-llm-extractor/archive/${FINANCIAL_REPORT_EXTRACTOR_REV}.tar.gz" -i "${PYPI_INDEX_URL}" && \
+    pip install --prefer-binary . -i "${PYPI_INDEX_URL}" && \
+    pip install --prefer-binary pdfkit -i "${PYPI_INDEX_URL}"
 
 # 复制后端代码和必需模块
 COPY app ./app

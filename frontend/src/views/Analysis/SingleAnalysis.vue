@@ -605,9 +605,9 @@
                       :key="analysisResults?.id || 'default'"
                     >
                       <el-tab-pane
-                        v-for="(report, key) in getAnalysisReports(analysisResults)"
-                        :key="key"
-                        :name="key.toString()"
+                        v-for="report in getAnalysisReports(analysisResults)"
+                        :key="report.key"
+                        :name="report.key"
                         :label="report.title"
                         class="report-tab-pane"
                       >
@@ -622,14 +622,24 @@
 
                         <!-- 报告内容 -->
                         <div class="report-content-wrapper">
-                          <div
-                            class="report-content"
-                            v-html="formatReportContent(report.content)"
-                            v-if="report.content"
-                          ></div>
-                          <div v-else class="no-content">
-                            <el-empty description="暂无内容" />
-                          </div>
+                          <!-- value_report: use TurtlePayloadPanel (Spec 4 §6.2) -->
+                          <template v-if="report.key === 'value_report'">
+                            <TurtlePayloadPanel
+                              :value-report="typeof report.content === 'string' ? report.content : ''"
+                              :value-turtle-payload="analysisResults?.value_turtle_payload ?? analysisResults?.reports?.value_turtle_payload ?? ''"
+                            />
+                          </template>
+                          <!-- All other reports: existing rendering -->
+                          <template v-else>
+                            <div
+                              class="report-content"
+                              v-html="formatReportContent(report.content)"
+                              v-if="report.content"
+                            ></div>
+                            <div v-else class="no-content">
+                              <el-empty description="暂无内容" />
+                            </div>
+                          </template>
                         </div>
                       </el-tab-pane>
                     </el-tabs>
@@ -712,6 +722,7 @@ import { useAppStore } from '@/stores/app'
 import { useAuthStore } from '@/stores/auth'
 import { configApi } from '@/api/config'
 import DeepModelSelector from '@/components/DeepModelSelector.vue'
+import TurtlePayloadPanel from '@/components/Analysis/TurtlePayloadPanel.vue'
 import { ANALYSTS, convertAnalystNamesToIds } from '@/constants/analysts'
 import { marked } from 'marked'
 import { recommendModels, validateModels, type ModelRecommendationResponse } from '@/api/modelCapabilities'
@@ -1242,10 +1253,10 @@ const getActionTagType = (action: string): 'primary' | 'success' | 'warning' | '
   return actionTypes[action] || 'info'
 }
 
-// 获取分析报告
-const getAnalysisReports = (data: any) => {
+// 获取分析报告（返回带稳定 key 的列表，过滤 value_turtle_payload）
+const getAnalysisReports = (data: any): Array<{ key: string; title: string; content: any }> => {
   console.log('📊 getAnalysisReports 输入数据:', data)
-  const reports: Array<{title: string, content: any}> = []
+  const reports: Array<{ key: string; title: string; content: any }> = []
 
   // 优先从 reports 字段获取数据（新的API格式）
   let reportsData = data
@@ -1289,17 +1300,19 @@ const getAnalysisReports = (data: any) => {
     // 兼容旧格式
     { key: 'investment_plan', title: '📋 投资建议', category: '其他' },
     { key: 'investment_debate_state', title: '🔬 研究团队决策（旧）', category: '其他' },
-    { key: 'risk_debate_state', title: '⚖️ 风险管理团队（旧）', category: '其他' }
+    { key: 'risk_debate_state', title: '⚖️ 风险管理团队（旧）', category: '其他' },
   ]
 
-  // 遍历所有可能的报告
+  // Spec 4: value_turtle_payload must never appear as a report tab
   reportMappings.forEach(mapping => {
+    if (mapping.key === 'value_turtle_payload') return
     const content = reportsData[mapping.key]
     if (content) {
       console.log(`📊 找到报告: ${mapping.key} -> ${mapping.title}`)
       reports.push({
+        key: mapping.key,
         title: mapping.title,
-        content: content
+        content: content,
       })
     }
   })
@@ -1308,7 +1321,7 @@ const getAnalysisReports = (data: any) => {
 
   // 设置第一个报告为默认激活标签页
   if (reports.length > 0 && !activeReportTab.value) {
-    activeReportTab.value = '0'
+    activeReportTab.value = reports[0].key
   }
 
   return reports
@@ -2813,6 +2826,90 @@ onMounted(async () => {
 .step-current .step-icon {
   animation: pulse 2s ease-in-out infinite;
 }
+
+/* 分析报告标签页样式 */
+.analysis-tabs-container {
+  margin-top: 16px;
+}
+
+.analysis-tabs {
+  /* 标签页头部样式 */
+  > :deep(.el-tabs__header) {
+    margin: 0 0 20px 0;
+    background: var(--el-fill-color-light);
+    padding: 12px;
+    border-radius: 15px;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+    border: 1px solid var(--el-border-color);
+  }
+
+  /* 标签页导航 */
+  > :deep(.el-tabs__header .el-tabs__nav-wrap) {
+    &::after {
+      display: none; /* 隐藏默认的底部边框 */
+    }
+  }
+
+  /* 单个标签页样式 */
+  > :deep(.el-tabs__header .el-tabs__item) {
+    height: 55px !important;
+    line-height: 55px !important;
+    padding: 0 20px !important;
+    margin-right: 8px !important;
+    background: var(--el-bg-color) !important;
+    border: 2px solid var(--el-border-color) !important;
+    border-radius: 12px !important;
+    color: var(--el-text-color-regular) !important;
+    font-weight: 600 !important;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.1) !important;
+    position: relative !important;
+    overflow: hidden !important;
+    border-bottom: 2px solid var(--el-border-color) !important; /* 确保底部边框存在 */
+
+    &:hover {
+      background: var(--el-fill-color-light) !important;
+      border-color: #2196f3 !important;
+      transform: translateY(-2px) scale(1.02) !important;
+      box-shadow: 0 4px 15px rgba(33,150,243,0.3) !important;
+      color: #1976d2 !important;
+    }
+
+    &.is-active {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%) !important;
+      color: white !important;
+      border-color: #667eea !important;
+      box-shadow: 0 6px 20px rgba(102,126,234,0.4) !important;
+      transform: translateY(-3px) scale(1.05) !important;
+
+      &::before {
+        content: '';
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: linear-gradient(135deg, rgba(255,255,255,0.2) 0%, rgba(255,255,255,0.1) 100%);
+        border-radius: 10px;
+        pointer-events: none;
+      }
+    }
+  }
+
+  /* 标签页内容区域 */
+  > :deep(.el-tabs__content) {
+    padding: 0;
+  }
+
+  > :deep(.el-tabs__content) > .el-tab-pane {
+    padding: 25px;
+    background: var(--el-bg-color);
+    border-radius: 15px;
+    border: 1px solid var(--el-border-color);
+    box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+    margin-top: 10px;
+  }
+}
 </style>
 
 <style>
@@ -3187,90 +3284,6 @@ onMounted(async () => {
   justify-content: center;
   padding-top: 24px;
   border-top: 1px solid #e5e7eb;
-}
-
-/* 分析报告标签页样式 */
-.analysis-tabs-container {
-  margin-top: 16px;
-}
-
-.analysis-tabs {
-  /* 标签页头部样式 */
-  :deep(.el-tabs__header) {
-    margin: 0 0 20px 0;
-    background: var(--el-fill-color-light);
-    padding: 12px;
-    border-radius: 15px;
-    box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-    border: 1px solid var(--el-border-color);
-  }
-
-  /* 标签页导航 */
-  :deep(.el-tabs__nav-wrap) {
-    &::after {
-      display: none; /* 隐藏默认的底部边框 */
-    }
-  }
-
-  /* 单个标签页样式 */
-  :deep(.el-tabs__item) {
-    height: 55px !important;
-    line-height: 55px !important;
-    padding: 0 20px !important;
-    margin-right: 8px !important;
-    background: var(--el-bg-color) !important;
-    border: 2px solid var(--el-border-color) !important;
-    border-radius: 12px !important;
-    color: var(--el-text-color-regular) !important;
-    font-weight: 600 !important;
-    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.1) !important;
-    position: relative !important;
-    overflow: hidden !important;
-    border-bottom: 2px solid var(--el-border-color) !important; /* 确保底部边框存在 */
-
-    &:hover {
-      background: var(--el-fill-color-light) !important;
-      border-color: #2196f3 !important;
-      transform: translateY(-2px) scale(1.02) !important;
-      box-shadow: 0 4px 15px rgba(33,150,243,0.3) !important;
-      color: #1976d2 !important;
-    }
-
-    &.is-active {
-      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%) !important;
-      color: white !important;
-      border-color: #667eea !important;
-      box-shadow: 0 6px 20px rgba(102,126,234,0.4) !important;
-      transform: translateY(-3px) scale(1.05) !important;
-
-      &::before {
-        content: '';
-        position: absolute;
-        top: 0;
-        left: 0;
-        right: 0;
-        bottom: 0;
-        background: linear-gradient(135deg, rgba(255,255,255,0.2) 0%, rgba(255,255,255,0.1) 100%);
-        border-radius: 10px;
-        pointer-events: none;
-      }
-    }
-  }
-
-  /* 标签页内容区域 */
-  :deep(.el-tabs__content) {
-    padding: 0;
-  }
-
-  :deep(.el-tab-pane) {
-    padding: 25px;
-    background: var(--el-bg-color);
-    border-radius: 15px;
-    border: 1px solid var(--el-border-color);
-    box-shadow: 0 4px 15px rgba(0,0,0,0.1);
-    margin-top: 10px;
-  }
 }
 
 /* 报告头部样式 */

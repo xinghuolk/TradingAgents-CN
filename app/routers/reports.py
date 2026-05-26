@@ -1,11 +1,9 @@
 """
 分析报告管理API路由
 """
-import os
 import json
 from datetime import datetime, timedelta
 from typing import List, Optional, Dict, Any
-from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from fastapi.responses import FileResponse, StreamingResponse
@@ -14,6 +12,7 @@ from pydantic import BaseModel
 from .auth_db import get_current_user
 from ..core.database import get_mongo_db
 from ..utils.timezone import to_config_tz
+from ..services.turtle_payload_helper import extract_turtle_payload, resolve_reports_dir
 import logging
 
 logger = logging.getLogger("webapi")
@@ -301,6 +300,16 @@ async def get_report_detail(
                 "execution_time": r.get("execution_time", 0),
                 "tokens_used": r.get("tokens_used", 0)
             }
+            # Spec 4: extract canonical turtle payload (cross-source + disk fallback)
+            _task_result = tasks_doc.get("result") or {}
+            _reports_dir = resolve_reports_dir(
+                _task_result.get("stock_symbol") or tasks_doc.get("stock_code"),
+                _task_result.get("analysis_date"),
+            )
+            report["value_turtle_payload"] = extract_turtle_payload(_task_result, reports_dir=_reports_dir)
+            # Filter value_turtle_payload from the normal reports tab list
+            if isinstance(report.get("reports"), dict):
+                report["reports"] = {k: v for k, v in report["reports"].items() if k != "value_turtle_payload"}
         else:
             # 转换为详细格式（analysis_reports 命中）
             stock_symbol = doc.get("stock_symbol", "")
@@ -339,6 +348,15 @@ async def get_report_detail(
                 "execution_time": doc.get("execution_time", 0),
                 "tokens_used": doc.get("tokens_used", 0)
             }
+            # Spec 4: extract canonical turtle payload (cross-source + disk fallback)
+            _reports_dir = resolve_reports_dir(
+                doc.get("stock_symbol"),
+                doc.get("analysis_date"),
+            )
+            report["value_turtle_payload"] = extract_turtle_payload(doc, reports_dir=_reports_dir)
+            # Filter value_turtle_payload from the normal reports tab list
+            if isinstance(report.get("reports"), dict):
+                report["reports"] = {k: v for k, v in report["reports"].items() if k != "value_turtle_payload"}
 
         return {
             "success": True,

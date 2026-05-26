@@ -81,7 +81,7 @@
 | Spec 5：multi-period-extraction | 🟠 | `docs/superpowers/specs/2026-05-22-turtle-multi-period-extraction-design.md` | `docs/superpowers/plans/2026-05-22-turtle-multi-period-extraction.md` | [#9](https://github.com/xinghuolk/TradingAgents-CN/pull/9) | 10 tasks 全绿 + 独立 review 4 项修复（High graceful-failure / M2 thread-safety / M3 strict rehydration / L1 copy）已合入；PR #9 审阅中 |
 | Spec 3：data-source-quality | ⬜ | — | — | — | 与 Spec 5 / 2 / 4 并行可启动；含 FX、source provider、承诺支付率 |
 | Spec 2：model-recalibration | ⬜ | — | — | — | **暂缓**，等 Spec 5 完成；承诺字段来自 Spec 3 可选增强；brainstorming learnings 见 §5 |
-| Spec 4：turtle-data-view-frontend | ⬜ | — | — | — | 阻塞于 Spec 1 backend 部分 |
+| Spec 4：turtle-data-view-frontend | 🟢 | `docs/superpowers/specs/2026-05-25-turtle-data-view-frontend-design.md` | — | — | 设计已确认；value_report 已是 Turtle 价值分析文本，前端顶层仍叫“价值投资分析” |
 
 文档路径约定：
 
@@ -172,11 +172,11 @@
 
 修复项：
 
-- **D 章 frontend tab**：报告 / 数据 / 计算 / 状态四个 Tab
-- 数据 Tab：TurtleFacts 字段表（按 report / market 分组、可点击 PDF 页码定位）
+- **D 章 frontend tab**：在现有“价值投资分析”内部展示报告 / 数据 / 计算 / 状态四个子 Tab（`value_report` 已是 Turtle 价值分析文本）
+- 数据 Tab：TurtleFacts 字段表（按 report / market 分组、历史期折叠展示、页码 chip 预留 PDF 定位）
 - 计算 Tab：TurtleComputedSignals 公式表
-- 状态条：facts.status + signals.status 高亮
-- 与 Spec 1 backend 透传配套；前端属 proprietary `frontend/`
+- 状态 Tab：facts.status + signals.status + caveats / missing_inputs 高亮
+- 与 Spec 1 backend 透传配套；Spec 4 允许最小持久化标准化 + API 透传 canonical `value_turtle_payload`，前端属 proprietary `frontend/`
 
 ## 6. 使用本路线图
 
