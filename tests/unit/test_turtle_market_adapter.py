@@ -423,6 +423,55 @@ class TestMarketAdapterStatus:
         )
         assert facts.status == "complete"
 
+    def test_market_action_missing_caveats_do_not_degrade_market_status(self):
+        facts = build_market_facts(
+            ticker="600519",
+            market="A",
+            holding_channel="long_term_domestic",
+            market_data={"market_cap": 200_000_000_000, "close_price": 1500.0},
+            dividend_data=None,
+            buyback_data=None,
+            industry="白酒",
+            rf_rate=0.025,
+        )
+
+        assert "dividend data missing" in facts.caveats
+        assert "buyback data missing" in facts.caveats
+        assert facts.status == "complete"
+
+    def test_market_partial_action_caveats_do_not_degrade_market_status(self):
+        facts = build_market_facts(
+            ticker="600519",
+            market="A",
+            holding_channel="long_term_domestic",
+            market_data={"market_cap": 200_000_000_000, "close_price": 1500.0},
+            dividend_data={"records": None},
+            buyback_data={"records": []},
+            industry="白酒",
+            rf_rate=0.025,
+        )
+
+        joined = " ".join(facts.caveats)
+        assert "avg_payout_ratio_3y missing" in joined
+        assert "dividend records missing" in joined
+        assert "buyback_amount missing" in joined
+        assert facts.status == "complete"
+
+    def test_market_material_caveat_still_degrades_market_status(self):
+        facts = build_market_facts(
+            ticker="600519",
+            market="A",
+            holding_channel=None,
+            market_data={"market_cap": 200_000_000_000, "close_price": 1500.0},
+            dividend_data=None,
+            buyback_data=None,
+            industry="白酒",
+            rf_rate=0.025,
+        )
+
+        assert any("default holding_channel" in caveat for caveat in facts.caveats)
+        assert facts.status == "degraded"
+
     def test_default_channel_yields_degraded(self):
         facts = build_market_facts(
             ticker="600519",
