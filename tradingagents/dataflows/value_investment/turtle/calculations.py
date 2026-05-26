@@ -164,7 +164,7 @@ def collect_fx_currencies(report: TurtleReportFacts, market: TurtleMarketFacts) 
     currencies: set[str] = set()
     for name in FX_RELEVANT_MONEY_FIELDS:
         cur = _usable_money_currency(report.fields.get(name))
-        if cur is None:
+        if cur is None and name != "buyback_amount":
             cur = _usable_money_currency(market.fields.get(name))
         if cur is not None:
             currencies.add(cur)
