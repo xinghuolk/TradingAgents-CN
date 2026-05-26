@@ -42,7 +42,7 @@
                 │
         ┌───────┴───────┬──────────────┐
         ▼               ▼              ▼
-    Spec 5 🟢       Spec 3 ⬜      Spec 4 ⬜
+    Spec 5 ✅       Spec 3 ✅      Spec 4 ✅
     (multi-period)  (FX + source   (frontend tab)
         │            quality +
         │            承诺支付率)
@@ -78,10 +78,10 @@
 | Spec | 状态 | Spec 文档 | Plan 文档 | PR | 备注 |
 |------|------|----------|-----------|-----|------|
 | Spec 1：correctness-fixes | ✅ | `docs/superpowers/specs/2026-05-21-turtle-correctness-fixes-design.md` | `docs/superpowers/plans/2026-05-21-turtle-correctness-fixes.md` | [#8](https://github.com/xinghuolk/TradingAgents-CN/pull/8) | merged 2026-05-22；30 commits / 379 tests green |
-| Spec 5：multi-period-extraction | 🟠 | `docs/superpowers/specs/2026-05-22-turtle-multi-period-extraction-design.md` | `docs/superpowers/plans/2026-05-22-turtle-multi-period-extraction.md` | [#9](https://github.com/xinghuolk/TradingAgents-CN/pull/9) | 10 tasks 全绿 + 独立 review 4 项修复（High graceful-failure / M2 thread-safety / M3 strict rehydration / L1 copy）已合入；PR #9 审阅中 |
-| Spec 3：data-source-quality | ⬜ | — | — | — | 与 Spec 5 / 2 / 4 并行可启动；含 FX、source provider、承诺支付率 |
-| Spec 2：model-recalibration | ⬜ | — | — | — | **暂缓**，等 Spec 5 完成；承诺字段来自 Spec 3 可选增强；brainstorming learnings 见 §5 |
-| Spec 4：turtle-data-view-frontend | 🟢 | `docs/superpowers/specs/2026-05-25-turtle-data-view-frontend-design.md` | — | — | 设计已确认；value_report 已是 Turtle 价值分析文本，前端顶层仍叫“价值投资分析” |
+| Spec 5：multi-period-extraction | ✅ | `docs/superpowers/specs/2026-05-22-turtle-multi-period-extraction-design.md` | `docs/superpowers/plans/2026-05-22-turtle-multi-period-extraction.md` | [#9](https://github.com/xinghuolk/TradingAgents-CN/pull/9) | merged；10 tasks + 独立 review 4 项修复（High graceful-failure / M2 thread-safety / M3 strict rehydration / L1 copy） |
+| Spec 3：data-source-quality | ✅ | `docs/superpowers/specs/2026-05-23-turtle-data-source-quality-design.md` | `docs/superpowers/plans/2026-05-23-turtle-data-source-quality.md` | [#10](https://github.com/xinghuolk/TradingAgents-CN/pull/10) | merged 2026-05-24；FX 全配对矩阵 + market/FX provenance + 3 轮 review；承诺支付率移入 Spec 2 backlog |
+| Spec 2：model-recalibration | ⬜ | — | — | — | **唯一未启动**；强依赖 Spec 5 ✅（已就绪）；承诺支付率为可选增强（来自 Spec 3，已划入此 spec backlog）；brainstorming learnings 见 §5 |
+| Spec 4：turtle-data-view-frontend | ✅ | `docs/superpowers/specs/2026-05-25-turtle-data-view-frontend-design.md` | `docs/superpowers/plans/2026-05-25-turtle-data-view-frontend.md` | [#11](https://github.com/xinghuolk/TradingAgents-CN/pull/11) | merged；4 子 Tab（报告/数据/计算/状态）+ canonical value_turtle_payload 透传 + 5 轮 PR review |
 
 文档路径约定：
 
@@ -188,6 +188,6 @@
 
 ## 7. 当前进度
 
-- **当前焦点**：Spec 5 实施完成并开 PR #9（10 tasks + 独立 review 后 4 项修复：High graceful-failure 过滤 / M2 per-worker adapter 线程安全 / M3 strict rehydration / L1 copy_historical 深拷贝）。PR #9 审阅中；merge 后 Spec 2（model-recalibration）即可启动（multi-period 数据通道已就位）。
-- **已就绪**：Spec 1 在 main；roadmap 重组为 Spec 1 ✅ → Spec 5 🟠（PR #9）+ Spec 3 ⬜ + Spec 4 ⬜（三条并行链）→ Spec 2 ⬜（依赖 Spec 5）
-- **下一步**：PR #9 review/merge → 解锁 Spec 2；Spec 3 / Spec 4 可随时并行启动。L2（3y_avg per-period caveat）作为 Spec 2 wiring checklist 项（见 Spec 5 §10）
+- **当前焦点**：Spec 1 / 5 / 3 / 4 全部 merged 进 main（PR #8 / #9 / #10 / #11）。roadmap 仅剩 **Spec 2（model-recalibration）**。
+- **已就绪**：Spec 2 的依赖已全部满足——multi-period 数据通道（Spec 5 ✅）+ FX/provenance（Spec 3 ✅）就位；承诺支付率作为 Spec 2 的可选增强（Spec 3 已将其划入 Spec 2 backlog，未在 Spec 3 实现，缺失时 M 降级为 `max(3y avg, 新信号)`）。
+- **下一步**：启动 **Spec 2** —— A.1 时间口径 + M 完整算法 `max(min(3y avg, 承诺), 新信号)` + A.2 税务口径文档化 + A.7 `payout_anchor` 重命名 + buyback O 切 extractor 3y 均值。L2（`_money_hm_report_3y_avg`/`_number_report_3y_avg` 的 per-period skip-reason caveat，见 Spec 5 §10）列为 Spec 2 wiring checklist 项。
