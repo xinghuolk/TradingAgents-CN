@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Iterable
+from dataclasses import dataclass
 
 from .facts import FormulaResult, MoneyAmount, TurtleComputedSignals, TurtleFactValue, TurtleFacts, TurtleMarketFacts, TurtleReportFacts, TurtleStatus, normalize_currency
 
@@ -18,6 +19,53 @@ FX_RELEVANT_MONEY_FIELDS: frozenset[str] = frozenset({
     "cash",
     "interest_bearing_debt",
 })
+
+CURRENT_YEAR_PAYOUT_FIELD = "dividend_payout_ratio_current_year"
+COMMITMENT_CONTEXT_CAVEAT = (
+    "commitment payout ratio not extracted; payout_M uses max(payout_3y_avg, latest_signal) "
+    "without commitment cap"
+)
+BUYBACK_CANCELLATION_CONTEXT_CAVEAT = (
+    "repurchase_of_stock used as buyback_amount input; cancellation progress is not verified"
+)
+MARKET_BUYBACK_EXCLUDED_CAVEAT = (
+    "market buyback_amount present but excluded from R/GG; report-side buyback_amount_3y_avg is required"
+)
+PAYOUT_PROXY_CONTEXT_CAVEAT = "single-year report payout proxy; not a 3-year average"
+CONTEXT_ONLY_CAVEATS = {
+    "dividend data missing",
+    "avg_payout_ratio_3y missing",
+    "dividend records missing",
+    "buyback data missing",
+    "buyback_amount missing",
+    "buyback_amount invalid",
+    COMMITMENT_CONTEXT_CAVEAT,
+    BUYBACK_CANCELLATION_CONTEXT_CAVEAT,
+    MARKET_BUYBACK_EXCLUDED_CAVEAT,
+    PAYOUT_PROXY_CONTEXT_CAVEAT,
+}
+CORE_RESULT_KEYS = {"payout_M", "R", "GG", "HH", "net_cash_ratio", "ev_switch", "cash_protection", "owner_earnings"}
+DECISION_BLOCKING_KEYS = {"payout_M", "R", "GG"}
+
+
+@dataclass(frozen=True)
+class PayoutInputs:
+    payout_3y_avg: float | None
+    latest_signal: float | None
+    commitment_ratio: float | None
+    applied_value: float | None
+    sources: list[str]
+    missing_inputs: list[str]
+    caveats: list[str]
+    status: TurtleStatus
+
+
+@dataclass(frozen=True)
+class BuybackInputs:
+    sources: list[str]
+    missing_inputs: list[str]
+    caveats: list[str]
+    status: TurtleStatus
 
 
 def _field(facts: TurtleFacts, name: str) -> TurtleFactValue | None:
@@ -42,6 +90,18 @@ def _combined_caveats(facts: TurtleFacts) -> list[str]:
 def _append_caveat(caveats: list[str], caveat: str) -> None:
     if caveat not in caveats:
         caveats.append(caveat)
+
+
+def _is_context_only_caveat(caveat: str) -> bool:
+    return caveat in CONTEXT_ONLY_CAVEATS
+
+
+def _material_caveats(caveats: Iterable[str]) -> list[str]:
+    return [caveat for caveat in caveats if not _is_context_only_caveat(caveat)]
+
+
+def _new_caveats(before: set[str], caveats: list[str]) -> list[str]:
+    return [caveat for caveat in caveats if caveat not in before]
 
 
 def _is_reliable_fact(fact: TurtleFactValue, name: str, caveats: list[str]) -> bool:
@@ -275,6 +335,27 @@ def _number(facts: TurtleFacts, name: str, caveats: list[str]) -> tuple[float | 
     return None, failed_sources, [name]
 
 
+def _number_report_latest(
+    facts: TurtleFacts,
+    name: str,
+    caveats: list[str],
+) -> tuple[float | None, list[str], list[str]]:
+    fact = facts.report.fields.get(name)
+    if fact is None:
+        return None, [], [name]
+    if isinstance(fact.value, bool) or not isinstance(fact.value, (int, float)):
+        _append_caveat(caveats, f"{name} invalid numeric value")
+        return None, [fact.source_reference], [name]
+    if not _is_reliable_fact(fact, name, caveats):
+        return None, [fact.source_reference], [name]
+
+    value = float(fact.value)
+    if not math.isfinite(value):
+        _append_caveat(caveats, f"{name} invalid numeric value")
+        return None, [fact.source_reference], [name]
+    return value, [fact.source_reference], []
+
+
 def _number_alias(facts: TurtleFacts, caveats: list[str], *names: str) -> tuple[float | None, list[str], list[str]]:
     failed_sources: list[str] = []
     for name in names:
@@ -354,26 +435,74 @@ def _validate_positive_market_cap(
     return market_cap, []
 
 
-def _buyback_input(
+def _buyback_3y_input(
     buyback: float | None,
     missing_buyback: list[str],
     caveats: list[str],
 ) -> tuple[float, list[str], bool]:
     if missing_buyback:
-        _append_caveat(caveats, "buyback_amount missing; treated as 0 for degraded calculation")
+        _append_caveat(caveats, "buyback_amount_3y_avg missing; treated as 0 for degraded calculation")
         return 0.0, missing_buyback, True
     if buyback is None:
-        _append_caveat(caveats, "buyback_amount missing; treated as 0 for degraded calculation")
-        return 0.0, ["buyback_amount"], True
+        _append_caveat(caveats, "buyback_amount_3y_avg missing; treated as 0 for degraded calculation")
+        return 0.0, ["buyback_amount_3y_avg"], True
     return buyback, [], False
+
+
+def _resolve_payout_inputs(facts: TurtleFacts, caveats: list[str]) -> PayoutInputs:
+    before_avg = set(caveats)
+    payout_3y_avg, avg_sources, missing_avg = _number_report_3y_avg(facts, CURRENT_YEAR_PAYOUT_FIELD, caveats)
+    avg_caveats = _new_caveats(before_avg, caveats)
+
+    before_latest = set(caveats)
+    latest_signal, latest_sources, missing_latest = _number_report_latest(facts, CURRENT_YEAR_PAYOUT_FIELD, caveats)
+    latest_caveats = _new_caveats(before_latest, caveats)
+
+    _append_caveat(caveats, COMMITMENT_CONTEXT_CAVEAT)
+
+    values = [value for value in (payout_3y_avg, latest_signal) if value is not None and math.isfinite(value)]
+    applied_value = max(values) if values else None
+    missing_inputs = _merge_missing(missing_avg, missing_latest)
+    material_avg_caveats = _material_caveats(avg_caveats)
+    if applied_value is None:
+        status: TurtleStatus = "non_decisionable"
+    elif missing_avg or missing_latest or material_avg_caveats:
+        status = "degraded"
+    else:
+        status = "complete"
+
+    return PayoutInputs(
+        payout_3y_avg=payout_3y_avg,
+        latest_signal=latest_signal,
+        commitment_ratio=None,
+        applied_value=applied_value,
+        sources=_merge_sources(avg_sources, latest_sources),
+        missing_inputs=missing_inputs,
+        caveats=_merge_sources(avg_caveats, latest_caveats, [COMMITMENT_CONTEXT_CAVEAT]),
+        status=status,
+    )
+
+
+def _resolve_buyback_inputs(facts: TurtleFacts, caveats: list[str]) -> BuybackInputs:
+    if "buyback_amount" in facts.market.fields and "buyback_amount" not in facts.report.fields:
+        _append_caveat(caveats, MARKET_BUYBACK_EXCLUDED_CAVEAT)
+    if "buyback_amount" in facts.report.fields or any(
+        "buyback_amount" in period.fields for period in facts.report.historical.values()
+    ):
+        _append_caveat(caveats, BUYBACK_CANCELLATION_CONTEXT_CAVEAT)
+    return BuybackInputs(sources=[], missing_inputs=[], caveats=[], status="complete")
+
+
+def _fmt_nullable(value: float | None) -> str:
+    return "null" if value is None else _fmt(value)
 
 
 def compute_turtle_signals(facts: TurtleFacts) -> TurtleComputedSignals:
     results: dict[str, FormulaResult] = {}
     caveats = _combined_caveats(facts)
-    has_input_caveats = bool(caveats)
-    r_target_currency = _money_target_currency(facts, ("net_profit", "market_cap"))
-    owner_target_currency = _money_target_currency(facts, ("operating_cash_flow", "capex", "market_cap"))
+    return_target_currency = _money_target_currency(facts, ("net_profit", "operating_cash_flow", "capex", "market_cap"))
+    r_target_currency = return_target_currency
+    owner_target_currency = return_target_currency
     net_cash_target_currency = _money_target_currency(facts, ("cash", "interest_bearing_debt", "market_cap"))
     owner_money_unit = f"hundred_million {owner_target_currency}"
 
@@ -383,12 +512,6 @@ def compute_turtle_signals(facts: TurtleFacts) -> TurtleComputedSignals:
     net_profit, net_profit_sources, missing_net_profit = _money_hm(facts, "net_profit", caveats, r_target_currency)
     r_market_cap, r_market_cap_sources, missing_r_market_cap = _money_hm(facts, "market_cap", caveats, r_target_currency)
     r_market_cap, missing_r_market_cap = _validate_positive_market_cap(r_market_cap, missing_r_market_cap, caveats)
-    r_buyback, r_buyback_sources, missing_r_buyback = _money_hm(facts, "buyback_amount", caveats, r_target_currency)
-    r_buyback_for_formula, r_degraded_buyback_missing, r_buyback_degraded = _buyback_input(
-        r_buyback,
-        missing_r_buyback,
-        caveats,
-    )
     ocf, ocf_sources, missing_ocf = _money_hm(facts, "operating_cash_flow", caveats, owner_target_currency)
     capex, capex_sources, missing_capex = _money_hm(facts, "capex", caveats, owner_target_currency)
     gg_market_cap, gg_market_cap_sources, missing_gg_market_cap = _money_hm(
@@ -402,12 +525,22 @@ def compute_turtle_signals(facts: TurtleFacts) -> TurtleComputedSignals:
         missing_gg_market_cap,
         caveats,
     )
-    gg_buyback, gg_buyback_sources, missing_gg_buyback = _money_hm(facts, "buyback_amount", caveats, owner_target_currency)
-    gg_buyback_for_formula, gg_degraded_buyback_missing, gg_buyback_degraded = _buyback_input(
-        gg_buyback,
-        missing_gg_buyback,
+    _resolve_buyback_inputs(facts, caveats)
+    r_buyback, r_buyback_sources, missing_r_buyback = _money_hm_report_3y_avg(
+        facts,
+        "buyback_amount",
+        caveats,
+        r_target_currency,
+    )
+    r_buyback_for_formula, r_degraded_buyback_missing, r_buyback_degraded = _buyback_3y_input(
+        r_buyback,
+        missing_r_buyback,
         caveats,
     )
+    gg_buyback_for_formula = r_buyback_for_formula
+    gg_degraded_buyback_missing = list(r_degraded_buyback_missing)
+    gg_buyback_degraded = r_buyback_degraded
+    gg_buyback_sources = list(r_buyback_sources)
     cash, cash_sources, missing_cash = _money_hm(facts, "cash", caveats, net_cash_target_currency)
     debt, debt_sources, missing_debt = _money_hm(facts, "interest_bearing_debt", caveats, net_cash_target_currency)
     net_cash_market_cap, net_cash_market_cap_sources, missing_net_cash_market_cap = _money_hm(
@@ -421,27 +554,31 @@ def compute_turtle_signals(facts: TurtleFacts) -> TurtleComputedSignals:
         missing_net_cash_market_cap,
         caveats,
     )
-    payout, payout_sources, missing_payout = _number_alias(
-        facts,
-        caveats,
-        "avg_payout_ratio_3y",
-        "dividend_avg_payout_ratio_3y",
-    )
+    payout_inputs = _resolve_payout_inputs(facts, caveats)
+    payout = payout_inputs.applied_value
+    payout_sources = payout_inputs.sources
+    missing_payout = payout_inputs.missing_inputs if payout is None else []
     tax_rate, tax_sources, missing_tax = _number(facts, "tax_rate", caveats)
 
-    results["payout_anchor"] = _result(
-        name="payout_anchor",
-        formula="payout_anchor = avg_payout_ratio_3y",
-        substitution=(
-            "payout_anchor = avg_payout_ratio_3y"
-            if payout is None
-            else f"payout_anchor = {_fmt(payout)}"
-        ),
+    payout_substitution = (
+        "payout_M = max(payout_3y_avg, latest_signal); "
+        "commitment_ratio=null, commitment_constraint_applied=false"
+    )
+    if payout is not None:
+        payout_substitution = (
+            f"payout_M = max(payout_3y_avg={_fmt_nullable(payout_inputs.payout_3y_avg)}, "
+            f"latest_signal={_fmt_nullable(payout_inputs.latest_signal)}); "
+            "commitment_ratio=null, commitment_constraint_applied=false"
+        )
+    results["payout_M"] = _result(
+        name="payout_M",
+        formula="payout_M = max(payout_3y_avg, latest_signal); commitment cap not applied",
+        substitution=payout_substitution,
         value=payout,
         unit="ratio",
         sources=payout_sources,
-        missing_inputs=missing_payout,
-        status="non_decisionable" if missing_payout else "complete",
+        missing_inputs=payout_inputs.missing_inputs,
+        status=payout_inputs.status,
     )
 
     owner_missing = _merge_missing(missing_ocf, missing_capex)
@@ -466,7 +603,7 @@ def compute_turtle_signals(facts: TurtleFacts) -> TurtleComputedSignals:
     r_missing = _merge_missing(r_critical_missing, r_degraded_buyback_missing)
     r_sources = _merge_sources(net_profit_sources, payout_sources, tax_sources, r_buyback_sources, r_market_cap_sources)
     r_value = None
-    r_substitution = "(net_profit * M * (1 - Q) + buyback) / market_cap * 100"
+    r_substitution = "(net_profit * M * (1 - Q) + buyback_amount_3y_avg) / market_cap * 100"
     if not r_critical_missing:
         r_value = (net_profit * payout * (1 - tax_rate) + r_buyback_for_formula) / r_market_cap * 100  # type: ignore[operator]
         r_substitution = (
@@ -476,7 +613,7 @@ def compute_turtle_signals(facts: TurtleFacts) -> TurtleComputedSignals:
     r_status: TurtleStatus = "non_decisionable" if r_critical_missing else "degraded" if r_buyback_degraded else "complete"
     results["R"] = _result(
         name="R",
-        formula="R = (net_profit * M * (1 - Q) + buyback) / market_cap * 100",
+        formula="R = (net_profit * M * (1 - Q) + buyback_amount_3y_avg) / market_cap * 100",
         substitution=r_substitution,
         value=r_value,
         unit="percent",
@@ -489,7 +626,7 @@ def compute_turtle_signals(facts: TurtleFacts) -> TurtleComputedSignals:
     gg_missing = _merge_missing(gg_critical_missing, gg_degraded_buyback_missing)
     gg_sources = _merge_sources(owner_sources, payout_sources, tax_sources, gg_buyback_sources, gg_market_cap_sources)
     gg_value = None
-    gg_substitution = "(owner_earnings * M * (1 - Q) + buyback) / market_cap * 100"
+    gg_substitution = "(owner_earnings * M * (1 - Q) + buyback_amount_3y_avg) / market_cap * 100"
     if not gg_critical_missing:
         gg_value = (owner_earnings * payout * (1 - tax_rate) + gg_buyback_for_formula) / gg_market_cap * 100  # type: ignore[operator]
         gg_substitution = (
@@ -499,7 +636,7 @@ def compute_turtle_signals(facts: TurtleFacts) -> TurtleComputedSignals:
     gg_status: TurtleStatus = "non_decisionable" if gg_critical_missing else "degraded" if gg_buyback_degraded else "complete"
     results["GG"] = _result(
         name="GG",
-        formula="GG = (owner_earnings * M * (1 - Q) + buyback) / market_cap * 100",
+        formula="GG = (owner_earnings * M * (1 - Q) + buyback_amount_3y_avg) / market_cap * 100",
         substitution=gg_substitution,
         value=gg_value,
         unit="percent",
@@ -574,14 +711,20 @@ def compute_turtle_signals(facts: TurtleFacts) -> TurtleComputedSignals:
         status=protection_status,
     )
 
-    critical_non_decisionable = results["R"].status == "non_decisionable" or results["GG"].status == "non_decisionable"
-    if critical_non_decisionable or facts.status == "non_decisionable":
+    core_results = {key: result for key, result in results.items() if key in CORE_RESULT_KEYS}
+    blocking_non_decisionable = any(
+        core_results[key].status == "non_decisionable"
+        for key in DECISION_BLOCKING_KEYS
+        if key in core_results
+    )
+    core_not_complete = any(
+        result.status in {"degraded", "non_decisionable"} for result in core_results.values()
+    )
+    material_input_caveats = _material_caveats(caveats)
+
+    if blocking_non_decisionable:
         status: TurtleStatus = "non_decisionable"
-    elif (
-        facts.status == "degraded"
-        or has_input_caveats
-        or any(result.status in {"degraded", "non_decisionable"} for result in results.values())
-    ):
+    elif core_not_complete or material_input_caveats:
         status = "degraded"
     else:
         status = "complete"

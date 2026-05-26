@@ -24,6 +24,16 @@ def number(name, value, source):
     return TurtleFactValue(name=name, value=value, source_label="fixture", source_reference=source)
 
 
+def ratio(name, value, source, reliability="reliable"):
+    return TurtleFactValue(
+        name=name,
+        value=value,
+        source_label="fixture",
+        source_reference=source,
+        reliability=reliability,
+    )
+
+
 def fact_value(name, value, source, reliability="reliable"):
     return TurtleFactValue(
         name=name,
@@ -34,7 +44,30 @@ def fact_value(name, value, source, reliability="reliable"):
     )
 
 
-def base_facts(*, market="A", report_fields=None, market_fields=None, report_metadata=None, caveats=None, status="complete"):
+def report_history(*period_ratios, buyback_values=(10, 8), currency="CNY"):
+    historical = {}
+    for offset, payout_ratio in enumerate(period_ratios, start=1):
+        fields = {}
+        if payout_ratio is not None:
+            fields["dividend_payout_ratio_current_year"] = ratio(
+                "dividend_payout_ratio_current_year",
+                payout_ratio,
+                f"report.payout.{offset}",
+            )
+        if offset - 1 < len(buyback_values) and buyback_values[offset - 1] is not None:
+            fields["buyback_amount"] = money(
+                "buyback_amount",
+                buyback_values[offset - 1],
+                f"report.buyback.{offset}",
+                currency=currency,
+            )
+        historical[f"{2025 - offset}-12-31"] = TurtleReportFacts(fields=fields)
+    return historical
+
+
+def base_facts(*, market="A", report_fields=None, market_fields=None,
+               report_metadata=None, caveats=None, status="complete",
+               report_currency="CNY"):
     context = TurtleRunContext.for_ticker(
         ticker="600519",
         market=market,
@@ -47,14 +80,27 @@ def base_facts(*, market="A", report_fields=None, market_fields=None, report_met
         "capex": money("capex", 20, "report.capex"),
         "cash": money("cash", 500, "report.cash"),
         "interest_bearing_debt": money("interest_bearing_debt", 50, "report.debt"),
+        "dividend_payout_ratio_current_year": ratio(
+            "dividend_payout_ratio_current_year",
+            0.5,
+            "report.payout.latest",
+        ),
+        "buyback_amount": money(
+            "buyback_amount",
+            12,
+            "report.buyback.latest",
+            currency=report_currency,
+        ),
     }
     if report_fields:
         report_defaults.update(report_fields)
-    report = TurtleReportFacts(fields=report_defaults, metadata=report_metadata or {})
+    report = TurtleReportFacts(
+        fields=report_defaults,
+        metadata=report_metadata or {},
+        historical=report_history(0.4, 0.6, currency=report_currency),
+    )
     market_defaults = {
         "market_cap": money("market_cap", 1000, "market.market_cap"),
-        "buyback_amount": money("buyback_amount", 10, "market.buyback"),
-        "avg_payout_ratio_3y": number("avg_payout_ratio_3y", 0.5, "market.payout"),
         "tax_rate": number("tax_rate", 0.2, "market.tax"),
         "rf_rate": number("rf_rate", 0.03, "market.rf"),
     }
@@ -64,15 +110,209 @@ def base_facts(*, market="A", report_fields=None, market_fields=None, report_met
     return TurtleFacts(context=context, report=report, market=market_facts, status=status)
 
 
-def test_compute_turtle_signals_calculates_r_gg_hh():
+def test_compute_turtle_signals_calculates_payout_m_r_gg_hh():
     signals = compute_turtle_signals(base_facts())
 
     assert signals.status == "complete"
-    assert signals.results["payout_anchor"].value == 0.5
+    assert "payout_M" in signals.results
+    assert "payout_anchor" not in signals.results
+    assert signals.results["payout_M"].value == pytest.approx(0.5)
+    assert signals.results["payout_M"].status == "complete"
+    assert "commitment_ratio=null" in signals.results["payout_M"].substitution
     assert signals.results["R"].value == pytest.approx(5.0)
     assert signals.results["GG"].value == pytest.approx(5.0)
     assert signals.results["HH"].value == 0.0
     assert "100 * 0.5 * (1 - 0.2) + 10" in signals.results["R"].substitution
+
+
+def test_compute_turtle_signals_payout_m_uses_latest_signal_when_above_three_year_average():
+    facts = base_facts(report_fields={
+        "dividend_payout_ratio_current_year": ratio(
+            "dividend_payout_ratio_current_year",
+            0.8,
+            "report.payout.latest",
+        ),
+    })
+
+    signals = compute_turtle_signals(facts)
+
+    assert signals.results["payout_M"].value == pytest.approx(0.8)
+    assert "payout_3y_avg=0.6" in signals.results["payout_M"].substitution
+    assert "latest_signal=0.8" in signals.results["payout_M"].substitution
+
+
+def test_compute_turtle_signals_payout_m_ignores_market_payout_fields():
+    signals = compute_turtle_signals(base_facts(market_fields={
+        "avg_payout_ratio_3y": number("avg_payout_ratio_3y", 0.99, "market.payout"),
+        "dividend_avg_payout_ratio_3y": number(
+            "dividend_avg_payout_ratio_3y",
+            0.88,
+            "dividend_data.avg_payout_ratio_3y",
+        ),
+    }))
+
+    assert signals.results["payout_M"].value == pytest.approx(0.5)
+    assert "market.payout" not in signals.results["payout_M"].sources
+    assert "dividend_data.avg_payout_ratio_3y" not in signals.results["payout_M"].sources
+
+
+def test_compute_turtle_signals_payout_average_is_mean_of_per_year_ratios():
+    facts = base_facts(report_fields={
+        "dividend_payout_ratio_current_year": ratio(
+            "dividend_payout_ratio_current_year",
+            0.9,
+            "report.payout.latest",
+        ),
+    })
+    report = TurtleReportFacts(
+        fields=facts.report.fields,
+        metadata=facts.report.metadata,
+        historical=report_history(0.3, 0.3),
+    )
+    facts = TurtleFacts(context=facts.context, report=report, market=facts.market, status="complete")
+
+    signals = compute_turtle_signals(facts)
+
+    assert signals.results["payout_M"].value == pytest.approx(0.9)
+    assert "payout_3y_avg=0.5" in signals.results["payout_M"].substitution
+
+
+def test_compute_turtle_signals_payout_m_degraded_with_two_period_average():
+    facts = base_facts()
+    report = TurtleReportFacts(
+        fields=facts.report.fields,
+        metadata=facts.report.metadata,
+        historical=report_history(0.4, None),
+    )
+    facts = TurtleFacts(context=facts.context, report=report, market=facts.market, status="complete")
+
+    signals = compute_turtle_signals(facts)
+
+    assert signals.results["payout_M"].value == pytest.approx(0.5)
+    assert "payout_3y_avg=0.45" in signals.results["payout_M"].substitution
+    assert signals.results["payout_M"].status == "degraded"
+    assert "dividend_payout_ratio_current_year_3y_avg computed from 2/3 periods" in signals.caveats
+
+
+def test_compute_turtle_signals_payout_m_degraded_with_latest_only():
+    facts = base_facts()
+    report = TurtleReportFacts(
+        fields=facts.report.fields,
+        metadata=facts.report.metadata,
+        historical={},
+    )
+    facts = TurtleFacts(context=facts.context, report=report, market=facts.market, status="complete")
+
+    signals = compute_turtle_signals(facts)
+
+    assert signals.results["payout_M"].value == pytest.approx(0.5)
+    assert signals.results["payout_M"].status == "degraded"
+    assert "dividend_payout_ratio_current_year_3y_avg" in signals.results["payout_M"].missing_inputs
+
+
+def test_compute_turtle_signals_payout_m_non_decisionable_when_no_report_payout_inputs():
+    facts = base_facts()
+    report = TurtleReportFacts(
+        fields={k: v for k, v in facts.report.fields.items() if k != "dividend_payout_ratio_current_year"},
+        metadata=facts.report.metadata,
+        historical={},
+    )
+    facts = TurtleFacts(context=facts.context, report=report, market=facts.market, status="complete")
+
+    signals = compute_turtle_signals(facts)
+
+    assert signals.status == "non_decisionable"
+    assert signals.results["payout_M"].status == "non_decisionable"
+    assert "dividend_payout_ratio_current_year" in signals.results["payout_M"].missing_inputs
+    assert "dividend_payout_ratio_current_year_3y_avg" in signals.results["payout_M"].missing_inputs
+
+
+def test_compute_turtle_signals_payout_m_degraded_when_only_three_year_average_present():
+    facts = base_facts()
+    report = TurtleReportFacts(
+        fields={k: v for k, v in facts.report.fields.items() if k != "dividend_payout_ratio_current_year"},
+        metadata=facts.report.metadata,
+        historical=report_history(0.4, 0.6),
+    )
+    facts = TurtleFacts(context=facts.context, report=report, market=facts.market, status="complete")
+
+    signals = compute_turtle_signals(facts)
+
+    assert signals.status == "degraded"
+    assert signals.results["payout_M"].value == pytest.approx(0.5)
+    assert signals.results["payout_M"].status == "degraded"
+    assert "dividend_payout_ratio_current_year" in signals.results["payout_M"].missing_inputs
+
+
+def test_compute_turtle_signals_uses_report_side_buyback_3y_average():
+    signals = compute_turtle_signals(base_facts())
+
+    assert signals.results["R"].value == pytest.approx(5.0)
+    assert signals.results["GG"].value == pytest.approx(5.0)
+    assert "buyback_amount_3y_avg" in signals.results["R"].formula
+    assert "+ 10" in signals.results["R"].substitution
+    assert "market.buyback" not in signals.results["R"].sources
+
+
+def test_compute_turtle_signals_ignores_market_buyback_when_report_buyback_exists():
+    signals = compute_turtle_signals(base_facts(market_fields={
+        "buyback_amount": money("buyback_amount", 999, "market.buyback"),
+    }))
+
+    assert signals.results["R"].value == pytest.approx(5.0)
+    assert "market.buyback" not in signals.results["R"].sources
+
+
+def test_compute_turtle_signals_report_buyback_missing_degrades_r_gg_only():
+    facts = base_facts()
+    report = TurtleReportFacts(
+        fields={k: v for k, v in facts.report.fields.items() if k != "buyback_amount"},
+        metadata=facts.report.metadata,
+        historical={
+            pe: TurtleReportFacts(
+                fields={k: v for k, v in hist.fields.items() if k != "buyback_amount"},
+                metadata=hist.metadata,
+                caveats=hist.caveats,
+                status=hist.status,
+            )
+            for pe, hist in facts.report.historical.items()
+        },
+    )
+    facts = TurtleFacts(context=facts.context, report=report, market=facts.market, status="complete")
+
+    signals = compute_turtle_signals(facts)
+
+    assert signals.status == "degraded"
+    assert signals.results["R"].status == "degraded"
+    assert signals.results["GG"].status == "degraded"
+    assert signals.results["HH"].status == "complete"
+    assert "buyback_amount_3y_avg" in signals.results["R"].missing_inputs
+    assert "buyback_amount_3y_avg" in signals.results["GG"].missing_inputs
+    assert "buyback_amount_3y_avg" not in signals.results["HH"].missing_inputs
+    assert "buyback_amount_3y_avg missing; treated as 0 for degraded calculation" in signals.caveats
+
+
+def test_compute_turtle_signals_market_buyback_only_is_excluded_from_formula():
+    facts = base_facts(market_fields={
+        "buyback_amount": money("buyback_amount", 999, "market.buyback"),
+    })
+    report = TurtleReportFacts(
+        fields={k: v for k, v in facts.report.fields.items() if k != "buyback_amount"},
+        metadata=facts.report.metadata,
+        historical={
+            pe: TurtleReportFacts(fields={
+                k: v for k, v in hist.fields.items() if k != "buyback_amount"
+            })
+            for pe, hist in facts.report.historical.items()
+        },
+    )
+    facts = TurtleFacts(context=facts.context, report=report, market=facts.market, status="complete")
+
+    signals = compute_turtle_signals(facts)
+
+    assert signals.results["R"].value == pytest.approx(4.0)
+    assert "market.buyback" not in signals.results["R"].sources
+    assert "market buyback_amount present but excluded from R/GG" in " ".join(signals.caveats)
 
 
 def test_compute_turtle_signals_switches_to_ev_when_cash_is_large():
@@ -94,78 +334,6 @@ def test_compute_turtle_signals_is_non_decisionable_without_market_cap():
     assert "market_cap" in signals.results["R"].missing_inputs
 
 
-def test_compute_turtle_signals_accepts_integrated_dividend_payout_field():
-    facts = base_facts(market_fields={
-        "avg_payout_ratio_3y": None,
-        "dividend_avg_payout_ratio_3y": number("dividend_avg_payout_ratio_3y", 0.5, "dividend_data.avg_payout_ratio_3y"),
-    })
-    market = TurtleMarketFacts(fields={key: value for key, value in facts.market.fields.items() if value is not None})
-    facts = TurtleFacts(context=facts.context, report=facts.report, market=market, status="complete")
-
-    signals = compute_turtle_signals(facts)
-
-    assert signals.status == "complete"
-    assert signals.results["payout_anchor"].value == 0.5
-    assert "dividend_data.avg_payout_ratio_3y" in signals.results["payout_anchor"].sources
-
-
-def test_compute_turtle_signals_degrades_without_buyback():
-    facts = base_facts()
-    market = TurtleMarketFacts(fields={key: value for key, value in facts.market.fields.items() if key != "buyback_amount"})
-    broken = TurtleFacts(context=facts.context, report=facts.report, market=market, status="complete")
-
-    signals = compute_turtle_signals(broken)
-
-    assert signals.status == "degraded"
-    assert signals.results["R"].status == "degraded"
-    assert signals.results["GG"].status == "degraded"
-    assert signals.results["R"].value == pytest.approx(4.0)
-    assert signals.results["GG"].value == pytest.approx(4.0)
-    assert "buyback_amount" in signals.results["GG"].missing_inputs
-    assert "buyback_amount missing; treated as 0 for degraded calculation" in signals.caveats
-
-
-def test_compute_turtle_signals_degrades_when_only_buyback_currency_needs_missing_fx():
-    hkd_report = {
-        "net_profit": money("net_profit", 100, "report.net_profit", currency="HKD"),
-        "operating_cash_flow": money("operating_cash_flow", 120, "report.ocf", currency="HKD"),
-        "capex": money("capex", 20, "report.capex", currency="HKD"),
-        "cash": money("cash", 500, "report.cash", currency="HKD"),
-        "interest_bearing_debt": money("interest_bearing_debt", 50, "report.debt", currency="HKD"),
-    }
-    market_fields = {
-        "market_cap": money("market_cap", 1000, "market.market_cap", currency="HKD"),
-        "buyback_amount": money("buyback_amount", 10, "market.buyback", currency="CNY"),
-    }
-
-    signals = compute_turtle_signals(base_facts(
-        market="HK",
-        report_fields=hkd_report,
-        market_fields=market_fields,
-    ))
-
-    assert signals.status == "degraded"
-    assert signals.results["R"].status == "degraded"
-    assert signals.results["R"].value == pytest.approx(4.0)
-    assert signals.results["GG"].value == pytest.approx(4.0)
-    assert "buyback_amount" in signals.results["R"].missing_inputs
-    assert "FX rate required for CNY:HKD" in signals.caveats
-
-
-def test_compute_turtle_signals_keeps_hh_complete_without_buyback():
-    facts = base_facts()
-    market = TurtleMarketFacts(fields={key: value for key, value in facts.market.fields.items() if key != "buyback_amount"})
-    broken = TurtleFacts(context=facts.context, report=facts.report, market=market, status="complete")
-
-    signals = compute_turtle_signals(broken)
-
-    assert signals.results["R"].status == "degraded"
-    assert signals.results["GG"].status == "degraded"
-    assert signals.results["HH"].status == "complete"
-    assert signals.results["HH"].value == pytest.approx(0.0)
-    assert "buyback_amount" not in signals.results["HH"].missing_inputs
-
-
 def test_compute_turtle_signals_uses_reliable_market_fallback_when_report_fact_display_only():
     signals = compute_turtle_signals(base_facts(
         report_fields={
@@ -184,17 +352,6 @@ def test_compute_turtle_signals_uses_reliable_market_fallback_when_report_fact_d
     assert signals.results["R"].value == pytest.approx(5.0)
     assert "net_profit" not in signals.results["R"].missing_inputs
     assert "market.net_profit" in signals.results["R"].sources
-
-
-def test_compute_turtle_signals_uses_reliable_later_numeric_alias_when_first_alias_display_only():
-    signals = compute_turtle_signals(base_facts(market_fields={
-        "avg_payout_ratio_3y": fact_value("avg_payout_ratio_3y", 0.9, "market.stale_payout", reliability="display_only"),
-        "dividend_avg_payout_ratio_3y": number("dividend_avg_payout_ratio_3y", 0.5, "dividend_data.avg_payout_ratio_3y"),
-    }))
-
-    assert signals.results["payout_anchor"].value == pytest.approx(0.5)
-    assert "avg_payout_ratio_3y" not in signals.results["payout_anchor"].missing_inputs
-    assert "dividend_data.avg_payout_ratio_3y" in signals.results["payout_anchor"].sources
 
 
 def test_compute_turtle_signals_rejects_zero_market_cap():
@@ -240,7 +397,7 @@ def test_compute_turtle_signals_preserves_unsupported_input_status():
     assert signals.results == {}
 
 
-def test_compute_turtle_signals_degrades_when_caveats_exist_with_complete_critical_results():
+def test_compute_turtle_signals_degrades_when_material_caveat_exists_with_complete_results():
     facts = base_facts(caveats=["rf_rate missing"])
 
     signals = compute_turtle_signals(facts)
@@ -248,6 +405,26 @@ def test_compute_turtle_signals_degrades_when_caveats_exist_with_complete_critic
     assert signals.status == "degraded"
     assert signals.results["R"].status == "complete"
     assert "rf_rate missing" in signals.caveats
+
+
+def test_compute_turtle_signals_does_not_degrade_for_context_only_action_caveat():
+    facts = base_facts(caveats=["dividend data missing", "buyback data missing"])
+
+    signals = compute_turtle_signals(facts)
+
+    assert signals.status == "complete"
+    assert signals.results["R"].status == "complete"
+    assert "dividend data missing" in signals.caveats
+    assert "buyback data missing" in signals.caveats
+
+
+def test_compute_turtle_signals_ignores_degraded_facts_status_when_core_results_complete():
+    facts = base_facts(status="degraded", caveats=["single-year report payout proxy; not a 3-year average"])
+
+    signals = compute_turtle_signals(facts)
+
+    assert signals.status == "complete"
+    assert signals.results["R"].status == "complete"
 
 
 def test_compute_turtle_signals_treats_money_conversion_failure_as_missing():
@@ -273,11 +450,11 @@ def test_compute_turtle_signals_target_currency_ignores_invalid_first_money_cand
         market_fields={
             "net_profit": money("net_profit", 100, "market.net_profit", currency="HKD"),
             "market_cap": money("market_cap", 1000, "market.market_cap", currency="HKD"),
-            "buyback_amount": money("buyback_amount", 10, "market.buyback", currency="HKD"),
         },
+        report_currency="HKD",
     ))
 
-    assert signals.status == "complete"
+    assert signals.status == "degraded"
     assert signals.results["R"].value == pytest.approx(5.0)
     assert "market.net_profit" in signals.results["R"].sources
     assert "Unsupported money unit: billion" in signals.caveats
@@ -334,9 +511,9 @@ def test_compute_turtle_signals_converts_mixed_hkd_money_with_report_fx_rates():
         },
         market_fields={
             "market_cap": money("market_cap", 1000, "market.market_cap", currency="HKD"),
-            "buyback_amount": money("buyback_amount", 10, "market.buyback", currency="HKD"),
         },
         report_metadata={"fx_rates": {"HKD:CNY": 0.92}},
+        report_currency="HKD",
     ))
 
     assert signals.status == "complete"
@@ -355,13 +532,13 @@ def test_compute_turtle_signals_uses_common_hkd_currency_without_fx_rates():
     }
     hkd_market = {
         "market_cap": money("market_cap", 1000, "market.market_cap", currency="HKD"),
-        "buyback_amount": money("buyback_amount", 10, "market.buyback", currency="HKD"),
     }
 
     signals = compute_turtle_signals(base_facts(
         market="HK",
         report_fields=hkd_report,
         market_fields=hkd_market,
+        report_currency="HKD",
     ))
 
     assert signals.status == "complete"
@@ -381,13 +558,13 @@ def test_compute_turtle_signals_keeps_r_gg_complete_when_only_net_cash_currency_
     }
     hkd_market = {
         "market_cap": money("market_cap", 1000, "market.market_cap", currency="HKD"),
-        "buyback_amount": money("buyback_amount", 10, "market.buyback", currency="HKD"),
     }
 
     signals = compute_turtle_signals(base_facts(
         market="HK",
         report_fields=hkd_report,
         market_fields=hkd_market,
+        report_currency="HKD",
     ))
 
     assert signals.status == "degraded"
@@ -420,13 +597,13 @@ def test_compute_turtle_signals_ignores_unrelated_money_field_currency_for_hkd_n
     }
     hkd_market = {
         "market_cap": money("market_cap", 1000, "market.market_cap", currency="HKD"),
-        "buyback_amount": money("buyback_amount", 10, "market.buyback", currency="HKD"),
     }
 
     signals = compute_turtle_signals(base_facts(
         market="HK",
         report_fields=hkd_report,
         market_fields=hkd_market,
+        report_currency="HKD",
     ))
 
     assert signals.status == "complete"
@@ -445,7 +622,6 @@ def test_compute_turtle_signals_ignores_unrelated_fx_rates_for_hkd_native_calcul
     }
     hkd_market = {
         "market_cap": money("market_cap", 1000, "market.market_cap", currency="HKD"),
-        "buyback_amount": money("buyback_amount", 10, "market.buyback", currency="HKD"),
     }
 
     signals = compute_turtle_signals(base_facts(
@@ -453,6 +629,7 @@ def test_compute_turtle_signals_ignores_unrelated_fx_rates_for_hkd_native_calcul
         report_fields=hkd_report,
         market_fields=hkd_market,
         report_metadata={"fx_rates": {"USD:CNY": 7.2}},
+        report_currency="HKD",
     ))
 
     assert signals.status == "complete"
@@ -473,9 +650,9 @@ def test_compute_turtle_signals_mixed_formula_currencies_require_relevant_fx():
         },
         market_fields={
             "market_cap": money("market_cap", 1000, "market.market_cap", currency="HKD"),
-            "buyback_amount": money("buyback_amount", 10, "market.buyback", currency="HKD"),
         },
         report_metadata={"fx_rates": {"USD:CNY": 7.2}},
+        report_currency="CNY",
     ))
 
     assert signals.status == "non_decisionable"
