@@ -54,6 +54,46 @@ def test_decision_prompt_forbids_external_tools_and_contains_formulas():
     assert "不得编造缺失数据" in prompt
 
 
+def test_decision_prompt_documents_spec2_model_caveats():
+    facts = empty_facts()
+    signals = TurtleComputedSignals(
+        status="complete",
+        results={
+            "payout_M": FormulaResult(
+                "payout_M",
+                "payout_M = max(payout_3y_avg, latest_signal)",
+                "payout_M = max(payout_3y_avg=0.4, latest_signal=0.5) = 0.5; "
+                "commitment_ratio=null, commitment_constraint_applied=false",
+                0.5,
+                "ratio",
+                ["report.payout"],
+            ),
+            "R": FormulaResult(
+                "R",
+                "R = (net_profit * M * (1 - Q) + buyback_amount_3y_avg) / market_cap * 100",
+                "(100 * 0.5 * (1 - 0.2) + 10) / 1000 * 100",
+                5.0,
+                "percent",
+                ["report.net_profit", "report.buyback"],
+            ),
+        },
+        caveats=[
+            "commitment payout ratio not extracted; payout_M uses max(payout_3y_avg, latest_signal) without commitment cap",
+            "repurchase_of_stock used as buyback_amount input; cancellation progress is not verified",
+        ],
+    )
+    prompt = build_turtle_decision_prompt(facts, signals)
+
+    assert "分红按 holding_channel 对应 tax_rate 扣税" in prompt
+    assert "注销型回购" in prompt
+    assert "buyback_amount_3y_avg" in prompt
+    assert "repurchase_of_stock" in prompt
+    assert "注销进度" in prompt
+    assert "commitment_ratio" in prompt
+    assert "payout_M" in prompt
+    assert "可能偏高" in prompt
+
+
 def test_formatting_helpers_render_deterministic_readable_json_from_to_dict():
     facts = empty_facts()
     signals = TurtleComputedSignals(
