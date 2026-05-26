@@ -321,6 +321,135 @@ def test_report_adapter_derives_caveated_single_year_payout_proxy():
     assert "single-year report payout proxy; not a 3-year average" in facts.caveats
 
 
+def test_report_adapter_derives_reliable_current_year_payout_ratio_and_display_proxy():
+    extraction = FakeExtraction(fields={
+        "net_profit": FakeField("net_profit", Decimal("100"), currency="HKD", unit="million"),
+        "dividends_paid": FakeField("dividends_paid", Decimal("-35"), currency="HKD", unit="million"),
+    })
+
+    facts = build_report_facts_from_extraction(
+        extraction=extraction,
+        allow_llm_models=(),
+        adapter_caveats=[],
+    )
+
+    current = facts.fields["dividend_payout_ratio_current_year"]
+    assert current.value == 0.35
+    assert current.reliability == "reliable"
+    assert current.source_reference == "dividends_paid p.7; net_profit p.7"
+    assert "derived from report dividends_paid/net_profit" in (current.caveat or "")
+
+    proxy = facts.fields["dividend_payout_ratio_proxy_single_year"]
+    assert proxy.value == 0.35
+    assert proxy.reliability == "display_only"
+    assert proxy.caveat == "single-year report payout proxy; not a 3-year average"
+
+
+def test_report_adapter_derives_current_year_payout_with_currency_aliases():
+    extraction = FakeExtraction(fields={
+        "net_profit": FakeField("net_profit", Decimal("100"), currency="HKD", unit="million"),
+        "dividends_paid": FakeField("dividends_paid", Decimal("-35"), currency="HK$", unit="million"),
+    })
+
+    facts = build_report_facts_from_extraction(
+        extraction=extraction,
+        allow_llm_models=(),
+        adapter_caveats=[],
+    )
+
+    assert facts.fields["dividend_payout_ratio_current_year"].value == 0.35
+    assert "report payout ratio skipped: currency mismatch" not in facts.caveats
+
+
+def test_report_adapter_maps_repurchase_of_stock_to_buyback_amount():
+    extraction = FakeExtraction(fields={
+        "repurchase_of_stock": FakeField(
+            "repurchase_of_stock",
+            Decimal("123000000"),
+            currency="HKD",
+            unit="yuan",
+        ),
+    })
+
+    facts = build_report_facts_from_extraction(
+        extraction=extraction,
+        allow_llm_models=(),
+        adapter_caveats=[],
+    )
+
+    assert "buyback_amount" in facts.fields
+    assert "repurchase_of_stock" not in facts.fields
+    assert facts.fields["buyback_amount"].name == "buyback_amount"
+    assert facts.fields["buyback_amount"].value.value == 123000000.0
+    assert facts.fields["buyback_amount"].value.currency == "HKD"
+
+
+def test_report_adapter_skips_current_year_payout_when_profit_non_positive():
+    extraction = FakeExtraction(fields={
+        "net_profit": FakeField("net_profit", Decimal("0"), currency="HKD", unit="million"),
+        "dividends_paid": FakeField("dividends_paid", Decimal("-35"), currency="HKD", unit="million"),
+    })
+
+    facts = build_report_facts_from_extraction(
+        extraction=extraction,
+        allow_llm_models=(),
+        adapter_caveats=[],
+    )
+
+    assert "dividend_payout_ratio_current_year" not in facts.fields
+    assert "dividend_payout_ratio_proxy_single_year" not in facts.fields
+    assert "report payout ratio skipped: non-positive net_profit" in facts.caveats
+
+
+def test_report_adapter_derives_current_year_payout_for_historical_periods():
+    class FakeAdapter:
+        def get_annual_report_data(self, **kwargs):
+            year = int(kwargs["period_end"][:4])
+            ratio_by_year = {
+                2025: Decimal("-50"),
+                2024: Decimal("-40"),
+                2023: Decimal("-30"),
+            }
+            return FakeAdapterResult(
+                available=True,
+                company=kwargs["ticker"],
+                market=kwargs["market"],
+                period_end=kwargs["period_end"],
+                extraction=FakeExtraction(
+                    period_end=kwargs["period_end"],
+                    fields={
+                        "net_profit": FakeField(
+                            "net_profit",
+                            Decimal("100"),
+                            currency="HKD",
+                            unit="million",
+                        ),
+                        "dividends_paid": FakeField(
+                            "dividends_paid",
+                            ratio_by_year[year],
+                            currency="HKD",
+                            unit="million",
+                        ),
+                    },
+                ),
+                warnings=[],
+                errors=[],
+            )
+
+    facts = get_turtle_report_facts(
+        ticker="00700",
+        market="HK",
+        trade_date="2026-05-26",
+        adapter=FakeAdapter(),
+        allow_llm_models=(),
+        history_periods=2,
+    )
+
+    assert facts.fields["dividend_payout_ratio_current_year"].value == 0.5
+    assert facts.historical["2024-12-31"].fields["dividend_payout_ratio_current_year"].value == 0.4
+    assert facts.historical["2023-12-31"].fields["dividend_payout_ratio_current_year"].value == 0.3
+
+
 def test_report_adapter_adds_proxy_alongside_display_only_extraction_payout():
     extraction = FakeExtraction(fields={
         "dividend_avg_payout_ratio_3y": FakeField(
@@ -391,7 +520,7 @@ def test_report_adapter_skips_non_finite_derived_payout_ratio():
     )
 
     assert "dividend_payout_ratio_proxy_single_year" not in facts.fields
-    assert "report payout proxy skipped: invalid payout ratio" in facts.caveats
+    assert "report payout ratio skipped: invalid payout ratio" in facts.caveats
 
 
 def test_report_adapter_does_not_derive_payout_from_unreliable_dividend_field():
@@ -417,6 +546,29 @@ def test_report_adapter_does_not_derive_payout_from_unreliable_dividend_field():
     assert "dividend_payout_ratio_proxy_single_year" not in facts.fields
 
 
+def test_report_adapter_does_not_derive_current_year_payout_from_unreliable_dividend_field():
+    extraction = FakeExtraction(fields={
+        "net_profit": FakeField("net_profit", Decimal("100"), currency="HKD", unit="million"),
+        "dividends_paid": FakeField(
+            "dividends_paid",
+            Decimal("-35"),
+            currency="HKD",
+            unit="million",
+            is_reliable=False,
+            source="llm",
+            confidence="llm_supplement",
+        ),
+    })
+
+    facts = build_report_facts_from_extraction(
+        extraction=extraction,
+        allow_llm_models=(),
+        adapter_caveats=[],
+    )
+
+    assert "dividend_payout_ratio_current_year" not in facts.fields
+
+
 def test_report_adapter_does_not_derive_payout_from_mixed_currency_fields():
     extraction = FakeExtraction(fields={
         "net_profit": FakeField("net_profit", Decimal("100"), currency="HKD", unit="million"),
@@ -430,7 +582,7 @@ def test_report_adapter_does_not_derive_payout_from_mixed_currency_fields():
     )
 
     assert "dividend_payout_ratio_proxy_single_year" not in facts.fields
-    assert "report payout proxy skipped: currency mismatch" in facts.caveats
+    assert "report payout ratio skipped: currency mismatch" in facts.caveats
 
 
 @pytest.mark.parametrize(

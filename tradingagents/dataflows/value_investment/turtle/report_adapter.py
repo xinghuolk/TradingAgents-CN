@@ -19,6 +19,7 @@ from .facts import (
     TurtleReportFacts,
     TurtleStatus,
     infer_turtle_period_end,
+    normalize_currency,
 )
 
 
@@ -27,8 +28,14 @@ TURTLE_FIELD_ALIASES = {
     "cash_and_equivalents": "cash",
     "money_cap": "cash",
     "dividends_paid": "dividends_paid",
+    "repurchase_of_stock": "buyback_amount",
 }
 
+CURRENT_YEAR_PAYOUT_FIELD = "dividend_payout_ratio_current_year"
+CURRENT_YEAR_PAYOUT_CAVEAT = (
+    "current-year payout ratio derived from report dividends_paid/net_profit; "
+    "not a commitment payout ratio"
+)
 PAYOUT_PROXY_FIELD = "dividend_payout_ratio_proxy_single_year"
 PAYOUT_PROXY_CAVEAT = "single-year report payout proxy; not a 3-year average"
 
@@ -197,15 +204,10 @@ def _is_reliable_numeric_field(field: TurtleFactValue | None) -> bool:
     return isfinite(float(field.value))
 
 
-def _derive_report_payout_proxy(
+def _derive_report_payout_fields(
     fields: dict[str, TurtleFactValue],
     caveats: list[str],
 ) -> None:
-    if _is_reliable_numeric_field(fields.get(PAYOUT_PROXY_FIELD)):
-        return
-    # ⚠️ 注：proxy reliability=display_only 时 _is_reliable_numeric_field 永远 False，
-    # 该早返实际不会触发；保留为防御性编程。
-
     dividend = _reliable_money_field(fields, "dividends_paid")
     profit = _reliable_money_field(fields, "net_profit")
     if dividend is None or profit is None:
@@ -213,8 +215,8 @@ def _derive_report_payout_proxy(
 
     dividend_money = dividend.value
     profit_money = profit.value
-    if dividend_money.currency.upper() != profit_money.currency.upper():
-        _append_caveat(caveats, "report payout proxy skipped: currency mismatch")
+    if normalize_currency(dividend_money.currency) != normalize_currency(profit_money.currency):
+        _append_caveat(caveats, "report payout ratio skipped: currency mismatch")
         return
 
     try:
@@ -229,27 +231,41 @@ def _derive_report_payout_proxy(
             ).value
         )
     except (TypeError, ValueError, OverflowError):
-        _append_caveat(caveats, "report payout proxy skipped: invalid money value")
+        _append_caveat(caveats, "report payout ratio skipped: invalid money value")
         return
 
     if profit_amount <= 0:
-        _append_caveat(caveats, "report payout proxy skipped: non-positive net_profit")
+        _append_caveat(caveats, "report payout ratio skipped: non-positive net_profit")
         return
 
     ratio = dividend_amount / profit_amount
     if not isfinite(ratio):
-        _append_caveat(caveats, "report payout proxy skipped: invalid payout ratio")
+        _append_caveat(caveats, "report payout ratio skipped: invalid payout ratio")
         return
 
-    fields[PAYOUT_PROXY_FIELD] = TurtleFactValue(
-        name=PAYOUT_PROXY_FIELD,
-        value=round(ratio, 12),
-        source_label="financial-report-client",
-        source_reference=f"{dividend.source_reference}; {profit.source_reference}",
-        reliability="display_only",
-        caveat=PAYOUT_PROXY_CAVEAT,
-    )
-    _append_caveat(caveats, PAYOUT_PROXY_CAVEAT)
+    source_reference = f"{dividend.source_reference}; {profit.source_reference}"
+    rounded_ratio = round(ratio, 12)
+
+    if not _is_reliable_numeric_field(fields.get(CURRENT_YEAR_PAYOUT_FIELD)):
+        fields[CURRENT_YEAR_PAYOUT_FIELD] = TurtleFactValue(
+            name=CURRENT_YEAR_PAYOUT_FIELD,
+            value=rounded_ratio,
+            source_label="financial-report-client",
+            source_reference=source_reference,
+            reliability="reliable",
+            caveat=CURRENT_YEAR_PAYOUT_CAVEAT,
+        )
+
+    if not isinstance(fields.get(PAYOUT_PROXY_FIELD), TurtleFactValue):
+        fields[PAYOUT_PROXY_FIELD] = TurtleFactValue(
+            name=PAYOUT_PROXY_FIELD,
+            value=rounded_ratio,
+            source_label="financial-report-client",
+            source_reference=source_reference,
+            reliability="display_only",
+            caveat=PAYOUT_PROXY_CAVEAT,
+        )
+        _append_caveat(caveats, PAYOUT_PROXY_CAVEAT)
 
 
 def build_report_facts_from_extraction(
@@ -296,7 +312,7 @@ def build_report_facts_from_extraction(
         )
         _append_caveat(caveats, degradation_caveat)
 
-    _derive_report_payout_proxy(adapted, caveats)
+    _derive_report_payout_fields(adapted, caveats)
 
     metadata = {
         "company": getattr(extraction, "company", None),
