@@ -338,14 +338,19 @@ CORE_RESULT_KEYS = {
     "cash_protection",
     "owner_earnings",
 }
+
+# 只有这些"决策性核心公式" non_decisionable 才阻断整体；
+# 其它核心结果（net_cash_ratio/ev_switch/cash_protection/owner_earnings）
+# non_decisionable 时仅降级，保留 Spec 2 前 R/GG-only 的阻断范围。
+DECISION_BLOCKING_KEYS = {"payout_M", "R", "GG"}
 ```
 
 聚合规则：
 
 - 市场/报告 **unsupported**（不支持的市场类型等）仍为 `unsupported`——这是"是否支持"的判定，与 `facts.status==degraded` 无关。
 - **不读取 `facts.status`（report/market 两半都不读，见 §6.1 第 2 点）**；整体状态只由 `CORE_RESULT_KEYS` 的 result 状态决定。
-- 核心输入或核心公式 `non_decisionable` 时，整体为 `non_decisionable`。
-- 核心输入或核心公式有 **material** degradation 时，整体为 `degraded`。
+- `DECISION_BLOCKING_KEYS`（`payout_M`/`R`/`GG`）中任一 `non_decisionable` 时，整体为 `non_decisionable`。其余核心结果（辅助指标）`non_decisionable` **不阻断**，仅按下一条降级——这与旧实现"只有 R/GG 阻断"一致（额外加上 `payout_M`）。
+- 任一核心结果 `degraded` 或 `non_decisionable`（含上一条的辅助指标），或存在 **material** caveat 时，整体为 `degraded`。
 - context-only caveats 仍展示，但不改变整体状态。
 - 非核心/展示字段不参与整体状态。
 - 以上全部满足且无 material degradation 时，整体为 `complete`。**承诺未应用是 context-only（§3.1/§6.1），因此数据齐全时整体可达 `complete`**——不再像旧实现那样"只要有任意 caveat 就 degraded"。
@@ -535,3 +540,8 @@ CORE_RESULT_KEYS = {
 - `BuybackInputs` 补回 `sources` 字段；厘清 `periods` 与 `_money_hm_report_3y_avg` 非两套机制。（§3.3）
 - §9 新增的「市场 buyback 被排除」context-only caveat 已补进 §6.1 分类账；修正 `tax_rate`/`rf_rate` 行号。（§6.1）
 - §11 step 4 拆解为三处 status 改动。pinned caveat 字符串引号统一为直引号。
+
+### 13.2 第三轮（plan-review）修订
+
+- **non_decisionable 升级范围收窄**：新增 `DECISION_BLOCKING_KEYS = {payout_M, R, GG}`。只有这些决策性核心公式 `non_decisionable` 才阻断整体；`net_cash_ratio`/`ev_switch`/`cash_protection`/`owner_earnings` 等辅助核心指标 `non_decisionable` 仅降级（保留 Spec 2 前 R/GG-only 阻断范围，避免辅助指标因跨币缺 FX 而阻断本可计算的 R/GG 估值）。（§6.2）
+- material caveat 时机：新聚合在末尾读全量 caveats，计算期 material caveat（如 `Unsupported money unit`）现在也会降级——这是相对旧 `has_input_caveats`（开头 snapshot）的有意修正。（§6.2）

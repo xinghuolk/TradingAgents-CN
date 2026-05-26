@@ -559,6 +559,10 @@
 
   The new `base_facts` (report-side payout/buyback, no market payout/buyback) breaks the existing tests below. Apply each verdict **in this same edit** so the file reaches green by Step 5.4. Recompute rule for any kept R/GG: `buyback_amount_3y_avg = mean(report latest + historical buyback)`, payout from report `dividend_payout_ratio_current_year`; market-side buyback/payout never used.
 
+  ⚠️ **The new Task 5 aggregation changes overall `signals.status` in two ways the old code did not — this is best-effort; re-run and recompute, do not trust an "unchanged status" assumption:**
+  1. **non_decisionable escalation is scoped to `DECISION_BLOCKING_KEYS = {payout_M, R, GG}`** (decided). Only these decision-driving formulas being non_decisionable blocks the whole signal; supplementary core metrics (`net_cash_ratio` / `ev_switch` / `cash_protection` / `owner_earnings`) that are non_decisionable only **degrade**. This preserves the pre-Spec-2 R/GG-only blocking behavior (plus `payout_M`), so `keeps_r_gg_complete_when_only_net_cash_currency_mixed` stays `degraded`.
+  2. **material-caveat timing.** Old `has_input_caveats` was snapshotted at function start (facts-level only). New `_material_caveats(caveats)` runs at the end over the full list, so **computation-time** material caveats (e.g. `"Unsupported money unit: billion"`) now degrade status. (See `target_currency_ignores_invalid_first_money_candidate` below — `complete → degraded`.)
+
   **DELETE (behavior removed by Spec 2 or superseded by a new test):**
 
   | Test | Reason |
@@ -571,18 +575,22 @@
   | `test_compute_turtle_signals_keeps_hh_complete_without_buyback` | superseded by Task 4's `report_buyback_missing_degrades_r_gg_only` (asserts HH complete) |
   | `test_compute_turtle_signals_degrades_when_caveats_exist_with_complete_critical_results` | replaced by Task 5.1 (material vs context-only) |
 
-  **REWRITE the 6 HK/FX tests** — for each: (a) remove the market-side `"buyback_amount": money(...)` line from `market_fields`; (b) pass `report_currency="HKD"` when the report core money is HKD (so report-side buyback/history matches), else leave default `"CNY"`. Values/statuses are otherwise unchanged because report buyback (3y avg 10) replaces the old market buyback (10) in the same currency:
+  **REWRITE the 6 HK/FX tests** — for each: (a) remove the market-side `"buyback_amount": money(...)` line from `market_fields`; (b) pass the `report_currency` from the table below — **chosen so the report-side buyback 3y avg converts to the value the test asserts**, not merely to match report core money. The old market-side buyback (10, in HKD) is replaced by report-side buyback (3y avg 10, in `report_currency`); when the target currency differs, the buyback is FX-converted, so `report_currency` must be picked to reproduce the old converted contribution:
 
-  | Test | `report_currency` | Unchanged assertions |
+  | Test | `report_currency` | Assertions |
   |------|-------------------|----------------------|
-  | `..._converts_mixed_hkd_money_with_report_fx_rates` | `"CNY"` (report CNY, market_cap HKD) | R/GG=5.0, FX `HKD:CNY=0.92` source present |
+  | `..._converts_mixed_hkd_money_with_report_fx_rates` | `"HKD"` (report core is CNY, but buyback must be HKD: target=CNY so 10 HKD×0.92=9.2 CNY → R stays 5.0; with `"CNY"` buyback=10 CNY gives R=5.0869…) | R/GG=5.0, FX `HKD:CNY=0.92` source present |
   | `..._uses_common_hkd_currency_without_fx_rates` | `"HKD"` | R/GG=5.0, owner_earnings unit `hundred_million HKD`, no HKD:CNY FX |
-  | `..._keeps_r_gg_complete_when_only_net_cash_currency_mixed` | `"HKD"` | R/GG complete=5.0, net_cash non_decisionable, FX HKD:CNY caveat |
+  | `..._keeps_r_gg_complete_when_only_net_cash_currency_mixed` | `"HKD"` | R/GG complete=5.0, net_cash non_decisionable, FX HKD:CNY caveat, overall `signals.status` stays `degraded` (net_cash non_decisionable is not a blocking key — escalation note #1) |
   | `..._ignores_unrelated_money_field_currency_for_hkd_native_calculation` | `"HKD"` | R=5.0, no HKD:CNY FX |
   | `..._ignores_unrelated_fx_rates_for_hkd_native_calculation` | `"HKD"` | R=5.0, no HKD:CNY FX |
   | `..._mixed_formula_currencies_require_relevant_fx` | `"CNY"` | non_decisionable, FX HKD:CNY required |
 
-  **KEEP unchanged** (do not touch payout/buyback semantics): `switches_to_ev_when_cash_is_large`, `is_non_decisionable_without_market_cap`, `rejects_zero_market_cap`, `rejects_negative_market_cap`, `marks_ev_related_results_non_decisionable_without_market_cap`, `preserves_unsupported_input_status`, `treats_money_conversion_failure_as_missing`, `target_currency_ignores_invalid_first_money_candidate`, `rejects_bool_money_value`, `rejects_display_only_money_fact_for_critical_formula`, `rejects_display_only_numeric_fact_for_critical_formula`, `uses_reliable_market_fallback_when_report_fact_display_only` (R stays 5.0), `is_non_decisionable_when_hk_fx_rate_missing`, the `TestEvSwitchAndCashProtectionNonDecisionable` class, the `_money_hm_report_3y_avg`/`_number_report_3y_avg` helper test classes, and the `money_fact_currencies_*` tests. Run them after the code lands; if any KEEP test fails, recompute with the rule above before editing an assertion.
+  **REWRITE (target-currency selection test)** — `test_compute_turtle_signals_target_currency_ignores_invalid_first_money_candidate` is **not** a clean KEEP. Its R/GG target currency resolves to **HKD** (report `net_profit` is CNY with an invalid `billion` unit → falls back to market `net_profit` HKD; `market_cap` HKD). Two changes are needed:
+  1. Pass `report_currency="HKD"` (otherwise the default CNY report buyback can't convert to the HKD target without a CNY:HKD rate, so `_money_hm_report_3y_avg` drops it → spurious extra degrade). With HKD buyback, R stays `5.0`.
+  2. Change the expected status from `complete` to **`degraded`**. The `"Unsupported money unit: billion"` caveat is appended during computation and is **material** (not in `CONTEXT_ONLY_CAVEATS`). The old aggregation ignored it because `has_input_caveats` was snapshotted at the start (facts-level only); the new aggregation (Step 5.3) evaluates `_material_caveats(caveats)` over the final list, so this material caveat now correctly degrades `signals.status`. Keep the `R==5.0`, `"market.net_profit" in R.sources`, `"Unsupported money unit: billion" in caveats`, and `"FX rate required" not in caveats` assertions; only the status assertion flips to `degraded`.
+
+  **KEEP unchanged** (do not touch payout/buyback semantics): `switches_to_ev_when_cash_is_large`, `is_non_decisionable_without_market_cap`, `rejects_zero_market_cap`, `rejects_negative_market_cap`, `marks_ev_related_results_non_decisionable_without_market_cap`, `preserves_unsupported_input_status`, `treats_money_conversion_failure_as_missing`, `rejects_bool_money_value`, `rejects_display_only_money_fact_for_critical_formula`, `rejects_display_only_numeric_fact_for_critical_formula`, `uses_reliable_market_fallback_when_report_fact_display_only` (R stays 5.0), `is_non_decisionable_when_hk_fx_rate_missing` (default CNY buyback matches the CNY target; R already non_decisionable from net_profit), the `TestEvSwitchAndCashProtectionNonDecisionable` class, the `_money_hm_report_3y_avg`/`_number_report_3y_avg` helper test classes, and the `money_fact_currencies_*` tests. Run them after the code lands; if any KEEP test fails, recompute with the rule above before editing an assertion.
 
 - [ ] **Step 3.2: Write failing payout_M tests**
 
@@ -765,6 +773,10 @@
       "cash_protection",
       "owner_earnings",
   })
+
+  # Only these decision-driving formulas escalate to overall non_decisionable.
+  # Other core results that are non_decisionable only degrade (pre-Spec-2 R/GG-only behavior).
+  DECISION_BLOCKING_KEYS = frozenset({"payout_M", "R", "GG"})
 
 
   @dataclass(frozen=True)
@@ -1238,20 +1250,29 @@
   with:
 
   ```python
-      core_results = [result for key, result in results.items() if key in CORE_RESULT_KEYS]
-      core_non_decisionable = any(result.status == "non_decisionable" for result in core_results)
-      core_degraded = any(result.status == "degraded" for result in core_results)
+      core_results = {key: result for key, result in results.items() if key in CORE_RESULT_KEYS}
+      # Only the decision-driving formulas block the whole signal; supplementary
+      # core metrics (net_cash_ratio / ev_switch / cash_protection / owner_earnings)
+      # that are non_decisionable only degrade, matching the pre-Spec-2 R/GG-only escalation.
+      blocking_non_decisionable = any(
+          core_results[key].status == "non_decisionable"
+          for key in DECISION_BLOCKING_KEYS
+          if key in core_results
+      )
+      core_not_complete = any(
+          result.status in {"degraded", "non_decisionable"} for result in core_results.values()
+      )
       material_input_caveats = _material_caveats(caveats)
 
-      if core_non_decisionable:
+      if blocking_non_decisionable:
           status: TurtleStatus = "non_decisionable"
-      elif core_degraded or material_input_caveats:
+      elif core_not_complete or material_input_caveats:
           status = "degraded"
       else:
           status = "complete"
   ```
 
-  Remove `has_input_caveats = bool(caveats)` near the start of `compute_turtle_signals(...)` because it is no longer used.
+  (`DECISION_BLOCKING_KEYS` was defined alongside `CORE_RESULT_KEYS` in Step 3.4.) Remove `has_input_caveats = bool(caveats)` near the start of `compute_turtle_signals(...)` because it is no longer used.
 
 - [ ] **Step 5.4: Run all calculation tests**
 
