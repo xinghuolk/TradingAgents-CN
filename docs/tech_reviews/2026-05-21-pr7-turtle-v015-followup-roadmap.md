@@ -80,7 +80,7 @@
 | Spec 1：correctness-fixes | ✅ | `docs/superpowers/specs/2026-05-21-turtle-correctness-fixes-design.md` | `docs/superpowers/plans/2026-05-21-turtle-correctness-fixes.md` | [#8](https://github.com/xinghuolk/TradingAgents-CN/pull/8) | merged 2026-05-22；30 commits / 379 tests green |
 | Spec 5：multi-period-extraction | ✅ | `docs/superpowers/specs/2026-05-22-turtle-multi-period-extraction-design.md` | `docs/superpowers/plans/2026-05-22-turtle-multi-period-extraction.md` | [#9](https://github.com/xinghuolk/TradingAgents-CN/pull/9) | merged；10 tasks + 独立 review 4 项修复（High graceful-failure / M2 thread-safety / M3 strict rehydration / L1 copy） |
 | Spec 3：data-source-quality | ✅ | `docs/superpowers/specs/2026-05-23-turtle-data-source-quality-design.md` | `docs/superpowers/plans/2026-05-23-turtle-data-source-quality.md` | [#10](https://github.com/xinghuolk/TradingAgents-CN/pull/10) | merged 2026-05-24；FX 全配对矩阵 + market/FX provenance + 3 轮 review；承诺支付率移入 Spec 2 backlog |
-| Spec 2：model-recalibration | 🟢 | `docs/superpowers/specs/2026-05-26-turtle-model-recalibration-design.md` | — | — | spec 已通过；等待 implementation plan；承诺支付率本 spec 不抽取，保留 future hook |
+| Spec 2：model-recalibration | 🟢 | `docs/superpowers/specs/2026-05-26-turtle-model-recalibration-design.md` | — | — | spec 经 multi-agent review 修订（见 spec §13）；承诺未应用定为 context-only（complete 可达）、substitution 保持 str；等待 implementation plan |
 | Spec 4：turtle-data-view-frontend | ✅ | `docs/superpowers/specs/2026-05-25-turtle-data-view-frontend-design.md` | `docs/superpowers/plans/2026-05-25-turtle-data-view-frontend.md` | [#11](https://github.com/xinghuolk/TradingAgents-CN/pull/11) | merged；4 子 Tab（报告/数据/计算/状态）+ canonical value_turtle_payload 透传 + 5 轮 PR review |
 
 文档路径约定：
