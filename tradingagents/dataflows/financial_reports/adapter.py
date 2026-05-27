@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
 from .config import FinancialReportClientConfig
+from .llm_config_export import materialize_extractor_llm_config
 
 
 @dataclass(frozen=True)
@@ -183,7 +184,17 @@ class FinancialReportAdapter:
 
 
 def create_financial_report_adapter(config: FinancialReportClientConfig) -> FinancialReportAdapter:
-    """Create adapter with report-collector wired only as a PDF provider."""
+    """Create adapter with report-collector wired only as a PDF provider.
+
+    When the LLM supplement is requested but no explicit FINANCIAL_REPORT_LLM_CONFIG_PATH
+    was provided, materialize a transport-config JSON from TradingAgents-CN's bridged
+    deep-role LLM env vars (provider/model/backend_url). The extractor is unchanged.
+    """
+    if config.enabled and config.include_llm_supplement and not config.llm_config_path:
+        generated = materialize_extractor_llm_config(cache_root=config.extractor_cache_root)
+        if generated:
+            config = replace(config, llm_config_path=generated)
+
     if not config.enabled or not (config.include_llm_supplement and config.llm_config_path):
         return FinancialReportAdapter(config=config)
 

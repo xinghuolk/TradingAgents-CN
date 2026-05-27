@@ -252,3 +252,63 @@ def test_pdf_resolver_uses_report_collector_pdf_info(tmp_path):
     resolved = adapter.resolve_pdf(FakePdfQuery(company="00001", market="HK", period_end="2025-12-31"))
 
     assert resolved == pdf
+
+
+def test_factory_materializes_config_when_path_missing(monkeypatch):
+    from tradingagents.dataflows.financial_reports import adapter as adapter_module
+    from tradingagents.dataflows.financial_reports.config import FinancialReportClientConfig
+
+    monkeypatch.setattr(
+        adapter_module,
+        "materialize_extractor_llm_config",
+        lambda cache_root="": "/tmp/generated-llm.json",
+    )
+    config = FinancialReportClientConfig(
+        enabled=True,
+        cache_only=True,
+        force_refresh=False,
+        include_llm_supplement=True,
+        allow_llm_models=(),
+        extractor_cache_root="/tmp/cache",
+        llm_config_path="",  # not explicitly provided → should be generated
+        pdf_root="",
+    )
+
+    result = adapter_module.create_financial_report_adapter(config)
+    assert result.config.llm_config_path == "/tmp/generated-llm.json"
+
+
+def test_factory_keeps_explicit_path_over_materialized(monkeypatch):
+    from tradingagents.dataflows.financial_reports import adapter as adapter_module
+    from tradingagents.dataflows.financial_reports.config import FinancialReportClientConfig
+
+    monkeypatch.setattr(
+        adapter_module,
+        "materialize_extractor_llm_config",
+        lambda cache_root="": "/tmp/should-not-be-used.json",
+    )
+    config = FinancialReportClientConfig(
+        enabled=True, cache_only=True, force_refresh=False,
+        include_llm_supplement=True, allow_llm_models=(),
+        extractor_cache_root="", llm_config_path="/explicit/llm.json", pdf_root="",
+    )
+
+    result = adapter_module.create_financial_report_adapter(config)
+    assert result.config.llm_config_path == "/explicit/llm.json"
+
+
+def test_factory_degrades_when_materialize_returns_none(monkeypatch):
+    from tradingagents.dataflows.financial_reports import adapter as adapter_module
+    from tradingagents.dataflows.financial_reports.config import FinancialReportClientConfig
+
+    monkeypatch.setattr(
+        adapter_module, "materialize_extractor_llm_config", lambda cache_root="": None
+    )
+    config = FinancialReportClientConfig(
+        enabled=True, cache_only=True, force_refresh=False,
+        include_llm_supplement=True, allow_llm_models=(),
+        extractor_cache_root="", llm_config_path="", pdf_root="",
+    )
+
+    result = adapter_module.create_financial_report_adapter(config)
+    assert result.config.llm_config_path == ""  # no crash; supplement effectively off
