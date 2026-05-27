@@ -182,6 +182,22 @@ def test_public_catalog_field_names_are_normalized_for_turtle_calculations():
     assert signals.results["net_cash_ratio"].missing_inputs == []
 
 
+def test_report_adapter_normalizes_negative_repurchase_of_stock_to_positive_buyback_amount():
+    extraction = FakeExtraction(fields={
+        "repurchase_of_stock": FakeField("repurchase_of_stock", Decimal("-1000000000")),
+        "capital_expenditures": FakeField("capital_expenditures", Decimal("-2000000000")),
+    })
+
+    report = build_report_facts_from_extraction(
+        extraction=extraction,
+        allow_llm_models=(),
+        adapter_caveats=[],
+    )
+
+    assert report.fields["buyback_amount"].value.value == 1_000_000_000.0
+    assert report.fields["capex"].value.value == -2_000_000_000.0
+
+
 def test_unsupported_unit_and_missing_currency_become_display_only():
     extraction = FakeExtraction(fields={
         "revenue": FakeField("revenue", Decimal("123"), unit="shares"),

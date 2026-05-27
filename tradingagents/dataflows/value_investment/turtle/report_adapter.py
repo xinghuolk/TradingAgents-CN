@@ -145,6 +145,8 @@ def _adapt_value(
             unit = _field_unit(field)
             assert currency is not None
             assert unit is not None
+            if field_id == "buyback_amount":
+                numeric_value = abs(numeric_value)
             value: Any = MoneyAmount(
                 value=numeric_value,
                 currency=currency,

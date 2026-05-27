@@ -262,7 +262,10 @@ def _money_hm_report_3y_avg(
             failed_sources.append(fact.source_reference)
             continue
 
-        available_values.append(float(amount.value))
+        value = float(amount.value)
+        if name == "buyback_amount":
+            value = abs(value)
+        available_values.append(value)
         sources.append(amount.source_reference)
 
     if len(available_values) < 2:

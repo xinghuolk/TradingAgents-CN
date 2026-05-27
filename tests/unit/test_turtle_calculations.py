@@ -254,6 +254,25 @@ def test_compute_turtle_signals_uses_report_side_buyback_3y_average():
     assert "market.buyback" not in signals.results["R"].sources
 
 
+def test_compute_turtle_signals_normalizes_negative_report_buyback_for_formula():
+    facts = base_facts(report_fields={
+        "buyback_amount": money("buyback_amount", -12, "report.buyback.latest"),
+    })
+    report = TurtleReportFacts(
+        fields=facts.report.fields,
+        metadata=facts.report.metadata,
+        historical=report_history(0.4, 0.6, buyback_values=(-10, -8)),
+    )
+    facts = TurtleFacts(context=facts.context, report=report, market=facts.market, status="complete")
+
+    signals = compute_turtle_signals(facts)
+
+    assert signals.results["R"].value == pytest.approx(5.0)
+    assert signals.results["GG"].value == pytest.approx(5.0)
+    assert "+ 10" in signals.results["R"].substitution
+    assert "+ 10" in signals.results["GG"].substitution
+
+
 def test_compute_turtle_signals_ignores_market_buyback_when_report_buyback_exists():
     signals = compute_turtle_signals(base_facts(market_fields={
         "buyback_amount": money("buyback_amount", 999, "market.buyback"),
