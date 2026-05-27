@@ -47,7 +47,7 @@
         │            quality +
         │            承诺支付率)
         ▼
-    Spec 2 ⬜ (model-recalibration)
+    Spec 2 🟠 (model-recalibration)
         │
         └── 承诺字段升级路径（Spec 3 完成后增强 M 算法，可选）
 ```
@@ -66,8 +66,8 @@
 单线推进时按以下顺序：
 
 1. **Spec 1**（correctness-fixes）✅ —— 已完成
-2. **Spec 5**（multi-period-extraction）—— **当前进行**；最短关键路径，unlock Spec 2
-3. **Spec 2**（model-recalibration）—— Spec 5 完成后实施
+2. **Spec 5**（multi-period-extraction）✅ —— 已完成（merged）；已 unlock Spec 2
+3. **Spec 2**（model-recalibration）🟠 —— 本地实现/验证中；最终验证后 push/PR
 4. **Spec 3**（data-source-quality）—— 与 Spec 5 / Spec 2 / Spec 4 都可并行
 5. **Spec 4**（turtle-data-view-frontend）—— 用户感知最强；Spec 1 后立即可启动
 
@@ -111,7 +111,7 @@
 - **计算 B.3 单年度 payout proxy 名字撞车 bug**（`report_adapter.py`）—— 重命名为 `dividend_payout_ratio_proxy_single_year` + 降级 display_only；附带消除 report-side proxy 与 market-side 真 3y 数据**写同一 key、`_field` report 优先静默覆盖**的撞车 bug
 - **D 章 backend 透传 `value_turtle_payload`**—— `AgentState` TypedDict 加字段、`propagation.py` InitialState 加 `""`、`value_analyst_node` 所有写 `value_report` 的 return 路径都带 payload（unsupported 返 `""`）、`simple_analysis_service.py` 持久化层加"内容非空"短路 + 新增 `value_turtle_payload.json` 配置
 
-### Spec 5：multi-period-extraction（**当前进行中**，方案 2 拆分后独立成 spec）
+### Spec 5：multi-period-extraction（**已完成 / merged**，方案 2 拆分后独立成 spec）
 
 范围（单一关注点：跨期数据获取）：
 
