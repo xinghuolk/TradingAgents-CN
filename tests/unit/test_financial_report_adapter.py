@@ -263,6 +263,12 @@ def test_factory_materializes_config_when_path_missing(monkeypatch):
         "materialize_extractor_llm_config",
         lambda cache_root="": "/tmp/generated-llm.json",
     )
+
+    def fail_get_config():
+        raise AssertionError("report collector should not be configured")
+
+    monkeypatch.setattr(adapter_module, "get_report_collector_config", fail_get_config, raising=False)
+
     config = FinancialReportClientConfig(
         enabled=True,
         cache_only=True,
@@ -276,6 +282,7 @@ def test_factory_materializes_config_when_path_missing(monkeypatch):
 
     result = adapter_module.create_financial_report_adapter(config)
     assert result.config.llm_config_path == "/tmp/generated-llm.json"
+    assert isinstance(result, adapter_module.FinancialReportAdapter)
 
 
 def test_factory_keeps_explicit_path_over_materialized(monkeypatch):
@@ -287,6 +294,12 @@ def test_factory_keeps_explicit_path_over_materialized(monkeypatch):
         "materialize_extractor_llm_config",
         lambda cache_root="": "/tmp/should-not-be-used.json",
     )
+
+    def fail_get_config():
+        raise AssertionError("report collector should not be configured")
+
+    monkeypatch.setattr(adapter_module, "get_report_collector_config", fail_get_config, raising=False)
+
     config = FinancialReportClientConfig(
         enabled=True, cache_only=True, force_refresh=False,
         include_llm_supplement=True, allow_llm_models=(),
