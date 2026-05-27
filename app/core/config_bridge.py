@@ -12,6 +12,41 @@ from typing import Optional
 logger = logging.getLogger("app.config_bridge")
 
 
+def bridge_deep_llm_role_to_env(deep_model: str, resolver=None) -> dict:
+    """将 deep 角色模型对应的 provider / backend_url 桥接到环境变量。
+
+    供 financial-report-llm-extractor 适配器（Apache 核心，仅读环境变量）复用本项目
+    的深度分析 LLM 配置。API Key 不在此设置——已由 {PROVIDER}_API_KEY 桥接负责。
+
+    Args:
+        deep_model: 深度分析模型名（来自 unified_config.get_deep_analysis_model）。
+        resolver: 可注入的解析函数（测试用）；默认用 simple_analysis_service 的同步解析器。
+
+    Returns:
+        实际写入的环境变量字典（便于计数与测试）。
+    """
+    if not deep_model:
+        return {}
+    if resolver is None:
+        from app.services.simple_analysis_service import get_provider_and_url_by_model_sync
+        resolver = get_provider_and_url_by_model_sync
+
+    info = resolver(deep_model) or {}
+    written: dict = {}
+
+    provider = (info.get("provider") or "").strip()
+    if provider:
+        os.environ["TRADINGAGENTS_DEEP_PROVIDER"] = provider
+        written["TRADINGAGENTS_DEEP_PROVIDER"] = provider
+
+    backend_url = (info.get("backend_url") or "").strip()
+    if backend_url:
+        os.environ["TRADINGAGENTS_DEEP_BACKEND_URL"] = backend_url
+        written["TRADINGAGENTS_DEEP_BACKEND_URL"] = backend_url
+
+    return written
+
+
 def bridge_config_to_env():
     """
     将统一配置桥接到环境变量
@@ -162,6 +197,13 @@ def bridge_config_to_env():
             os.environ['TRADINGAGENTS_DEEP_MODEL'] = deep_model
             logger.info(f"  ✓ 桥接深度分析模型: {deep_model}")
             bridged_count += 1
+
+        # 3b. 桥接 deep 角色的 provider / backend_url（供 financial-report-llm-extractor 复用）
+        if deep_model:
+            try:
+                bridged_count += len(bridge_deep_llm_role_to_env(deep_model))
+            except Exception as e:
+                logger.warning(f"⚠️ 桥接 deep provider/backend_url 失败: {e}")
 
         # 3. 桥接数据源配置（基础 API 密钥）
         # 🔧 [优先级] .env 文件 > 数据库配置
