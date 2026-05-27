@@ -190,3 +190,11 @@
 - **当前焦点**：Spec 1 / 5 / 3 / 4 全部 merged 进 main（PR #8 / #9 / #10 / #11）。**Spec 2（model-recalibration）正在本地实现/验证**。
 - **已就绪**：Spec 2 的依赖已全部满足——multi-period 数据通道（Spec 5 ✅）+ FX/provenance（Spec 3 ✅）就位；承诺支付率作为 Spec 2 的可选增强（Spec 3 已将其划入 Spec 2 backlog，未在 Spec 3 实现，缺失时 M 降级为 `max(3y avg, 新信号)`）。
 - **下一步**：完成 **Spec 2** 最终验证后 push/PR。实施范围包括 A.1 时间口径 + M 公式降级实现 `max(3y avg, 新信号)`（承诺支付率 future hook）+ A.2 税务口径文档化 + A.7 `payout_anchor` 重命名 + buyback O 切 extractor 3y 均值。L2（`_money_hm_report_3y_avg`/`_number_report_3y_avg` 的 per-period skip-reason caveat，见 Spec 5 §10）已纳入 plan checklist。
+
+## 8. 遗留 backlog（5 个 spec 之外）
+
+Spec 1–5 交付后，PR #7 follow-up 路线图主体完成。**唯一明确延后**的可选增强：
+
+| Backlog | 状态 | 说明 |
+|---------|------|------|
+| 承诺支付率（commitment payout ratio）抽取 | ⬜ future hook | 从 Spec 3 评估后移入 Spec 2 backlog；Spec 2 明确不实现（§2.2 范围外），仅保留 hook。当前 M = `max(payout_3y_avg, latest_signal)`，**不应用** `min(…, 承诺)` 上限；承诺未应用为 context-only caveat（不降级）。需要时新起小任务接线：抽取 `commitment_ratio` → 在 `_resolve_payout_inputs` 应用 `max(min(3y_avg, commitment), latest_signal)`。模型缺它可正常降级出结果，非阻断。 |
