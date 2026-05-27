@@ -325,3 +325,37 @@ def test_factory_degrades_when_materialize_returns_none(monkeypatch):
 
     result = adapter_module.create_financial_report_adapter(config)
     assert result.config.llm_config_path == ""  # no crash; supplement effectively off
+
+
+def test_adapter_passes_subscription_token_to_extractor_config(monkeypatch):
+    install_fake_extractor(monkeypatch)
+    adapter = FinancialReportAdapter(
+        FinancialReportClientConfig(
+            enabled=True, cache_only=True, force_refresh=False,
+            include_llm_supplement=True, allow_llm_models=(),
+            extractor_cache_root="", llm_config_path="/tmp/llm.json", pdf_root="",
+        ),
+        subscription_token="codex-tok",
+    )
+
+    adapter.get_annual_report_data(ticker="600519", market="CN", period_end="2024-12-31")
+
+    assert FakeClient.last_config.kwargs["subscription_token"] == "codex-tok"
+
+
+def test_factory_forwards_subscription_token(monkeypatch):
+    import tradingagents.dataflows.financial_reports.adapter as adapter_module
+
+    monkeypatch.setattr(
+        adapter_module, "get_report_collector_config",
+        lambda: {"enabled": False}, raising=False,
+    )
+    cfg = FinancialReportClientConfig(
+        enabled=True, cache_only=True, force_refresh=False,
+        include_llm_supplement=True, allow_llm_models=(),
+        extractor_cache_root="", llm_config_path="/explicit.json", pdf_root="",
+    )
+
+    adapter = adapter_module.create_financial_report_adapter(cfg, subscription_token="tok")
+
+    assert adapter.subscription_token == "tok"

@@ -65,9 +65,11 @@ class FinancialReportAdapter:
         self,
         config: FinancialReportClientConfig,
         report_collector: Any | None = None,
+        subscription_token: str | None = None,
     ) -> None:
         self.config = config
         self.report_collector = report_collector
+        self.subscription_token = subscription_token
 
     def resolve_pdf(self, query: Any) -> Path | None:
         if self.config.pdf_root:
@@ -136,6 +138,7 @@ class FinancialReportAdapter:
                 llm_config_path=_optional_path(self.config.llm_config_path),
                 cache_root=_optional_path(self.config.extractor_cache_root),
                 pdf_resolver=self.resolve_pdf if include_llm else None,
+                subscription_token=self.subscription_token,
             )
             client = FinancialReportClient(config=extractor_config)
             extraction = client.get_extraction(
@@ -183,12 +186,18 @@ class FinancialReportAdapter:
             )
 
 
-def create_financial_report_adapter(config: FinancialReportClientConfig) -> FinancialReportAdapter:
+def create_financial_report_adapter(
+    config: FinancialReportClientConfig,
+    subscription_token: str | None = None,
+) -> FinancialReportAdapter:
     """Create adapter with report-collector wired only as a PDF provider.
 
     When the LLM supplement is requested but no explicit FINANCIAL_REPORT_LLM_CONFIG_PATH
     was provided, materialize a transport-config JSON from TradingAgents-CN's bridged
     deep-role LLM env vars (provider/model/backend_url). The extractor is unchanged.
+
+    subscription_token: per-request codex OAuth token (caller-resolved); forwarded to
+    the extractor so codex subscriptions work without a local ~/.codex login.
     """
     if config.enabled and config.include_llm_supplement and not config.llm_config_path:
         generated = materialize_extractor_llm_config(cache_root=config.extractor_cache_root)
@@ -196,7 +205,7 @@ def create_financial_report_adapter(config: FinancialReportClientConfig) -> Fina
             config = replace(config, llm_config_path=generated)
 
     if not config.enabled or not (config.include_llm_supplement and config.llm_config_path):
-        return FinancialReportAdapter(config=config)
+        return FinancialReportAdapter(config=config, subscription_token=subscription_token)
 
     report_collector = None
     try:
@@ -213,4 +222,8 @@ def create_financial_report_adapter(config: FinancialReportClientConfig) -> Fina
             report_collector = client if client.is_available() else None
     except Exception:
         report_collector = None
-    return FinancialReportAdapter(config=config, report_collector=report_collector)
+    return FinancialReportAdapter(
+        config=config,
+        report_collector=report_collector,
+        subscription_token=subscription_token,
+    )
