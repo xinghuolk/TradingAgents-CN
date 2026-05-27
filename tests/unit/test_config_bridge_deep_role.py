@@ -36,3 +36,9 @@ def test_codex_sets_provider_without_backend_url(monkeypatch):
     result = bridge_deep_llm_role_to_env("gpt-5.5-codex", resolver=resolver)
     assert result == {"TRADINGAGENTS_DEEP_PROVIDER": "codex"}
     assert "TRADINGAGENTS_DEEP_BACKEND_URL" not in os.environ
+
+
+def test_none_model_sets_nothing(monkeypatch):
+    _clear(monkeypatch)
+    assert bridge_deep_llm_role_to_env(None, resolver=lambda m: {}) == {}
+    assert "TRADINGAGENTS_DEEP_PROVIDER" not in os.environ

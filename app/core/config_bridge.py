@@ -7,12 +7,15 @@ import os
 import json
 import logging
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Callable
 
 logger = logging.getLogger("app.config_bridge")
 
 
-def bridge_deep_llm_role_to_env(deep_model: str, resolver=None) -> dict:
+def bridge_deep_llm_role_to_env(
+    deep_model: str,
+    resolver: Optional[Callable[[str], dict]] = None,
+) -> dict:
     """将 deep 角色模型对应的 provider / backend_url 桥接到环境变量。
 
     供 financial-report-llm-extractor 适配器（Apache 核心，仅读环境变量）复用本项目
@@ -44,6 +47,8 @@ def bridge_deep_llm_role_to_env(deep_model: str, resolver=None) -> dict:
         os.environ["TRADINGAGENTS_DEEP_BACKEND_URL"] = backend_url
         written["TRADINGAGENTS_DEEP_BACKEND_URL"] = backend_url
 
+    if written:
+        logger.info(f"  ✓ 桥接 deep 角色 provider/backend_url: {written}")
     return written
 
 
@@ -198,7 +203,7 @@ def bridge_config_to_env():
             logger.info(f"  ✓ 桥接深度分析模型: {deep_model}")
             bridged_count += 1
 
-        # 3b. 桥接 deep 角色的 provider / backend_url（供 financial-report-llm-extractor 复用）
+        # 2b. 桥接 deep 角色的 provider / backend_url（供 financial-report-llm-extractor 复用）
         if deep_model:
             try:
                 bridged_count += len(bridge_deep_llm_role_to_env(deep_model))
