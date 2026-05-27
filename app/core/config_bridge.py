@@ -13,7 +13,7 @@ logger = logging.getLogger("app.config_bridge")
 
 
 def bridge_deep_llm_role_to_env(
-    deep_model: str,
+    deep_model: Optional[str],
     resolver: Optional[Callable[[str], dict]] = None,
 ) -> dict:
     """将 deep 角色模型对应的 provider / backend_url 桥接到环境变量。
