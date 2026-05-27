@@ -79,7 +79,7 @@
 | Spec 1：correctness-fixes | ✅ | `docs/superpowers/specs/2026-05-21-turtle-correctness-fixes-design.md` | `docs/superpowers/plans/2026-05-21-turtle-correctness-fixes.md` | [#8](https://github.com/xinghuolk/TradingAgents-CN/pull/8) | merged 2026-05-22；30 commits / 379 tests green |
 | Spec 5：multi-period-extraction | ✅ | `docs/superpowers/specs/2026-05-22-turtle-multi-period-extraction-design.md` | `docs/superpowers/plans/2026-05-22-turtle-multi-period-extraction.md` | [#9](https://github.com/xinghuolk/TradingAgents-CN/pull/9) | merged；10 tasks + 独立 review 4 项修复（High graceful-failure / M2 thread-safety / M3 strict rehydration / L1 copy） |
 | Spec 3：data-source-quality | ✅ | `docs/superpowers/specs/2026-05-23-turtle-data-source-quality-design.md` | `docs/superpowers/plans/2026-05-23-turtle-data-source-quality.md` | [#10](https://github.com/xinghuolk/TradingAgents-CN/pull/10) | merged 2026-05-24；FX 全配对矩阵 + market/FX provenance + 3 轮 review；承诺支付率移入 Spec 2 backlog |
-| Spec 2：model-recalibration | 🟠 | `docs/superpowers/specs/2026-05-26-turtle-model-recalibration-design.md` | `docs/superpowers/plans/2026-05-26-turtle-model-recalibration.md` | [#12](https://github.com/xinghuolk/TradingAgents-CN/pull/12) | 实现完成，turtle 281 tests green；PR #12 开启待评审/合并（合并后改 ✅）；承诺未应用为 context-only；市场 action 仅上下文 |
+| Spec 2：model-recalibration | ✅ | `docs/superpowers/specs/2026-05-26-turtle-model-recalibration-design.md` | `docs/superpowers/plans/2026-05-26-turtle-model-recalibration.md` | [#12](https://github.com/xinghuolk/TradingAgents-CN/pull/12) | merged 2026-05-27；turtle 281 tests green；spec 3 轮 review + 实现 multi-agent review；承诺未应用为 context-only；市场 action 仅上下文 |
 | Spec 4：turtle-data-view-frontend | ✅ | `docs/superpowers/specs/2026-05-25-turtle-data-view-frontend-design.md` | `docs/superpowers/plans/2026-05-25-turtle-data-view-frontend.md` | [#11](https://github.com/xinghuolk/TradingAgents-CN/pull/11) | merged；4 子 Tab（报告/数据/计算/状态）+ canonical value_turtle_payload 透传 + 5 轮 PR review |
 
 文档路径约定：
@@ -187,9 +187,9 @@
 
 ## 7. 当前进度
 
-- **当前焦点**：Spec 1 / 5 / 3 / 4 全部 merged 进 main（PR #8 / #9 / #10 / #11）。**Spec 2（model-recalibration）实现完成，PR [#12](https://github.com/xinghuolk/TradingAgents-CN/pull/12) 开启待评审/合并**（turtle 281 tests green）。
+- **当前焦点**：**Spec 1 / 2 / 3 / 4 / 5 全部 merged 进 main**（PR #8 / #12 / #10 / #11 / #9）。PR #7 follow-up 路线图的 5 个 spec 全部交付完成。
 - **已就绪**：Spec 2 的依赖已全部满足——multi-period 数据通道（Spec 5 ✅）+ FX/provenance（Spec 3 ✅）就位；承诺支付率作为 Spec 2 的可选增强（Spec 3 已将其划入 Spec 2 backlog，未在 Spec 3 实现，缺失时 M 降级为 `max(3y avg, 新信号)`）。
-- **下一步**：评审/合并 PR #12；合并后把状态表 Spec 2 改为 ✅（PR 号已填）。届时 PR #7 follow-up 路线图 5 个 spec 全部交付，仅剩 §8 backlog（承诺支付率 future hook）。Spec 2 实施范围：A.1 时间口径 + M 降级 `max(3y avg, 新信号)`（承诺 future hook）+ A.2 税务口径文档化 + A.7 `payout_anchor` 重命名 + buyback O 切 extractor 3y 均值；L2 per-period skip-reason caveat 已纳入。
+- **下一步**：路线图 5 个 spec 已全部交付，无未启动项。仅剩 §8 backlog（承诺支付率 future hook，可选增强，缺失可优雅降级）——需要时另起小任务接线即可。
 
 ## 8. 遗留 backlog（5 个 spec 之外）
 
