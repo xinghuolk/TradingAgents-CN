@@ -65,6 +65,18 @@ def build_turtle_decision_prompt(
             facts_to_markdown(facts),
             signals_to_markdown(signals),
             (
+                "## Turtle v0.15 Spec 2 口径说明\n"
+                "- 分红按 holding_channel 对应 tax_rate 扣税；注销型回购对继续持有股东无即时税务事件，"
+                "R/GG 中 buyback_amount_3y_avg 不扣税。\n"
+                "- repurchase_of_stock 被用作报告侧 buyback_amount 输入，但当前 payload 未验证股份注销进度；"
+                "若回购未注销，O 可能高估股东回报。\n"
+                "- commitment_ratio 本版本未抽取；payout_M 使用 max(payout_3y_avg, latest_signal)，"
+                "未应用承诺上限。\n"
+                "- latest_signal 使用回看的最新年 dividends_paid/net_profit 代理前瞻 DPS 调整值，"
+                "且它同时是 payout_3y_avg 的成员；在支付率上行、亏损年被排除或承诺上限缺失时，"
+                "payout_M 与 R/GG 可能偏高。"
+            ),
+            (
                 "## 输出结构\n"
                 "1. 数据状态：概述 facts.status、signals.status 与关键 caveats。\n"
                 "2. 公式核对：逐项引用公式、代入式、数值、单位、来源和缺失输入。"

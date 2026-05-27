@@ -16,6 +16,18 @@ SOURCE_LABEL = "market-adapter"
 
 # "内置常量字段"：仅有这些字段不算实际外部数据采集成功（adapter status 派生白名单）
 _BUILTIN_FIELDS = frozenset({"tax_rate", "holding_channel", "rf_rate"})
+CONTEXT_ONLY_ACTION_CAVEATS = frozenset({
+    "dividend data missing",
+    "avg_payout_ratio_3y missing",
+    "dividend records missing",
+    "buyback data missing",
+    "buyback_amount missing",
+    "buyback_amount invalid",
+})
+
+
+def _is_status_affecting_caveat(caveat: str) -> bool:
+    return caveat not in CONTEXT_ONLY_ACTION_CAVEATS
 
 
 def _normalize_market(market: str) -> str:
@@ -344,10 +356,11 @@ def build_market_facts(
             )
 
     external_fields = {k: v for k, v in fields.items() if k not in _BUILTIN_FIELDS}
+    status_affecting_caveats = [caveat for caveat in caveats if _is_status_affecting_caveat(caveat)]
 
     if not external_fields:
         status: TurtleStatus = "non_decisionable"
-    elif caveats or any(
+    elif status_affecting_caveats or any(
         f.reliability != "reliable"
         or (isinstance(f.value, MoneyAmount) and f.value.reliability != "reliable")
         or f.caveat

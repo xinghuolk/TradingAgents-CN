@@ -6,7 +6,7 @@
   - `docs/tech_reviews/2026-05-21-pr7-turtle-v015-value-analyst-review.md`（综合评审）
   - `docs/tech_reviews/2026-05-21-pr7-turtle-calculation-and-source-review.md`（计算与数据源评审）
 
-> 本文档协调 PR #7 评审的所有 follow-up 工作。两份评审共识别 13+ 条问题，跨越代码正确性、金融模型口径、数据通道、UI 可观测性。本文档把它们拆分为 4 个独立 spec，每个独立走 `spec → plan → 实施` 循环。
+> 本文档协调 PR #7 评审的所有 follow-up 工作。两份评审共识别 13+ 条问题，跨越代码正确性、金融模型口径、数据通道、UI 可观测性。本文档把它们拆分为 5 个独立 spec，每个独立走 `spec → plan → 实施` 循环。
 
 ---
 
@@ -26,8 +26,8 @@
 |------|------|--------------|------|------|------|
 | **Spec 1** | correctness-fixes | 综合 2.1 / 2.2 / 2.3；计算 A.4 / A.5 / A.6 / B.1 + B.1 附（DEFAULT_CHANNEL_CAVEAT）/ B.3；D 章 backend 透传 + AgentState schema + 持久化空内容短路 | 低 | 中 | 无 |
 | **Spec 5** | multi-period-extraction | FinancialReportClient 跨 3 期年报数据获取；跨期失败覆盖；缓存策略；跨期一致性校验（货币 / 单位 / 公司） | 中（新数据契约 + 性能） | 中 | 与 Spec 1 无强依赖，可与 Spec 3 / 4 并行 |
-| **Spec 3** | data-source-quality | 计算 A.3 跨币 FX；B.2 market source provider；B.4 FX metadata；承诺支付率字段（extractor 扩展或 dividend_policy_text 二次提取） | 中（新数据通道） | 中 | 与 Spec 1 / 5 无强依赖，可并行 |
-| **Spec 2** | model-recalibration | 计算 A.1 时间口径 + M 完整算法（`max(min(3y avg, 承诺), 新信号DPS)`，承诺缺失时降级）；A.2 税务口径 prompt 文档化；A.7 payout_anchor 重命名；buyback O 切到 extractor 3y 均值 | 中（改变数值） | 中（公式实施 + fixture migration） | **强依赖 Spec 5**（multi-period 数据）；可选依赖 Spec 3（承诺支付率为可选增强） |
+| **Spec 3** | data-source-quality | 计算 A.3 跨币 FX；B.2 market source provider；B.4 FX metadata；承诺支付率字段评估后移入 Spec 2 backlog / future hook | 中（新数据通道） | 中 | 与 Spec 1 / 5 无强依赖；已 merged |
+| **Spec 2** | model-recalibration | 计算 A.1 时间口径 + M 完整算法（`max(min(3y avg, 承诺), 新信号DPS)`，承诺缺失时降级）；A.2 税务口径 prompt 文档化；A.7 payout_anchor 重命名；buyback O 切到 extractor 3y 均值 | 中（改变数值） | 中（公式实施 + fixture migration） | **强依赖 Spec 5**（multi-period 数据）；承诺支付率为 Spec 2 backlog / future hook |
 | **Spec 4** | turtle-data-view-frontend | D 章 frontend tab（数据 / 计算 / 状态 Tab） | 中（proprietary、UX 设计） | 大 | **依赖 Spec 1 的 backend 透传**完成 |
 
 **已并入相邻 spec 的化妆性条目**：
@@ -44,32 +44,31 @@
         ▼               ▼              ▼
     Spec 5 ✅       Spec 3 ✅      Spec 4 ✅
     (multi-period)  (FX + source   (frontend tab)
-        │            quality +
-        │            承诺支付率)
+        │            quality)
         ▼
-    Spec 2 ⬜ (model-recalibration)
+    Spec 2 🟠 (model-recalibration)
         │
-        └── 承诺字段升级路径（Spec 3 完成后增强 M 算法，可选）
+        └── 承诺字段升级路径（Spec 2 backlog / future hook，可选）
 ```
 
 **关键路径变更**（Path C + 方案 2 拆分，2026-05-22）：
 
-- 原 Spec 3 范围（含 multi-period + 承诺支付率）经过 brainstorming scope assessment 拆分为：
+- 原 Spec 3 范围（含 multi-period + 承诺支付率候选项）经过 brainstorming scope assessment 拆分为：
   - **Spec 5（multi-period-extraction）**：Spec 2 的真正 blocker，独立成 spec 让其专注
-  - **Spec 3（data-source-quality）**：FX 跨币 + source 追溯 + 承诺支付率（性质相似的"数据来源质量"工作）
-- **Spec 2 强依赖**：仅 Spec 5（multi-period 数据）；承诺支付率（来自 Spec 3）作为**可选增强** —— Spec 2 公式 `max(min(3y avg, 承诺), 新信号)` 在承诺缺失时降级为 `max(3y avg, 新信号)`，承诺值就位后再升级
-- 三条独立链（**可并行**）：
-  - **Spec 5 → Spec 2**：核心 R/GG 公式重建（最短关键路径）
-  - **Spec 3**：数据质量提升
-  - **Spec 4**：frontend tab
+  - **Spec 3（data-source-quality）**：FX 跨币 + source 追溯；承诺支付率未在本 spec 实现，已移入 Spec 2 backlog / future hook
+- **Spec 2 强依赖**：仅 Spec 5（multi-period 数据）；承诺支付率作为 **Spec 2 backlog / future hook** 的可选增强 —— 当前 Spec 2 公式在承诺缺失时降级为 `max(3y avg, 新信号)`，承诺值就位后再升级
+- 三条独立链状态：
+  - **Spec 5 → Spec 2**：核心 R/GG 公式重建（Spec 5 已 merged，Spec 2 本地实现/验证中）
+  - **Spec 3**：数据质量提升，已 merged
+  - **Spec 4**：frontend tab，已 merged
 
 单线推进时按以下顺序：
 
 1. **Spec 1**（correctness-fixes）✅ —— 已完成
-2. **Spec 5**（multi-period-extraction）—— **当前进行**；最短关键路径，unlock Spec 2
-3. **Spec 2**（model-recalibration）—— Spec 5 完成后实施
-4. **Spec 3**（data-source-quality）—— 与 Spec 5 / Spec 2 / Spec 4 都可并行
-5. **Spec 4**（turtle-data-view-frontend）—— 用户感知最强；Spec 1 后立即可启动
+2. **Spec 5**（multi-period-extraction）✅ —— 已完成（merged）；已 unlock Spec 2
+3. **Spec 2**（model-recalibration）🟠 —— 本地实现/验证中；最终验证后 push/PR
+4. **Spec 3**（data-source-quality）✅ —— 已完成（merged）
+5. **Spec 4**（turtle-data-view-frontend）✅ —— 已完成（merged）
 
 ## 4. 状态追踪
 
@@ -80,7 +79,7 @@
 | Spec 1：correctness-fixes | ✅ | `docs/superpowers/specs/2026-05-21-turtle-correctness-fixes-design.md` | `docs/superpowers/plans/2026-05-21-turtle-correctness-fixes.md` | [#8](https://github.com/xinghuolk/TradingAgents-CN/pull/8) | merged 2026-05-22；30 commits / 379 tests green |
 | Spec 5：multi-period-extraction | ✅ | `docs/superpowers/specs/2026-05-22-turtle-multi-period-extraction-design.md` | `docs/superpowers/plans/2026-05-22-turtle-multi-period-extraction.md` | [#9](https://github.com/xinghuolk/TradingAgents-CN/pull/9) | merged；10 tasks + 独立 review 4 项修复（High graceful-failure / M2 thread-safety / M3 strict rehydration / L1 copy） |
 | Spec 3：data-source-quality | ✅ | `docs/superpowers/specs/2026-05-23-turtle-data-source-quality-design.md` | `docs/superpowers/plans/2026-05-23-turtle-data-source-quality.md` | [#10](https://github.com/xinghuolk/TradingAgents-CN/pull/10) | merged 2026-05-24；FX 全配对矩阵 + market/FX provenance + 3 轮 review；承诺支付率移入 Spec 2 backlog |
-| Spec 2：model-recalibration | ⬜ | — | — | — | **唯一未启动**；强依赖 Spec 5 ✅（已就绪）；承诺支付率为可选增强（来自 Spec 3，已划入此 spec backlog）；brainstorming learnings 见 §5 |
+| Spec 2：model-recalibration | 🟠 | `docs/superpowers/specs/2026-05-26-turtle-model-recalibration-design.md` | `docs/superpowers/plans/2026-05-26-turtle-model-recalibration.md` | [#12](https://github.com/xinghuolk/TradingAgents-CN/pull/12) | 实现完成，turtle 281 tests green；PR #12 开启待评审/合并（合并后改 ✅）；承诺未应用为 context-only；市场 action 仅上下文 |
 | Spec 4：turtle-data-view-frontend | ✅ | `docs/superpowers/specs/2026-05-25-turtle-data-view-frontend-design.md` | `docs/superpowers/plans/2026-05-25-turtle-data-view-frontend.md` | [#11](https://github.com/xinghuolk/TradingAgents-CN/pull/11) | merged；4 子 Tab（报告/数据/计算/状态）+ canonical value_turtle_payload 透传 + 5 轮 PR review |
 
 文档路径约定：
@@ -111,7 +110,7 @@
 - **计算 B.3 单年度 payout proxy 名字撞车 bug**（`report_adapter.py`）—— 重命名为 `dividend_payout_ratio_proxy_single_year` + 降级 display_only；附带消除 report-side proxy 与 market-side 真 3y 数据**写同一 key、`_field` report 优先静默覆盖**的撞车 bug
 - **D 章 backend 透传 `value_turtle_payload`**—— `AgentState` TypedDict 加字段、`propagation.py` InitialState 加 `""`、`value_analyst_node` 所有写 `value_report` 的 return 路径都带 payload（unsupported 返 `""`）、`simple_analysis_service.py` 持久化层加"内容非空"短路 + 新增 `value_turtle_payload.json` 配置
 
-### Spec 5：multi-period-extraction（**当前进行中**，方案 2 拆分后独立成 spec）
+### Spec 5：multi-period-extraction（**已完成 / merged**，方案 2 拆分后独立成 spec）
 
 范围（单一关注点：跨期数据获取）：
 
@@ -124,28 +123,28 @@
 - **TurtleFacts 数据结构**：multi-period 数据如何存（per-period dict / 新 dataclass / 仅聚合衍生字段）
 - **calculations.py 集成**：如何读取 multi-period（新 helper `_money_hm_multi_period` 还是直接读 facts.report.historical）
 
-### Spec 3：data-source-quality（与 Spec 5 / 2 / 4 并行可启动）
+### Spec 3：data-source-quality（**已完成 / merged**）
 
 修复项 + 新增：
 
 - **计算 A.3 跨币 FX 通道未打通**—— 选 FX provider；写入 `facts.report.metadata["fx_rates"]`；明确 pair 方向约定（`HKD:CNY` = 1 HKD 兑 X CNY 等）
 - **计算 B.2 市场 source_reference 缺 provider**—— `market_adapter` 携带 `info["source"]` + timestamp 进 source_reference
 - **计算 B.4 FX metadata 缺 provider/timestamp**—— FX 信息同样携带来源与时间戳
-- **承诺支付率字段**—— extractor 字段表中无对应字段；需选其一：(a) 扩展 extractor `dividend_commitment_ratio` 字段（上游协调）；(b) 从已有 `dividend_policy_text` LLM 二次提取；(c) 暂时不抓，Spec 2 公式里降级为"无承诺值时跳过 M 算法的 min(...)"
+- **承诺支付率字段**—— extractor 字段表中无对应字段；Spec 3 未实现该字段，已移入 Spec 2 backlog / future hook。当前 Spec 2 实现按"无承诺值时跳过 M 算法的 min(...)"降级。
 
-### Spec 2：model-recalibration（**暂缓**，等 Spec 5 完成）
+### Spec 2：model-recalibration（**实施中**，依赖已满足）
 
 依赖关系（方案 2 拆分后明确）：
 
 - **强依赖 Spec 5**：multi-period payout / buyback 数据（M 的"近 3 年支付率均值"、O 的"过去 3 年回购年均"都来自 Spec 5 的 historical 数据 + `_money_hm_report_3y_avg` / `_number_report_3y_avg` helpers）
-- **可选依赖 Spec 3**：承诺支付率字段是 M 算法 `min(3y avg, 承诺)` 的增强项；Spec 3 未完成时降级为 `M = max(3y avg, 新信号)`（跳过 min 的承诺约束）
+- **可选增强**：Spec 3 已完成 FX/provenance 数据质量工作，但承诺支付率字段未实现，已转入 Spec 2 backlog / future hook；因此本 Spec 2 实现按无承诺字段降级为 `M = max(3y avg, 新信号)`（跳过 min 的承诺约束）
 
 修复项（**与 Path C 前的初版差异较大，因为 brainstorming + 上游对比揭示了更精细的公式**）：
 
 - **计算 A.1 时间口径完整对齐上游**：
   - R = `(C × M × (1 - Q%) + O) / market_cap × 100`
   - C = 当年归母净利润（snapshot，与上游因子 2 一致）
-  - **M = max(min(近 3 年支付率均值, 承诺支付率), 新信号 DPS 调整值)** —— 近 3 年支付率均值来自 **Spec 5**（per-period 派生 payout ratio + `_number_report_3y_avg`）；承诺支付率来自 **Spec 3**（可选增强，缺失则跳过 min）
+  - **M = max(min(近 3 年支付率均值, 承诺支付率), 新信号 DPS 调整值)** —— 近 3 年支付率均值来自 **Spec 5**（per-period 派生 payout ratio + `_number_report_3y_avg`）；承诺支付率是 Spec 2 backlog / future hook 的可选增强，当前缺失则跳过 min
   - **O = 注销型回购年均金额（过去 3 年）** —— 来自 **Spec 5** multi-period buyback 数据（`_money_hm_report_3y_avg`）
   - Q = 税率（按 holding_channel 查表，Spec 1 已就位）
 - **计算 A.2 分红 / 回购税务口径不对称**—— Q2=A2-1：prompt 文档化"注销型回购对继续持有股东无即时税务事件，因此 `+ buyback` 不扣税；与上游'注销型回购不做税务折扣'明示一致"
@@ -188,6 +187,14 @@
 
 ## 7. 当前进度
 
-- **当前焦点**：Spec 1 / 5 / 3 / 4 全部 merged 进 main（PR #8 / #9 / #10 / #11）。roadmap 仅剩 **Spec 2（model-recalibration）**。
+- **当前焦点**：Spec 1 / 5 / 3 / 4 全部 merged 进 main（PR #8 / #9 / #10 / #11）。**Spec 2（model-recalibration）实现完成，PR [#12](https://github.com/xinghuolk/TradingAgents-CN/pull/12) 开启待评审/合并**（turtle 281 tests green）。
 - **已就绪**：Spec 2 的依赖已全部满足——multi-period 数据通道（Spec 5 ✅）+ FX/provenance（Spec 3 ✅）就位；承诺支付率作为 Spec 2 的可选增强（Spec 3 已将其划入 Spec 2 backlog，未在 Spec 3 实现，缺失时 M 降级为 `max(3y avg, 新信号)`）。
-- **下一步**：启动 **Spec 2** —— A.1 时间口径 + M 完整算法 `max(min(3y avg, 承诺), 新信号)` + A.2 税务口径文档化 + A.7 `payout_anchor` 重命名 + buyback O 切 extractor 3y 均值。L2（`_money_hm_report_3y_avg`/`_number_report_3y_avg` 的 per-period skip-reason caveat，见 Spec 5 §10）列为 Spec 2 wiring checklist 项。
+- **下一步**：评审/合并 PR #12；合并后把状态表 Spec 2 改为 ✅（PR 号已填）。届时 PR #7 follow-up 路线图 5 个 spec 全部交付，仅剩 §8 backlog（承诺支付率 future hook）。Spec 2 实施范围：A.1 时间口径 + M 降级 `max(3y avg, 新信号)`（承诺 future hook）+ A.2 税务口径文档化 + A.7 `payout_anchor` 重命名 + buyback O 切 extractor 3y 均值；L2 per-period skip-reason caveat 已纳入。
+
+## 8. 遗留 backlog（5 个 spec 之外）
+
+Spec 1–5 交付后，PR #7 follow-up 路线图主体完成。**唯一明确延后**的可选增强：
+
+| Backlog | 状态 | 说明 |
+|---------|------|------|
+| 承诺支付率（commitment payout ratio）抽取 | ⬜ future hook | 从 Spec 3 评估后移入 Spec 2 backlog；Spec 2 明确不实现（§2.2 范围外），仅保留 hook。当前 M = `max(payout_3y_avg, latest_signal)`，**不应用** `min(…, 承诺)` 上限；承诺未应用为 context-only caveat（不降级）。需要时新起小任务接线：抽取 `commitment_ratio` → 在 `_resolve_payout_inputs` 应用 `max(min(3y_avg, commitment), latest_signal)`。模型缺它可正常降级出结果，非阻断。 |

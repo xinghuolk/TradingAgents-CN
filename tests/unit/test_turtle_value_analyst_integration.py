@@ -561,3 +561,55 @@ def test_plain_prompt_legacy_payload_without_market_metadata():
                       side_effect=lambda facts, signals: captured.update(facts=facts) or "PROMPT"):
         va._plain_turtle_report_prompt("腾讯", "00700", _va_payload(with_market_metadata=False))
     assert captured["facts"].market.metadata == {}
+
+
+def test_plain_turtle_report_prompt_rehydrates_new_payout_m_payload():
+    from tradingagents.agents.analysts import value_analyst as va
+
+    payload = _va_payload(with_market_metadata=True)
+    data = json.loads(payload)
+    data["signals"]["results"] = {
+        "payout_M": {
+            "name": "payout_M",
+            "formula": "payout_M = max(payout_3y_avg, latest_signal)",
+            "substitution": "payout_M = max(payout_3y_avg=0.4, latest_signal=0.5) = 0.5",
+            "value": 0.5,
+            "unit": "ratio",
+            "sources": ["report.payout"],
+            "missing_inputs": [],
+            "status": "complete",
+        }
+    }
+
+    with patch.object(va, "build_turtle_decision_prompt", return_value="prompt") as builder:
+        assert va._plain_turtle_report_prompt("X", "600519", json.dumps(data, ensure_ascii=False)) == "prompt"
+
+    signals = builder.call_args.args[1]
+    assert "payout_M" in signals.results
+    assert signals.results["payout_M"].substitution.startswith("payout_M = max")
+
+
+def test_plain_turtle_report_prompt_rehydrates_legacy_payout_anchor_payload():
+    from tradingagents.agents.analysts import value_analyst as va
+
+    payload = _va_payload(with_market_metadata=True)
+    data = json.loads(payload)
+    data["signals"]["results"] = {
+        "payout_anchor": {
+            "name": "payout_anchor",
+            "formula": "payout_anchor = avg_payout_ratio_3y",
+            "substitution": "payout_anchor = 0.5",
+            "value": 0.5,
+            "unit": "ratio",
+            "sources": ["legacy.market.payout"],
+            "missing_inputs": [],
+            "status": "complete",
+        }
+    }
+
+    with patch.object(va, "build_turtle_decision_prompt", return_value="prompt") as builder:
+        assert va._plain_turtle_report_prompt("X", "600519", json.dumps(data, ensure_ascii=False)) == "prompt"
+
+    signals = builder.call_args.args[1]
+    assert "payout_anchor" in signals.results
+    assert signals.results["payout_anchor"].value == 0.5

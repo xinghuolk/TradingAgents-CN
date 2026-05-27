@@ -3,7 +3,6 @@ import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from fastapi.testclient import TestClient
 
 
 VALID_PAYLOAD = json.dumps({"facts": {"status": "complete"}, "signals": {"status": "complete", "results": {}}})
@@ -103,29 +102,15 @@ class TestAnalysisReportsBranchPayloadPersistence:
     result_data so that extract_turtle_payload Priority-1 resolves for the
     persistent path.
 
-    Test approach: TestClient against a minimal FastAPI app that mounts only the
-    analysis router, with auth and DB dependencies patched out.  This exercises
-    the REAL router code (the exact analysis_reports branch in get_task_result)
-    so the test FAILS before the fix and PASSES after.
+    Test approach: call the async router handler directly with auth and DB
+    dependencies patched out. This exercises the REAL router code (the exact
+    analysis_reports branch in get_task_result) while avoiding the sync client's
+    sync/threadpool path in this execution environment.
 
     Note: importing app.routers.analysis triggers TradingAgentsGraph + MongoDB
     probe (adds ~60 s once per pytest session on machines without a running
     MongoDB), but the cost is paid once and shared across all tests in the file.
     """
-
-    @pytest.fixture(scope="class")
-    def analysis_app(self):
-        """Minimal FastAPI app with just the analysis router, auth stubbed out."""
-        from fastapi import FastAPI
-        from app.routers import analysis as analysis_module
-        from app.routers.auth_db import get_current_user
-
-        _app = FastAPI()
-        _app.include_router(analysis_module.router, prefix="/api/analysis")
-        _app.dependency_overrides[get_current_user] = lambda: {
-            "username": "test", "id": "test-id"
-        }
-        return _app
 
     def _make_mongo_doc(self) -> dict:
         """Simulate a mongo_result document as written by save-time persistence."""
@@ -150,15 +135,16 @@ class TestAnalysisReportsBranchPayloadPersistence:
             "value_turtle_payload": VALID_PAYLOAD,
         }
 
-    def test_result_endpoint_returns_payload_from_analysis_reports_branch(
-        self, analysis_app
-    ):
+    @pytest.mark.asyncio
+    async def test_result_endpoint_returns_payload_from_analysis_reports_branch(self):
         """Persistent path: completed analysis re-fetched from analysis_reports must
         still return canonical value_turtle_payload (regression: branch dropped it).
 
         RED before fix  → endpoint returns value_turtle_payload == ""
         GREEN after fix → endpoint returns value_turtle_payload == VALID_PAYLOAD
         """
+        from app.routers import analysis as analysis_module
+
         mongo_doc = self._make_mongo_doc()
 
         fake_service = MagicMock()
@@ -179,11 +165,13 @@ class TestAnalysisReportsBranchPayloadPersistence:
             "app.routers.analysis.get_simple_analysis_service",
             return_value=fake_service,
         ), patch("app.core.database.get_mongo_db", return_value=fake_db):
-            client = TestClient(analysis_app)
-            resp = client.get("/api/analysis/tasks/t-x/result")
+            result = await analysis_module.get_task_result(
+                "t-x",
+                user={"username": "test", "id": "test-id"},
+            )
 
-        assert resp.status_code == 200, resp.text
-        data = resp.json()["data"]
+        assert result["success"] is True
+        data = result["data"]
         assert data["value_turtle_payload"] == VALID_PAYLOAD, (
             "analysis_reports branch must copy value_turtle_payload from mongo_result; "
             "got: " + repr(data.get("value_turtle_payload"))
@@ -203,27 +191,13 @@ class TestAnalysisTasksFallbackPayloadPersistence:
     The fix: copy value_turtle_payload from r (tasks_doc["result"]) into result_data in
     the analysis_tasks else-branch, alongside the other r.get(...) fields.
 
-    Test approach: mirrors TestAnalysisReportsBranchPayloadPersistence — same app fixture,
-    same patch targets — but forces the analysis_reports path to return None so the
-    else-branch is taken.
+    Test approach: mirrors TestAnalysisReportsBranchPayloadPersistence — same direct
+    handler call and patch targets — but forces the analysis_reports path to return
+    None so the else-branch is taken.
 
     RED before fix  → endpoint returns value_turtle_payload == ""  (field absent / dropped)
     GREEN after fix → endpoint returns value_turtle_payload == VALID_PAYLOAD
     """
-
-    @pytest.fixture(scope="class")
-    def analysis_app(self):
-        """Minimal FastAPI app with just the analysis router, auth stubbed out."""
-        from fastapi import FastAPI
-        from app.routers import analysis as analysis_module
-        from app.routers.auth_db import get_current_user
-
-        _app = FastAPI()
-        _app.include_router(analysis_module.router, prefix="/api/analysis")
-        _app.dependency_overrides[get_current_user] = lambda: {
-            "username": "test", "id": "test-id"
-        }
-        return _app
 
     def _make_tasks_doc(self) -> dict:
         """Simulate an analysis_tasks document where result carries value_turtle_payload."""
@@ -251,15 +225,16 @@ class TestAnalysisTasksFallbackPayloadPersistence:
             },
         }
 
-    def test_result_endpoint_returns_payload_from_analysis_tasks_fallback_branch(
-        self, analysis_app
-    ):
+    @pytest.mark.asyncio
+    async def test_result_endpoint_returns_payload_from_analysis_tasks_fallback_branch(self):
         """Fallback path: when analysis_reports is absent, the analysis_tasks.result
         branch must still carry value_turtle_payload into the response.
 
         RED before fix  → data["value_turtle_payload"] == ""  (field dropped)
         GREEN after fix → data["value_turtle_payload"] == VALID_PAYLOAD
         """
+        from app.routers import analysis as analysis_module
+
         tasks_doc = self._make_tasks_doc()
 
         fake_service = MagicMock()
@@ -281,11 +256,13 @@ class TestAnalysisTasksFallbackPayloadPersistence:
             "app.routers.analysis.get_simple_analysis_service",
             return_value=fake_service,
         ), patch("app.core.database.get_mongo_db", return_value=fake_db):
-            client = TestClient(analysis_app)
-            resp = client.get("/api/analysis/tasks/t-fallback/result")
+            result = await analysis_module.get_task_result(
+                "t-fallback",
+                user={"username": "test", "id": "test-id"},
+            )
 
-        assert resp.status_code == 200, resp.text
-        data = resp.json()["data"]
+        assert result["success"] is True
+        data = result["data"]
         assert data["value_turtle_payload"] == VALID_PAYLOAD, (
             "analysis_tasks fallback branch must copy value_turtle_payload from r; "
             "got: " + repr(data.get("value_turtle_payload"))

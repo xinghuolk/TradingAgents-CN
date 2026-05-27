@@ -195,3 +195,44 @@ def test_payload_unrelated_currency_does_not_trigger_fx_or_degrade():
     rfx.assert_not_called()
     assert out["facts"]["report"]["status"] == "complete"
     assert not any(("FX" in c or "取数失败" in c) for c in out["facts"]["report"]["caveats"])
+
+
+def test_collect_fx_currencies_includes_report_side_buyback():
+    report = TurtleReportFacts(fields={
+        "net_profit": _money_fact("net_profit", 5e8, "HKD", "rnp"),
+        "market_cap": _money_fact("market_cap", 1e10, "HKD", "rmc"),
+        "buyback_amount": _money_fact("buyback_amount", 1e8, "CNY", "rbb"),
+    })
+    market = TurtleMarketFacts(fields={})
+
+    assert collect_fx_currencies(report, market) == {"HKD", "CNY"}
+
+
+def test_collect_fx_currencies_ignores_market_only_buyback():
+    report = TurtleReportFacts(fields={
+        "net_profit": _money_fact("net_profit", 5e8, "HKD", "rnp"),
+        "market_cap": _money_fact("market_cap", 1e10, "HKD", "rmc"),
+    })
+    market = TurtleMarketFacts(fields={
+        "buyback_amount": _money_fact("buyback_amount", 1e8, "CNY", "mbb"),
+    })
+
+    assert collect_fx_currencies(report, market) == {"HKD"}
+
+
+def test_payload_market_only_buyback_currency_does_not_trigger_fx():
+    report = TurtleReportFacts(fields={
+        "net_profit": _money_fact("net_profit", 5e8, "HKD", "rnp"),
+        "market_cap": _money_fact("market_cap", 1e10, "HKD", "rmc"),
+    }, status="complete")
+    market = TurtleMarketFacts(
+        fields={"buyback_amount": _money_fact("buyback_amount", 1e8, "CNY", "mbb")},
+        status="complete",
+        metadata={"market_as_of": "2026-05-23"},
+    )
+
+    with patch.object(tat, "resolve_fx_rates") as rfx:
+        out = _run(report, market)
+
+    rfx.assert_not_called()
+    assert out["facts"]["report"]["status"] == "complete"
