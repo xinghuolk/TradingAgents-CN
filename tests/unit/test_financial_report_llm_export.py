@@ -67,3 +67,12 @@ def test_unsupported_provider_degrades_to_none(monkeypatch, tmp_path):
     monkeypatch.setenv("TRADINGAGENTS_DEEP_PROVIDER", "anthropic")
     monkeypatch.setenv("TRADINGAGENTS_DEEP_MODEL", "claude-3-5-sonnet")
     assert materialize_extractor_llm_config(cache_root=str(tmp_path)) is None
+
+
+def test_openai_codex_alias_preserves_provider(monkeypatch, tmp_path):
+    _clear_env(monkeypatch)
+    monkeypatch.setenv("TRADINGAGENTS_DEEP_PROVIDER", "openai-codex")
+    monkeypatch.setenv("TRADINGAGENTS_DEEP_MODEL", "gpt-5.5-codex")
+
+    cfg = json.loads(Path(materialize_extractor_llm_config(cache_root=str(tmp_path))).read_text("utf-8"))
+    assert cfg == {"provider": "openai-codex", "model": "gpt-5.5-codex"}

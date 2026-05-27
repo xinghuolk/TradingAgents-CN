@@ -49,7 +49,7 @@ def materialize_extractor_llm_config(cache_root: str = "") -> str | None:
     backend_url = (os.getenv("TRADINGAGENTS_DEEP_BACKEND_URL") or "").strip()
 
     if provider.lower() in _SUBSCRIPTION_PROVIDERS:
-        cfg: dict[str, str] = {"provider": "codex", "model": model}
+        cfg: dict[str, str] = {"provider": provider, "model": model}
     else:
         cfg = {
             "provider": provider,
