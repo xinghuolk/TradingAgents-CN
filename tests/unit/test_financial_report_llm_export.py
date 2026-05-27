@@ -76,3 +76,34 @@ def test_openai_codex_alias_preserves_provider(monkeypatch, tmp_path):
 
     cfg = json.loads(Path(materialize_extractor_llm_config(cache_root=str(tmp_path))).read_text("utf-8"))
     assert cfg == {"provider": "openai-codex", "model": "gpt-5.5-codex"}
+
+
+def test_dashscope_native_endpoint_normalized_to_compatible_mode(monkeypatch, tmp_path):
+    _clear_env(monkeypatch)
+    monkeypatch.setenv("TRADINGAGENTS_DEEP_PROVIDER", "dashscope")
+    monkeypatch.setenv("TRADINGAGENTS_DEEP_MODEL", "qwen-max")
+    monkeypatch.setenv("TRADINGAGENTS_DEEP_BACKEND_URL", "https://dashscope.aliyuncs.com/api/v1")
+
+    cfg = json.loads(Path(materialize_extractor_llm_config(cache_root=str(tmp_path))).read_text("utf-8"))
+    assert cfg["base_url"] == "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    assert cfg["api_key_env"] == "DASHSCOPE_API_KEY"
+
+
+def test_dashscope_compatible_mode_url_left_unchanged(monkeypatch, tmp_path):
+    _clear_env(monkeypatch)
+    monkeypatch.setenv("TRADINGAGENTS_DEEP_PROVIDER", "dashscope")
+    monkeypatch.setenv("TRADINGAGENTS_DEEP_MODEL", "qwen-max")
+    monkeypatch.setenv("TRADINGAGENTS_DEEP_BACKEND_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1")
+
+    cfg = json.loads(Path(materialize_extractor_llm_config(cache_root=str(tmp_path))).read_text("utf-8"))
+    assert cfg["base_url"] == "https://dashscope.aliyuncs.com/compatible-mode/v1"
+
+
+def test_dashscope_custom_url_left_unchanged(monkeypatch, tmp_path):
+    _clear_env(monkeypatch)
+    monkeypatch.setenv("TRADINGAGENTS_DEEP_PROVIDER", "dashscope")
+    monkeypatch.setenv("TRADINGAGENTS_DEEP_MODEL", "qwen-max")
+    monkeypatch.setenv("TRADINGAGENTS_DEEP_BACKEND_URL", "https://my-proxy.example.com/v1")
+
+    cfg = json.loads(Path(materialize_extractor_llm_config(cache_root=str(tmp_path))).read_text("utf-8"))
+    assert cfg["base_url"] == "https://my-proxy.example.com/v1"

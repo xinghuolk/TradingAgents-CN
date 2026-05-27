@@ -57,6 +57,14 @@ def materialize_extractor_llm_config(cache_root: str = "") -> str | None:
             "api_key_env": f"{provider.upper()}_API_KEY",
         }
         if backend_url:
+            # DashScope 的 OpenAI 兼容端点是 /compatible-mode/v1。resolver 对 dashscope 的
+            # 原生 /api/v1 兜底 URL 不适用于 extractor 的 OpenAI 兼容客户端，仅对这个
+            # 确切的原生端点做防御性归一化（自定义/代理 URL 保持原样）。
+            if (
+                provider.lower() == "dashscope"
+                and backend_url.rstrip("/") == "https://dashscope.aliyuncs.com/api/v1"
+            ):
+                backend_url = "https://dashscope.aliyuncs.com/compatible-mode/v1"
             cfg["base_url"] = backend_url
 
     target_dir = Path(cache_root) if cache_root else Path(tempfile.gettempdir())
