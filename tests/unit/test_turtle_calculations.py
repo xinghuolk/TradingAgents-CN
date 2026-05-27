@@ -119,6 +119,7 @@ def test_compute_turtle_signals_calculates_payout_m_r_gg_hh():
     assert signals.results["payout_M"].value == pytest.approx(0.5)
     assert signals.results["payout_M"].status == "complete"
     assert "commitment_ratio=null" in signals.results["payout_M"].substitution
+    assert ") = 0.5;" in signals.results["payout_M"].substitution  # selected value in substitution
     assert signals.results["R"].value == pytest.approx(5.0)
     assert signals.results["GG"].value == pytest.approx(5.0)
     assert signals.results["HH"].value == 0.0
@@ -139,6 +140,7 @@ def test_compute_turtle_signals_payout_m_uses_latest_signal_when_above_three_yea
     assert signals.results["payout_M"].value == pytest.approx(0.8)
     assert "payout_3y_avg=0.6" in signals.results["payout_M"].substitution
     assert "latest_signal=0.8" in signals.results["payout_M"].substitution
+    assert ") = 0.8;" in signals.results["payout_M"].substitution  # selected value in substitution
 
 
 def test_compute_turtle_signals_payout_m_ignores_market_payout_fields():
@@ -192,6 +194,28 @@ def test_compute_turtle_signals_payout_m_degraded_with_two_period_average():
     assert "payout_3y_avg=0.45" in signals.results["payout_M"].substitution
     assert signals.results["payout_M"].status == "degraded"
     assert "dividend_payout_ratio_current_year_3y_avg computed from 2/3 periods" in signals.caveats
+
+
+def test_compute_turtle_signals_degraded_payout_m_propagates_to_r_gg_hh():
+    # Spec §5.4: formulas consuming a degraded payout_M are themselves degraded
+    # (buyback degradation is handled separately and excluded from HH).
+    facts = base_facts()
+    report = TurtleReportFacts(
+        fields=facts.report.fields,
+        metadata=facts.report.metadata,
+        historical=report_history(0.4, None),  # 2/3 periods -> payout_M degraded
+    )
+    facts = TurtleFacts(context=facts.context, report=report, market=facts.market, status="complete")
+
+    signals = compute_turtle_signals(facts)
+
+    assert signals.results["payout_M"].status == "degraded"
+    assert signals.results["R"].status == "degraded"
+    assert signals.results["GG"].status == "degraded"
+    assert signals.results["HH"].status == "degraded"
+    assert signals.results["R"].value == pytest.approx(5.0)  # value still computed
+    assert signals.results["HH"].value == pytest.approx(0.0)
+    assert signals.status == "degraded"
 
 
 def test_compute_turtle_signals_payout_m_degraded_with_latest_only():

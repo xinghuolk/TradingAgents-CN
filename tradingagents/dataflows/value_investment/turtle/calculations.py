@@ -487,11 +487,12 @@ def _resolve_payout_inputs(facts: TurtleFacts, caveats: list[str]) -> PayoutInpu
 
 
 def _resolve_buyback_inputs(facts: TurtleFacts, caveats: list[str]) -> BuybackInputs:
-    if "buyback_amount" in facts.market.fields and "buyback_amount" not in facts.report.fields:
-        _append_caveat(caveats, MARKET_BUYBACK_EXCLUDED_CAVEAT)
-    if "buyback_amount" in facts.report.fields or any(
+    report_has_buyback = "buyback_amount" in facts.report.fields or any(
         "buyback_amount" in period.fields for period in facts.report.historical.values()
-    ):
+    )
+    if "buyback_amount" in facts.market.fields and not report_has_buyback:
+        _append_caveat(caveats, MARKET_BUYBACK_EXCLUDED_CAVEAT)
+    if report_has_buyback:
         _append_caveat(caveats, BUYBACK_CANCELLATION_CONTEXT_CAVEAT)
     return BuybackInputs(sources=[], missing_inputs=[], caveats=[], status="complete")
 
@@ -561,6 +562,10 @@ def compute_turtle_signals(facts: TurtleFacts) -> TurtleComputedSignals:
     payout = payout_inputs.applied_value
     payout_sources = payout_inputs.sources
     missing_payout = payout_inputs.missing_inputs if payout is None else []
+    # payout_M degraded (e.g. 2/3-period avg / latest-only) propagates to formulas that
+    # consume it (R/GG/HH), per spec §5.4. Buyback degradation is handled separately and
+    # excluded from HH.
+    payout_degraded = payout_inputs.status == "degraded"
     tax_rate, tax_sources, missing_tax = _number(facts, "tax_rate", caveats)
 
     payout_substitution = (
@@ -570,7 +575,7 @@ def compute_turtle_signals(facts: TurtleFacts) -> TurtleComputedSignals:
     if payout is not None:
         payout_substitution = (
             f"payout_M = max(payout_3y_avg={_fmt_nullable(payout_inputs.payout_3y_avg)}, "
-            f"latest_signal={_fmt_nullable(payout_inputs.latest_signal)}); "
+            f"latest_signal={_fmt_nullable(payout_inputs.latest_signal)}) = {_fmt(payout)}; "
             "commitment_ratio=null, commitment_constraint_applied=false"
         )
     results["payout_M"] = _result(
@@ -613,7 +618,7 @@ def compute_turtle_signals(facts: TurtleFacts) -> TurtleComputedSignals:
             f"({_fmt(net_profit)} * {_fmt(payout)} * (1 - {_fmt(tax_rate)}) "
             f"+ {_fmt(r_buyback_for_formula)}) / {_fmt(r_market_cap)} * 100"
         )
-    r_status: TurtleStatus = "non_decisionable" if r_critical_missing else "degraded" if r_buyback_degraded else "complete"
+    r_status: TurtleStatus = "non_decisionable" if r_critical_missing else "degraded" if (r_buyback_degraded or payout_degraded) else "complete"
     results["R"] = _result(
         name="R",
         formula="R = (net_profit * M * (1 - Q) + buyback_amount_3y_avg) / market_cap * 100",
@@ -636,7 +641,7 @@ def compute_turtle_signals(facts: TurtleFacts) -> TurtleComputedSignals:
             f"({_fmt(owner_earnings)} * {_fmt(payout)} * (1 - {_fmt(tax_rate)}) "
             f"+ {_fmt(gg_buyback_for_formula)}) / {_fmt(gg_market_cap)} * 100"
         )
-    gg_status: TurtleStatus = "non_decisionable" if gg_critical_missing else "degraded" if gg_buyback_degraded else "complete"
+    gg_status: TurtleStatus = "non_decisionable" if gg_critical_missing else "degraded" if (gg_buyback_degraded or payout_degraded) else "complete"
     results["GG"] = _result(
         name="GG",
         formula="GG = (owner_earnings * M * (1 - Q) + buyback_amount_3y_avg) / market_cap * 100",
@@ -654,6 +659,8 @@ def compute_turtle_signals(facts: TurtleFacts) -> TurtleComputedSignals:
     hh_status: TurtleStatus = (
         "non_decisionable"
         if hh_critical_missing
+        else "degraded"
+        if payout_degraded
         else "complete"
     )
     results["HH"] = _result(
