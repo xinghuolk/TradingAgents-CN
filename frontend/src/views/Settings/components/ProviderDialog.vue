@@ -96,6 +96,7 @@
         <el-input
           v-model="formData.default_base_url"
           placeholder="https://api.openai.com/v1"
+          :disabled="isOauthProvider"
         />
       </el-form-item>
 
@@ -124,8 +125,12 @@
           placeholder="输入 API Key（可选，留空则使用环境变量）"
           show-password
           clearable
+          :disabled="isOauthProvider"
         />
-        <div class="form-tip">
+        <div v-if="isOauthProvider" style="font-size: 12px; color: var(--el-text-color-secondary); margin-top: 4px;">
+          订阅类厂家无需 API Key，请前往"订阅授权"完成 OAuth 绑定。
+        </div>
+        <div v-else class="form-tip">
           优先级：数据库配置 > 环境变量。留空则使用 .env 文件中的配置
         </div>
       </el-form-item>
@@ -187,6 +192,7 @@ import { configApi, type LLMProvider } from '@/api/config'
 interface ProviderFormData extends Partial<LLMProvider> {
   api_key?: string
   api_secret?: string
+  auth_kind?: 'api_key' | 'oauth'
 }
 
 interface Props {
@@ -216,6 +222,9 @@ const needsApiSecret = computed(() => {
   const providersNeedSecret = ['baidu', 'dashscope', 'qianfan']
   return providersNeedSecret.includes(formData.value.name || '')
 })
+
+// 是否为 OAuth 厂家（auth_kind === 'oauth'）
+const isOauthProvider = computed(() => formData.value.auth_kind === 'oauth')
 
 // 当前选中的预设厂家信息
 const currentPresetInfo = computed(() => {
@@ -354,6 +363,7 @@ const formData = ref<ProviderFormData>({
   default_base_url: '',
   api_key: '',
   api_secret: '',
+  auth_kind: 'api_key',
   supported_features: [],
   is_active: true
 })
@@ -383,6 +393,7 @@ const resetForm = () => {
     default_base_url: '',
     api_key: '',
     api_secret: '',
+    auth_kind: 'api_key',
     supported_features: [],
     is_active: true
   }
@@ -392,7 +403,10 @@ const resetForm = () => {
 // 监听props变化，更新表单数据
 watch(() => props.provider, (newProvider) => {
   if (newProvider && Object.keys(newProvider).length > 0) {
-    formData.value = { ...newProvider }
+    formData.value = {
+      ...newProvider,
+      auth_kind: newProvider.auth_kind ?? 'api_key'
+    }
   } else {
     resetForm()
   }
