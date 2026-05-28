@@ -61,16 +61,25 @@ def _optional_path(raw: str) -> Path | None:
     return Path(raw) if raw else None
 
 
-def resolve_injected_codex_token(deep_config: dict) -> str | None:
+def resolve_injected_codex_token(deep_config: dict | None = None) -> str | None:
     """Per-request codex OAuth token to hand the extractor.
 
     analysis_service injects the user's OAuth token into the analysis config as
     ``deep_api_key`` for subscription providers. Return it ONLY when the bridged
-    deep provider is codex, so non-codex runs pass None. The token travels as a
-    call argument — never written to disk or an env var.
+    deep provider is codex, so non-codex runs return None. When ``deep_config`` is
+    not supplied, read the process-global analysis config (``Toolkit._config``) so
+    every adapter call site (fundamentals / value-investment / turtle) is covered
+    uniformly. The token travels as a call argument — never written to disk or env.
     """
     if os.getenv("TRADINGAGENTS_DEEP_PROVIDER", "").strip().lower() != "codex":
         return None
+    if deep_config is None:
+        try:
+            from tradingagents.agents.utils.agent_utils import Toolkit
+
+            deep_config = Toolkit._config
+        except Exception:
+            return None
     token = (deep_config or {}).get("deep_api_key")
     return token or None
 
@@ -214,6 +223,9 @@ def create_financial_report_adapter(
     subscription_token: per-request codex OAuth token (caller-resolved); forwarded to
     the extractor so codex subscriptions work without a local ~/.codex login.
     """
+    if subscription_token is None:
+        subscription_token = resolve_injected_codex_token()
+
     if config.enabled and config.include_llm_supplement and not config.llm_config_path:
         generated = materialize_extractor_llm_config(cache_root=config.extractor_cache_root)
         if generated:

@@ -375,3 +375,38 @@ def test_resolve_injected_codex_token_only_for_codex(monkeypatch):
 
     monkeypatch.delenv("TRADINGAGENTS_DEEP_PROVIDER", raising=False)
     assert resolve_injected_codex_token({"deep_api_key": "tok"}) is None
+
+
+def test_resolve_injected_codex_token_reads_toolkit_config_when_no_arg(monkeypatch):
+    from tradingagents.dataflows.financial_reports.adapter import resolve_injected_codex_token
+    from tradingagents.agents.utils.agent_utils import Toolkit
+
+    monkeypatch.setenv("TRADINGAGENTS_DEEP_PROVIDER", "codex")
+    monkeypatch.setitem(Toolkit._config, "deep_api_key", "global-tok")
+
+    assert resolve_injected_codex_token() == "global-tok"
+
+    monkeypatch.setenv("TRADINGAGENTS_DEEP_PROVIDER", "deepseek")
+    assert resolve_injected_codex_token() is None
+
+
+def test_factory_auto_resolves_token_when_not_passed(monkeypatch):
+    import tradingagents.dataflows.financial_reports.adapter as adapter_module
+
+    monkeypatch.setattr(
+        adapter_module, "resolve_injected_codex_token",
+        lambda deep_config=None: "auto-tok",
+    )
+    monkeypatch.setattr(
+        adapter_module, "get_report_collector_config",
+        lambda: {"enabled": False}, raising=False,
+    )
+    cfg = FinancialReportClientConfig(
+        enabled=True, cache_only=True, force_refresh=False,
+        include_llm_supplement=True, allow_llm_models=(),
+        extractor_cache_root="", llm_config_path="/explicit.json", pdf_root="",
+    )
+
+    adapter = adapter_module.create_financial_report_adapter(cfg)  # no subscription_token
+
+    assert adapter.subscription_token == "auto-tok"
