@@ -388,6 +388,12 @@ def materialize_extractor_llm_config(provider: str, backend_url: str, role: str 
     容器内跑 codex 需额外把 `~/.codex` bind-mount 进去或设 `CODEX_HOME`（属部署配置，非代码改动）。
   - ⚠️ token 过期由 Codex CLI 负责刷新；extractor **只读不刷**，过期会直接报错。
 
+  > 更新 (2026-05-28)：codex token 现由 TA-CN 在请求时解析（oauth_service，按用户，来自 MongoDB）并经
+  > `create_financial_report_adapter(..., subscription_token=...)` → `ExtractorConfig.subscription_token` 注入
+  > extractor，**无需**容器内有本地 `~/.codex` 登录。token 仅程序传参，不落盘/不进环境变量/不进缓存。
+  > ⚠️ 并发限制：调用点从类级全局 `Toolkit._config` 读 `deep_api_key`，并发多用户 codex 分析下可能串 token；
+  > 本特性 opt-in、工具定位单次运行，多用户并发 codex 场景请谨慎启用。
+
 - ✅ 单一数据源（Mongo）；extractor 零改动；与现有 `llm_config_path` 注入点天然契合。
 - ✅ 同进程下生成临时文件 + 指路径，开销可忽略；配置变更时重新生成即可。
 - ✅ 已核实 extractor 端**无 provider 白名单/模型校验**会拦截未知 provider：
