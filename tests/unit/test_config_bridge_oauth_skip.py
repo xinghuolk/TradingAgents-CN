@@ -4,6 +4,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from app.models.config import LLMProvider
+from app.core.config_bridge import _provider_is_oauth_db, _provider_is_oauth_json
+
 
 @pytest.fixture(autouse=True)
 def _stubs(stub_optional_llm_deps):
@@ -97,10 +100,6 @@ def test_non_oauth_providers_still_bridge_api_key(monkeypatch):
 # These prove the helpers in isolation; the integration tests above prove they
 # are correctly used by bridge_config_to_env() end-to-end.
 # ────────────────────────────────────────────────────────────────────────
-
-from app.models.config import LLMProvider
-from app.core.config_bridge import _provider_is_oauth_db, _provider_is_oauth_json
-
 
 def test_db_path_recognizes_oauth_via_auth_kind():
     p = LLMProvider(name="codex", display_name="Codex", auth_kind="oauth")
