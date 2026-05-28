@@ -857,7 +857,6 @@ class Toolkit:
                         create_financial_report_adapter,
                         format_annual_report_section,
                         get_financial_report_client_config,
-                        resolve_injected_codex_token,
                     )
 
                     frc_config = get_financial_report_client_config()
@@ -881,10 +880,7 @@ class Toolkit:
                     def _one_line(value) -> str:
                         return " ".join(str("" if value is None else value).split())
 
-                    subscription_token = resolve_injected_codex_token(Toolkit._config)
-                    adapter = create_financial_report_adapter(
-                        frc_config, subscription_token=subscription_token
-                    )
+                    adapter = create_financial_report_adapter(frc_config)
                     result = adapter.get_annual_report_data(
                         ticker=normalized_ticker,
                         market=normalized_market,
