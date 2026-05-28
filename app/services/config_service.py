@@ -3125,6 +3125,71 @@ class ConfigService:
                 "message": "初始化聚合渠道失败"
             }
 
+    async def init_subscription_providers(self) -> Dict[str, list]:
+        """Idempotently seed the two OAuth subscription providers (codex,
+        claude_code) into `llm_providers`. First call creates both; subsequent
+        calls only refresh structural fields (auth_kind, default_base_url,
+        updated_at), preserving any user edits to display_name, description,
+        is_active, supported_features.
+
+        Returns {"created": [names...], "updated": [names...]}.
+        """
+        _SEEDS = [
+            {
+                "name": "codex",
+                "display_name": "OpenAI Codex (订阅)",
+                "auth_kind": "oauth",
+                "default_base_url": "https://chatgpt.com/backend-api/codex",
+                "is_active": True,
+                "description": "ChatGPT 订阅式 Codex 模型，通过 OAuth 设备码授权使用",
+                "supported_features": ["chat"],
+            },
+            {
+                "name": "claude_code",
+                "display_name": "Claude Code (订阅)",
+                "auth_kind": "oauth",
+                "default_base_url": "https://api.anthropic.com",
+                "is_active": True,
+                "description": "Anthropic Claude Code 订阅，通过 OAuth PKCE 授权使用",
+                "supported_features": ["chat"],
+            },
+        ]
+
+        db = await self._get_db()
+        coll = db.llm_providers
+        created: list = []
+        updated: list = []
+
+        for seed in _SEEDS:
+            existing = await coll.find_one({"name": seed["name"]})
+            if existing is None:
+                full_doc = {
+                    **seed,
+                    "api_key": "",
+                    "api_secret": "",
+                    "extra_config": {},
+                    "is_aggregator": False,
+                    "aggregator_type": None,
+                    "model_name_format": None,
+                    "created_at": now_tz(),
+                    "updated_at": now_tz(),
+                }
+                await coll.insert_one(full_doc)
+                created.append(seed["name"])
+            else:
+                # Only refresh structural fields; preserve user-editable ones.
+                await coll.update_one(
+                    {"name": seed["name"]},
+                    {"$set": {
+                        "auth_kind": seed["auth_kind"],
+                        "default_base_url": seed["default_base_url"],
+                        "updated_at": now_tz(),
+                    }},
+                )
+                updated.append(seed["name"])
+
+        return {"created": created, "updated": updated}
+
     async def migrate_env_to_providers(self) -> Dict[str, Any]:
         """将环境变量配置迁移到厂家管理"""
         import os
