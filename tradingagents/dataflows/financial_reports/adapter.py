@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, replace
 from datetime import date, datetime
 from pathlib import Path
@@ -58,6 +59,20 @@ def _path_from_pdf_info(pdf_info: dict[str, Any] | None) -> Path | None:
 
 def _optional_path(raw: str) -> Path | None:
     return Path(raw) if raw else None
+
+
+def resolve_injected_codex_token(deep_config: dict) -> str | None:
+    """Per-request codex OAuth token to hand the extractor.
+
+    analysis_service injects the user's OAuth token into the analysis config as
+    ``deep_api_key`` for subscription providers. Return it ONLY when the bridged
+    deep provider is codex, so non-codex runs pass None. The token travels as a
+    call argument — never written to disk or an env var.
+    """
+    if os.getenv("TRADINGAGENTS_DEEP_PROVIDER", "").strip().lower() != "codex":
+        return None
+    token = (deep_config or {}).get("deep_api_key")
+    return token or None
 
 
 class FinancialReportAdapter:

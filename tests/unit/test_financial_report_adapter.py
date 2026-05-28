@@ -359,3 +359,19 @@ def test_factory_forwards_subscription_token(monkeypatch):
     adapter = adapter_module.create_financial_report_adapter(cfg, subscription_token="tok")
 
     assert adapter.subscription_token == "tok"
+
+
+def test_resolve_injected_codex_token_only_for_codex(monkeypatch):
+    from tradingagents.dataflows.financial_reports.adapter import resolve_injected_codex_token
+
+    monkeypatch.setenv("TRADINGAGENTS_DEEP_PROVIDER", "codex")
+    assert resolve_injected_codex_token({"deep_api_key": "tok"}) == "tok"
+
+    monkeypatch.setenv("TRADINGAGENTS_DEEP_PROVIDER", "deepseek")
+    assert resolve_injected_codex_token({"deep_api_key": "tok"}) is None
+
+    monkeypatch.setenv("TRADINGAGENTS_DEEP_PROVIDER", "codex")
+    assert resolve_injected_codex_token({}) is None
+
+    monkeypatch.delenv("TRADINGAGENTS_DEEP_PROVIDER", raising=False)
+    assert resolve_injected_codex_token({"deep_api_key": "tok"}) is None

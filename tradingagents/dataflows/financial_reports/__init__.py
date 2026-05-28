@@ -5,6 +5,7 @@ from .adapter import (
     FinancialReportAdapterResult,
     create_financial_report_adapter,
     infer_annual_period_end,
+    resolve_injected_codex_token,
 )
 from .config import FinancialReportClientConfig, get_financial_report_client_config
 from .formatter import format_annual_report_section, format_value_report_source_note
@@ -26,4 +27,5 @@ __all__ = [
     "get_financial_report_client_config",
     "infer_annual_period_end",
     "merge_financial_report_data",
+    "resolve_injected_codex_token",
 ]
