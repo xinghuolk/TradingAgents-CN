@@ -252,3 +252,161 @@ def test_pdf_resolver_uses_report_collector_pdf_info(tmp_path):
     resolved = adapter.resolve_pdf(FakePdfQuery(company="00001", market="HK", period_end="2025-12-31"))
 
     assert resolved == pdf
+
+
+def test_factory_materializes_config_when_path_missing(monkeypatch):
+    from tradingagents.dataflows.financial_reports import adapter as adapter_module
+    from tradingagents.dataflows.financial_reports.config import FinancialReportClientConfig
+
+    monkeypatch.setattr(
+        adapter_module,
+        "materialize_extractor_llm_config",
+        lambda cache_root="": "/tmp/generated-llm.json",
+    )
+
+    def fail_get_config():
+        raise AssertionError("report collector should not be configured")
+
+    monkeypatch.setattr(adapter_module, "get_report_collector_config", fail_get_config, raising=False)
+
+    config = FinancialReportClientConfig(
+        enabled=True,
+        cache_only=True,
+        force_refresh=False,
+        include_llm_supplement=True,
+        allow_llm_models=(),
+        extractor_cache_root="/tmp/cache",
+        llm_config_path="",  # not explicitly provided → should be generated
+        pdf_root="",
+    )
+
+    result = adapter_module.create_financial_report_adapter(config)
+    assert result.config.llm_config_path == "/tmp/generated-llm.json"
+    assert isinstance(result, adapter_module.FinancialReportAdapter)
+
+
+def test_factory_keeps_explicit_path_over_materialized(monkeypatch):
+    from tradingagents.dataflows.financial_reports import adapter as adapter_module
+    from tradingagents.dataflows.financial_reports.config import FinancialReportClientConfig
+
+    monkeypatch.setattr(
+        adapter_module,
+        "materialize_extractor_llm_config",
+        lambda cache_root="": "/tmp/should-not-be-used.json",
+    )
+
+    def fail_get_config():
+        raise AssertionError("report collector should not be configured")
+
+    monkeypatch.setattr(adapter_module, "get_report_collector_config", fail_get_config, raising=False)
+
+    config = FinancialReportClientConfig(
+        enabled=True, cache_only=True, force_refresh=False,
+        include_llm_supplement=True, allow_llm_models=(),
+        extractor_cache_root="", llm_config_path="/explicit/llm.json", pdf_root="",
+    )
+
+    result = adapter_module.create_financial_report_adapter(config)
+    assert result.config.llm_config_path == "/explicit/llm.json"
+
+
+def test_factory_degrades_when_materialize_returns_none(monkeypatch):
+    from tradingagents.dataflows.financial_reports import adapter as adapter_module
+    from tradingagents.dataflows.financial_reports.config import FinancialReportClientConfig
+
+    monkeypatch.setattr(
+        adapter_module, "materialize_extractor_llm_config", lambda cache_root="": None
+    )
+    config = FinancialReportClientConfig(
+        enabled=True, cache_only=True, force_refresh=False,
+        include_llm_supplement=True, allow_llm_models=(),
+        extractor_cache_root="", llm_config_path="", pdf_root="",
+    )
+
+    result = adapter_module.create_financial_report_adapter(config)
+    assert result.config.llm_config_path == ""  # no crash; supplement effectively off
+
+
+def test_adapter_passes_subscription_token_to_extractor_config(monkeypatch):
+    install_fake_extractor(monkeypatch)
+    adapter = FinancialReportAdapter(
+        FinancialReportClientConfig(
+            enabled=True, cache_only=True, force_refresh=False,
+            include_llm_supplement=True, allow_llm_models=(),
+            extractor_cache_root="", llm_config_path="/tmp/llm.json", pdf_root="",
+        ),
+        subscription_token="codex-tok",
+    )
+
+    adapter.get_annual_report_data(ticker="600519", market="CN", period_end="2024-12-31")
+
+    assert FakeClient.last_config.kwargs["subscription_token"] == "codex-tok"
+
+
+def test_factory_forwards_subscription_token(monkeypatch):
+    import tradingagents.dataflows.financial_reports.adapter as adapter_module
+
+    monkeypatch.setattr(
+        adapter_module, "get_report_collector_config",
+        lambda: {"enabled": False}, raising=False,
+    )
+    cfg = FinancialReportClientConfig(
+        enabled=True, cache_only=True, force_refresh=False,
+        include_llm_supplement=True, allow_llm_models=(),
+        extractor_cache_root="", llm_config_path="/explicit.json", pdf_root="",
+    )
+
+    adapter = adapter_module.create_financial_report_adapter(cfg, subscription_token="tok")
+
+    assert adapter.subscription_token == "tok"
+
+
+def test_resolve_injected_codex_token_only_for_codex(monkeypatch):
+    from tradingagents.dataflows.financial_reports.adapter import resolve_injected_codex_token
+
+    monkeypatch.setenv("TRADINGAGENTS_DEEP_PROVIDER", "codex")
+    assert resolve_injected_codex_token({"deep_api_key": "tok"}) == "tok"
+
+    monkeypatch.setenv("TRADINGAGENTS_DEEP_PROVIDER", "deepseek")
+    assert resolve_injected_codex_token({"deep_api_key": "tok"}) is None
+
+    monkeypatch.setenv("TRADINGAGENTS_DEEP_PROVIDER", "codex")
+    assert resolve_injected_codex_token({}) is None
+
+    monkeypatch.delenv("TRADINGAGENTS_DEEP_PROVIDER", raising=False)
+    assert resolve_injected_codex_token({"deep_api_key": "tok"}) is None
+
+
+def test_resolve_injected_codex_token_reads_toolkit_config_when_no_arg(monkeypatch):
+    from tradingagents.dataflows.financial_reports.adapter import resolve_injected_codex_token
+    from tradingagents.agents.utils.agent_utils import Toolkit
+
+    monkeypatch.setenv("TRADINGAGENTS_DEEP_PROVIDER", "codex")
+    monkeypatch.setitem(Toolkit._config, "deep_api_key", "global-tok")
+
+    assert resolve_injected_codex_token() == "global-tok"
+
+    monkeypatch.setenv("TRADINGAGENTS_DEEP_PROVIDER", "deepseek")
+    assert resolve_injected_codex_token() is None
+
+
+def test_factory_auto_resolves_token_when_not_passed(monkeypatch):
+    import tradingagents.dataflows.financial_reports.adapter as adapter_module
+
+    monkeypatch.setattr(
+        adapter_module, "resolve_injected_codex_token",
+        lambda deep_config=None: "auto-tok",
+    )
+    monkeypatch.setattr(
+        adapter_module, "get_report_collector_config",
+        lambda: {"enabled": False}, raising=False,
+    )
+    cfg = FinancialReportClientConfig(
+        enabled=True, cache_only=True, force_refresh=False,
+        include_llm_supplement=True, allow_llm_models=(),
+        extractor_cache_root="", llm_config_path="/explicit.json", pdf_root="",
+    )
+
+    adapter = adapter_module.create_financial_report_adapter(cfg)  # no subscription_token
+
+    assert adapter.subscription_token == "auto-tok"
