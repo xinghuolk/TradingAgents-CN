@@ -674,19 +674,8 @@ async def log_requests(request: Request, call_next):
 from app.middleware.request_id import RequestIDMiddleware
 app.add_middleware(RequestIDMiddleware)
 
-@app.exception_handler(Exception)
-async def global_exception_handler(request: Request, exc: Exception):
-    logging.error(f"Unhandled exception: {exc}", exc_info=True)
-    return JSONResponse(
-        status_code=500,
-        content={
-            "error": {
-                "code": "INTERNAL_SERVER_ERROR",
-                "message": "Internal server error occurred",
-                "request_id": getattr(request.state, "request_id", None)
-            }
-        }
-    )
+from app.core.exception_handler import build_global_exception_handler
+app.add_exception_handler(Exception, build_global_exception_handler(debug=settings.DEBUG))
 
 
 # 测试端点 - 验证中间件是否工作
