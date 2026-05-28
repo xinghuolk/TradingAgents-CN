@@ -252,6 +252,7 @@ async def get_llm_providers(
                     api_doc_url=provider.api_doc_url,
                     logo_url=provider.logo_url,
                     is_active=provider.is_active,
+                    auth_kind=provider.auth_kind,
                     supported_features=provider.supported_features,
                     default_base_url=provider.default_base_url,
                     # 返回缩略的 API Key（前6位 + "..." + 后6位）
