@@ -3161,31 +3161,39 @@ class ConfigService:
         updated: list = []
 
         for seed in _SEEDS:
-            existing = await coll.find_one({"name": seed["name"]})
-            if existing is None:
-                full_doc = {
-                    **seed,
-                    "api_key": "",
-                    "api_secret": "",
-                    "extra_config": {},
-                    "is_aggregator": False,
-                    "aggregator_type": None,
-                    "model_name_format": None,
-                    "created_at": now_tz(),
-                    "updated_at": now_tz(),
-                }
-                await coll.insert_one(full_doc)
-                created.append(seed["name"])
-            else:
-                # Only refresh structural fields; preserve user-editable ones.
-                await coll.update_one(
-                    {"name": seed["name"]},
-                    {"$set": {
+            # Atomic upsert (single op, no read-then-write race):
+            #   $set         — structural fields refreshed on EVERY run
+            #   $setOnInsert — user-editable + bookkeeping fields written ONLY on
+            #                  create, so re-seeding never clobbers user edits to
+            #                  display_name / description / is_active /
+            #                  supported_features. `name` comes from the filter.
+            result = await coll.update_one(
+                {"name": seed["name"]},
+                {
+                    "$set": {
                         "auth_kind": seed["auth_kind"],
                         "default_base_url": seed["default_base_url"],
                         "updated_at": now_tz(),
-                    }},
-                )
+                    },
+                    "$setOnInsert": {
+                        "display_name": seed["display_name"],
+                        "description": seed["description"],
+                        "is_active": seed["is_active"],
+                        "supported_features": seed["supported_features"],
+                        "api_key": "",
+                        "api_secret": "",
+                        "extra_config": {},
+                        "is_aggregator": False,
+                        "aggregator_type": None,
+                        "model_name_format": None,
+                        "created_at": now_tz(),
+                    },
+                },
+                upsert=True,
+            )
+            if getattr(result, "upserted_id", None) is not None:
+                created.append(seed["name"])
+            else:
                 updated.append(seed["name"])
 
         return {"created": created, "updated": updated}

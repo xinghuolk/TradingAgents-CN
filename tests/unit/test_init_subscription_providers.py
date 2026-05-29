@@ -11,21 +11,29 @@ from app.services.config_service import ConfigService
 
 
 class _FakeCollection:
+    """Simulates the subset of Motor collection upsert semantics the seed uses:
+    update_one(filter, {$set, $setOnInsert}, upsert=True).
+    - existing doc → apply only $set (preserve everything else)
+    - missing doc + upsert → insert from filter + $setOnInsert + $set,
+      and return a result whose upserted_id is non-None (mirrors pymongo).
+    """
+
     def __init__(self):
         self.docs = {}  # keyed by name
 
-    async def find_one(self, query):
-        return self.docs.get(query["name"])
-
-    async def insert_one(self, doc):
-        self.docs[doc["name"]] = dict(doc)
-
-    async def update_one(self, query, update):
-        existing = self.docs.get(query["name"])
-        if existing is None:
-            return MagicMock(matched_count=0)
-        existing.update(update["$set"])
-        return MagicMock(matched_count=1)
+    async def update_one(self, query, update, upsert=False):
+        name = query["name"]
+        existing = self.docs.get(name)
+        if existing is not None:
+            existing.update(update.get("$set", {}))
+            return MagicMock(matched_count=1, upserted_id=None)
+        if not upsert:
+            return MagicMock(matched_count=0, upserted_id=None)
+        doc = {**query}
+        doc.update(update.get("$setOnInsert", {}))
+        doc.update(update.get("$set", {}))
+        self.docs[name] = doc
+        return MagicMock(matched_count=0, upserted_id=f"fake_id_{name}")
 
 
 @pytest.mark.asyncio
