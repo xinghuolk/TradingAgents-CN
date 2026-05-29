@@ -23,6 +23,7 @@ export interface LLMProvider {
     source?: 'environment' | 'database'
     [key: string]: any
   }
+  auth_kind?: 'api_key' | 'oauth'
   // 🆕 聚合渠道支持
   is_aggregator?: boolean
   aggregator_type?: string
@@ -199,6 +200,11 @@ export const configApi = {
   // 🆕 初始化聚合渠道厂家配置
   initAggregatorProviders(): Promise<{ success: boolean; message: string; data: { added_count: number; skipped_count: number } }> {
     return ApiClient.post('/api/config/llm/providers/init-aggregators')
+  },
+
+  // 🆕 初始化订阅厂家配置 (Codex / Claude Code)
+  initSubscriptionProviders(): Promise<{ success: boolean; message: string; data: { created: string[]; updated: string[] } }> {
+    return ApiClient.post('/api/config/llm/providers/init-subscription')
   },
 
   // 测试厂家API

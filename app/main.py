@@ -242,6 +242,17 @@ async def lifespan(app: FastAPI):
         logger.warning(f"⚠️  配置桥接失败: {e}")
         logger.warning("⚠️  TradingAgents 将使用 .env 文件中的配置")
 
+    # OAuth 订阅厂家（codex / claude_code）幂等 seed：保证升级用户即使从未点击
+    # "快速添加订阅厂家"按钮，已有的 OAuth 模型配置也能被识别（厂家管理页的按钮
+    # 保留作为重置/修复入口）。seed 失败不阻塞启动。
+    try:
+        from app.services.config_service import config_service
+        seed_result = await config_service.init_subscription_providers()
+        if seed_result.get("created"):
+            logger.info(f"✅ 自动 seed OAuth 订阅厂家: 新建 {seed_result['created']}")
+    except Exception as e:
+        logger.warning(f"⚠️  OAuth 订阅厂家自动 seed 失败（可在厂家管理页手动添加）: {e}")
+
     # Apply dynamic settings (log_level, enable_monitoring) from ConfigProvider
     try:
         from app.services.config_provider import provider as config_provider  # local import to avoid early DB init issues

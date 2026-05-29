@@ -15,6 +15,7 @@ export interface LLMProvider {
   api_key?: string
   api_secret?: string
   extra_config?: Record<string, any>
+  auth_kind?: 'api_key' | 'oauth'
 
   // 🆕 聚合渠道支持
   is_aggregator?: boolean

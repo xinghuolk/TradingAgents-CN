@@ -397,31 +397,14 @@ const loading = ref(false)
 const providersLoading = ref(false)
 const availableProviders = ref<LLMProvider[]>([])
 
-// 订阅类（OAuth）供应商不存在于 providers 表中——以合成项注入下拉
-const SUBSCRIPTION_PROVIDERS: LLMProvider[] = [
-  {
-    id: 'claude_code',
-    name: 'claude_code',
-    display_name: 'Claude Code (订阅)',
-    is_active: true,
-    supported_features: ['chat'],
-  } as LLMProvider,
-  {
-    id: 'codex',
-    name: 'codex',
-    display_name: 'Codex / ChatGPT (订阅)',
-    is_active: true,
-    supported_features: ['chat'],
-  } as LLMProvider,
-]
-
-const SUBSCRIPTION_PROVIDER_NAMES = new Set(SUBSCRIPTION_PROVIDERS.map(p => p.name))
-
 // Computed
 const isEdit = computed(() => !!props.config)
 
+const selectedProvider = computed(() =>
+  availableProviders.value.find(p => p.name === formData.value.provider),
+)
 const isSubscriptionProvider = computed(() =>
-  SUBSCRIPTION_PROVIDER_NAMES.has(formData.value.provider),
+  selectedProvider.value?.auth_kind === 'oauth',
 )
 
 const subscriptionStatus = computed(() => {
@@ -554,7 +537,8 @@ const getModelInfo = (provider: string, modelName: string): ModelInfo | null => 
 // 处理供应商变更
 const handleProviderChange = async (provider: string) => {
   // 订阅类 provider 没有 model 目录，跳过 catalog 检查
-  if (SUBSCRIPTION_PROVIDER_NAMES.has(provider)) {
+  const providerObj = availableProviders.value.find(p => p.name === provider)
+  if (providerObj?.auth_kind === 'oauth') {
     modelOptions.value = []
     formData.value.model_name = ''
     formData.value.model_display_name = ''
@@ -720,7 +704,7 @@ watch(
         selectedModelKey.value = ''
       }
       // 拉一次订阅状态（仅当编辑/打开的是订阅类 provider 时）
-      if (SUBSCRIPTION_PROVIDER_NAMES.has(formData.value.provider)) {
+      if (isSubscriptionProvider.value) {
         oauthStore.fetchAllStatus()
       }
     }
@@ -782,11 +766,7 @@ const loadProviders = async (showSuccessMessage = false) => {
   providersLoading.value = true
   try {
     const providers = await configApi.getLLMProviders()
-    // 只显示启用的厂家，前置两个订阅类合成项
-    availableProviders.value = [
-      ...SUBSCRIPTION_PROVIDERS,
-      ...providers.filter(p => p.is_active),
-    ]
+    availableProviders.value = providers.filter(p => p.is_active)
     console.log('✅ 加载厂家列表成功:', availableProviders.value.length)
 
     if (showSuccessMessage) {
@@ -795,7 +775,7 @@ const loadProviders = async (showSuccessMessage = false) => {
 
     // 如果是新增模式且没有选择供应商，默认选择第一个真实厂家（跳过订阅项）
     if (!isEdit.value && !formData.value.provider) {
-      const firstReal = availableProviders.value.find(p => !SUBSCRIPTION_PROVIDER_NAMES.has(p.name))
+      const firstReal = availableProviders.value.find(p => p.auth_kind !== 'oauth')
       if (firstReal) {
         formData.value.provider = firstReal.name
         await handleProviderChange(formData.value.provider)

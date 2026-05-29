@@ -252,6 +252,7 @@ async def get_llm_providers(
                     api_doc_url=provider.api_doc_url,
                     logo_url=provider.logo_url,
                     is_active=provider.is_active,
+                    auth_kind=provider.auth_kind,
                     supported_features=provider.supported_features,
                     default_base_url=provider.default_base_url,
                     # 返回缩略的 API Key（前6位 + "..." + 后6位）
@@ -555,6 +556,43 @@ async def init_aggregator_providers(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"初始化聚合渠道失败: {str(e)}"
+        )
+
+
+@router.post("/llm/providers/init-subscription", response_model=dict)
+async def init_subscription_providers(
+    current_user: User = Depends(get_current_user),
+):
+    """Idempotently seed OAuth subscription providers (codex, claude_code).
+
+    Note: gated on `get_current_user` (any authenticated user). The repo has
+    no admin dependency anywhere; all /api/config writes use the same gate.
+    """
+    try:
+        result = await config_service.init_subscription_providers()
+        try:
+            await log_operation(
+                user_id=str(getattr(current_user, "id", "")),
+                username=getattr(current_user, "username", "unknown"),
+                action_type=ActionType.CONFIG_MANAGEMENT,
+                action="init_subscription_providers",
+                details={
+                    "created_count": len(result.get("created", [])),
+                    "updated_count": len(result.get("updated", [])),
+                },
+                success=True,
+            )
+        except Exception:
+            pass
+        return {
+            "success": True,
+            "message": f"已创建 {len(result['created'])} 个，已更新 {len(result['updated'])} 个",
+            "data": result,
+        }
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"初始化订阅厂家失败: {str(e)}",
         )
 
 

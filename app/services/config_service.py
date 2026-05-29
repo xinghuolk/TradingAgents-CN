@@ -586,7 +586,7 @@ class ConfigService:
 
             # 打印所有现有配置
             for i, llm in enumerate(config.llm_configs):
-                print(f"   {i+1}. provider: {llm.provider.value}, model_name: {llm.model_name}")
+                print(f"   {i+1}. provider: {llm.provider}, model_name: {llm.model_name}")
 
             # 查找并删除指定的LLM配置
             original_count = len(config.llm_configs)
@@ -594,7 +594,7 @@ class ConfigService:
             # 使用更宽松的匹配条件
             config.llm_configs = [
                 llm for llm in config.llm_configs
-                if not (str(llm.provider.value).lower() == provider.lower() and llm.model_name == model_name)
+                if not (str(llm.provider).lower() == provider.lower() and llm.model_name == model_name)
             ]
 
             new_count = len(config.llm_configs)
@@ -3124,6 +3124,79 @@ class ConfigService:
                 "error": str(e),
                 "message": "初始化聚合渠道失败"
             }
+
+    async def init_subscription_providers(self) -> Dict[str, list]:
+        """Idempotently seed the two OAuth subscription providers (codex,
+        claude_code) into `llm_providers`. First call creates both; subsequent
+        calls only refresh structural fields (auth_kind, default_base_url,
+        updated_at), preserving any user edits to display_name, description,
+        is_active, supported_features.
+
+        Returns {"created": [names...], "updated": [names...]}.
+        """
+        _SEEDS = [
+            {
+                "name": "codex",
+                "display_name": "OpenAI Codex (订阅)",
+                "auth_kind": "oauth",
+                "default_base_url": "https://chatgpt.com/backend-api/codex",
+                "is_active": True,
+                "description": "ChatGPT 订阅式 Codex 模型，通过 OAuth 设备码授权使用",
+                "supported_features": ["chat"],
+            },
+            {
+                "name": "claude_code",
+                "display_name": "Claude Code (订阅)",
+                "auth_kind": "oauth",
+                "default_base_url": "https://api.anthropic.com",
+                "is_active": True,
+                "description": "Anthropic Claude Code 订阅，通过 OAuth PKCE 授权使用",
+                "supported_features": ["chat"],
+            },
+        ]
+
+        db = await self._get_db()
+        coll = db.llm_providers
+        created: list = []
+        updated: list = []
+
+        for seed in _SEEDS:
+            # Atomic upsert (single op, no read-then-write race):
+            #   $set         — structural fields refreshed on EVERY run
+            #   $setOnInsert — user-editable + bookkeeping fields written ONLY on
+            #                  create, so re-seeding never clobbers user edits to
+            #                  display_name / description / is_active /
+            #                  supported_features. `name` comes from the filter.
+            result = await coll.update_one(
+                {"name": seed["name"]},
+                {
+                    "$set": {
+                        "auth_kind": seed["auth_kind"],
+                        "default_base_url": seed["default_base_url"],
+                        "updated_at": now_tz(),
+                    },
+                    "$setOnInsert": {
+                        "display_name": seed["display_name"],
+                        "description": seed["description"],
+                        "is_active": seed["is_active"],
+                        "supported_features": seed["supported_features"],
+                        "api_key": "",
+                        "api_secret": "",
+                        "extra_config": {},
+                        "is_aggregator": False,
+                        "aggregator_type": None,
+                        "model_name_format": None,
+                        "created_at": now_tz(),
+                    },
+                },
+                upsert=True,
+            )
+            if getattr(result, "upserted_id", None) is not None:
+                created.append(seed["name"])
+            else:
+                updated.append(seed["name"])
+
+        return {"created": created, "updated": updated}
 
     async def migrate_env_to_providers(self) -> Dict[str, Any]:
         """将环境变量配置迁移到厂家管理"""

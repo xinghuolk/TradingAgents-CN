@@ -108,7 +108,8 @@ class FinancialSituationMemory:
         # OAuth subscription providers don't expose embedding APIs.
         # Require an explicit EMBEDDING_PROVIDER env var, or raise so the
         # caller can disable memory.
-        if self.llm_provider in ("claude_code", "codex"):
+        from tradingagents.utils.oauth_providers import OAUTH_SUBSCRIPTION_PROVIDER_NAMES
+        if self.llm_provider in OAUTH_SUBSCRIPTION_PROVIDER_NAMES:
             embedding_provider = os.environ.get("EMBEDDING_PROVIDER", "").strip()
             if not embedding_provider:
                 raise UnsupportedEmbeddingError(

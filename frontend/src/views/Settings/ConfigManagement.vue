@@ -97,6 +97,17 @@
           </template>
 
           <div v-loading="providersLoading">
+            <div style="margin-bottom: 12px;">
+              <el-button
+                type="primary"
+                size="small"
+                @click="handleInitSubscriptionProviders"
+                :loading="initSubscriptionLoading"
+              >
+                <el-icon><Plus /></el-icon>
+                快速添加订阅厂家 (Codex / Claude Code)
+              </el-button>
+            </div>
             <el-table :data="providers" style="width: 100%">
               <el-table-column label="厂家信息" width="200">
                 <template #default="{ row }">
@@ -108,7 +119,8 @@
               </el-table-column>
               <el-table-column label="API密钥" width="120">
                 <template #default="{ row }">
-                  <div class="api-key-status">
+                  <span v-if="row.auth_kind === 'oauth'" style="color: var(--el-text-color-secondary);">—</span>
+                  <div v-else class="api-key-status">
                     <el-tag
                       :type="row.extra_config?.has_api_key ? 'success' : 'danger'"
                       size="small"
@@ -1155,6 +1167,7 @@ const ungroupedDataSources = ref<DataSourceConfig[]>([])
 
 // 加载状态
 const providersLoading = ref(false)
+const initSubscriptionLoading = ref(false)
 const llmLoading = ref(false)
 const dataSourceLoading = ref(false)
 const databaseLoading = ref(false)
@@ -2055,6 +2068,28 @@ const handleReloadConfig = async () => {
     })
   } finally {
     reloadLoading.value = false
+  }
+}
+
+// 初始化订阅厂家 (Codex / Claude Code)
+const handleInitSubscriptionProviders = async () => {
+  initSubscriptionLoading.value = true
+  try {
+    const result = await configApi.initSubscriptionProviders()
+    const { created, updated } = result.data
+    if (created.length > 0) {
+      ElMessage.success(`已添加 ${created.length} 个订阅厂家：${created.join(', ')}`)
+    } else if (updated.length > 0) {
+      ElMessage.info(`订阅厂家已存在，已刷新 ${updated.length} 个`)
+    } else {
+      ElMessage.info('订阅厂家无变更')
+    }
+    await loadProviders()
+  } catch (error) {
+    console.error('❌ 初始化订阅厂家失败:', error)
+    ElMessage.error('初始化订阅厂家失败')
+  } finally {
+    initSubscriptionLoading.value = false
   }
 }
 

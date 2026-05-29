@@ -4,7 +4,7 @@
 
 from datetime import datetime, timezone
 from app.utils.timezone import now_tz
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Literal
 from pydantic import BaseModel, Field, ConfigDict, field_serializer
 from enum import Enum
 from bson import ObjectId
@@ -54,6 +54,11 @@ class LLMProvider(BaseModel):
     api_key: Optional[str] = Field(None, description="API密钥")
     api_secret: Optional[str] = Field(None, description="API密钥（某些厂家需要）")
     extra_config: Dict[str, Any] = Field(default_factory=dict, description="额外配置参数")
+    # 鉴权方式：api_key 走 {PROVIDER}_API_KEY 桥接；oauth 走 oauth_service 注入 token
+    auth_kind: Literal["api_key", "oauth"] = Field(
+        default="api_key",
+        description="鉴权方式：api_key 或 oauth（订阅类）",
+    )
 
     # 🆕 聚合渠道支持
     is_aggregator: bool = Field(default=False, description="是否为聚合渠道（如302.AI、OpenRouter）")
@@ -133,6 +138,7 @@ class LLMProviderResponse(BaseModel):
     api_key: Optional[str] = None
     api_secret: Optional[str] = None
     extra_config: Dict[str, Any] = Field(default_factory=dict)
+    auth_kind: Literal["api_key", "oauth"] = "api_key"
 
     # 🆕 聚合渠道支持
     is_aggregator: bool = False

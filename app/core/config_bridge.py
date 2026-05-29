@@ -12,6 +12,18 @@ from typing import Optional, Callable
 logger = logging.getLogger("app.config_bridge")
 
 
+def _provider_is_oauth_db(provider) -> bool:
+    """DB path: trust LLMProvider.auth_kind."""
+    return getattr(provider, "auth_kind", "api_key") == "oauth"
+
+
+def _provider_is_oauth_json(provider_name: str) -> bool:
+    """JSON fallback path: no LLMProvider object available; consult the
+    authoritative constant."""
+    from tradingagents.utils.oauth_providers import OAUTH_SUBSCRIPTION_PROVIDER_NAMES
+    return provider_name in OAUTH_SUBSCRIPTION_PROVIDER_NAMES
+
+
 def bridge_deep_llm_role_to_env(
     deep_model: Optional[str],
     resolver: Optional[Callable[[str], dict]] = None,
@@ -123,7 +135,7 @@ def bridge_config_to_env():
                 # analysis_service. Skip to avoid leaking stale/placeholder
                 # values into env vars that downstream code might mistake for
                 # a real key.
-                if provider.name in ("claude_code", "codex"):
+                if _provider_is_oauth_db(provider):
                     logger.info(
                         f"  ⏭️  跳过 OAuth 订阅厂家 {provider.name} 的 api_key 桥接 "
                         f"(token 由 analysis_service 在请求时注入)"
@@ -158,7 +170,7 @@ def bridge_config_to_env():
                 # OAuth subscription providers (claude_code, codex) don't use
                 # api_key bridging — the access_token is injected per-request
                 # by analysis_service from oauth_service.resolve.
-                if llm_config.provider in ("claude_code", "codex"):
+                if _provider_is_oauth_json(llm_config.provider):
                     logger.info(
                         f"  ⏭️  跳过 OAuth 订阅 provider {llm_config.provider} 的 api_key 桥接 "
                         f"(token 由 analysis_service 在请求时注入)"
