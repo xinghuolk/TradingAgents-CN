@@ -248,7 +248,7 @@ async def validate_config():
                     "type": "financial_report_llm",
                     "enabled": frc.enabled,
                     "has_api_key": True,  # 无需 API Key（OAuth / LLM 配置驱动）
-                    "status": "已启用(订阅/env)" if frc.enabled else "未启用",
+                    "status": "已配置(订阅)" if frc.enabled else "未启用",
                     "source": "environment",
                     "mongodb_configured": False,
                     "env_configured": frc.enabled,
