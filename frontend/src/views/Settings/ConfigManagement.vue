@@ -412,6 +412,28 @@
           </template>
 
           <div v-loading="dataSourceLoading" class="datasource-content">
+            <!-- 财报提取（financial-report-extractor）：env 驱动，只读展示 -->
+            <el-card shadow="never" class="fr-status-card" style="margin-bottom: 16px; background: var(--el-fill-color-light);">
+              <template #header>
+                <div style="display: flex; align-items: center; gap: 8px;">
+                  <span style="font-weight: 600;">财报提取 (financial-report-extractor)</span>
+                  <el-tag :type="financialReportStatus?.enabled ? 'success' : 'info'" size="small">
+                    {{ financialReportStatus?.enabled ? '已启用' : '未启用' }}
+                  </el-tag>
+                  <el-tag type="warning" size="small" effect="plain">只读 · 配置在 .env</el-tag>
+                </div>
+              </template>
+              <el-descriptions v-if="financialReportStatus" :column="2" size="small" border>
+                <el-descriptions-item label="LLM 补充提取">{{ financialReportStatus.include_llm_supplement ? '开' : '关' }}</el-descriptions-item>
+                <el-descriptions-item label="仅用缓存">{{ financialReportStatus.cache_only ? '是' : '否' }}</el-descriptions-item>
+                <el-descriptions-item label="强制刷新">{{ financialReportStatus.force_refresh ? '是' : '否' }}</el-descriptions-item>
+                <el-descriptions-item label="允许的模型">{{ financialReportStatus.allow_llm_models?.join(', ') || '—' }}</el-descriptions-item>
+                <el-descriptions-item label="PDF 目录">{{ financialReportStatus.pdf_root || '—' }}</el-descriptions-item>
+                <el-descriptions-item label="缓存目录">{{ financialReportStatus.extractor_cache_root || '—' }}</el-descriptions-item>
+                <el-descriptions-item label="LLM 配置文件" :span="2">{{ financialReportStatus.llm_config_path || '（自动用深度分析模型）' }}</el-descriptions-item>
+              </el-descriptions>
+            </el-card>
+
             <!-- 数据源分组展示 -->
             <div v-if="dataSourceGroups.length > 0" class="datasource-groups">
               <SortableDataSourceList
@@ -1165,6 +1187,18 @@ const dataSourceGroupings = ref<DataSourceGrouping[]>([])
 const dataSourceGroups = ref<any[]>([])
 const ungroupedDataSources = ref<DataSourceConfig[]>([])
 
+// 财报提取器状态（env 驱动，只读）
+const financialReportStatus = ref<{
+  enabled: boolean
+  include_llm_supplement: boolean
+  cache_only: boolean
+  force_refresh: boolean
+  pdf_root: string
+  extractor_cache_root: string
+  llm_config_path: string
+  allow_llm_models: string[]
+} | null>(null)
+
 // 加载状态
 const providersLoading = ref(false)
 const initSubscriptionLoading = ref(false)
@@ -1356,6 +1390,15 @@ const buildLLMConfigGroups = () => {
   llmConfigGroups.value = groups
 }
 
+const loadFinancialReportStatus = async () => {
+  try {
+    financialReportStatus.value = await configApi.getFinancialReportStatus()
+  } catch (error) {
+    console.error('❌ 加载财报提取器状态失败:', error)
+    financialReportStatus.value = null
+  }
+}
+
 const loadDataSourceConfigs = async () => {
   dataSourceLoading.value = true
   try {
@@ -1370,6 +1413,9 @@ const loadDataSourceConfigs = async () => {
     await loadMarketCategories()
     await loadDataSourceGroupings()
     buildDataSourceGroups()
+
+    // 加载财报提取器状态
+    await loadFinancialReportStatus()
   } catch (error) {
     ElMessage.error('加载数据源配置失败')
   } finally {
