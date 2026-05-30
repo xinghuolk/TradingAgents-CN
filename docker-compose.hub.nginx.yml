@@ -68,6 +68,10 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.backend
+      args:
+        # financial-report-llm-extractor 的 git rev（构建时拉取）。
+        # 在 .env 里设 FINANCIAL_REPORT_EXTRACTOR_REV=<sha> 覆盖；不设则用此默认。
+        FINANCIAL_REPORT_EXTRACTOR_REV: ${FINANCIAL_REPORT_EXTRACTOR_REV:-e7c7d2d34e9253f33ac4a398bf56e9298dd47938}
     image: hsliup/tradingagents-backend:latest
     container_name: tradingagents-backend
     restart: unless-stopped
