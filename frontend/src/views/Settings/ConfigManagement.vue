@@ -171,7 +171,7 @@
                     编辑
                   </el-button>
                   <el-button
-                    v-if="row.extra_config?.has_api_key"
+                    v-if="row.extra_config?.has_api_key && row.auth_kind !== 'oauth'"
                     size="small"
                     type="info"
                     @click.stop="testProviderAPI(row)"
@@ -834,7 +834,7 @@
                     {{ getKeyStatusText(provider) }}
                   </el-tag>
                   <el-button
-                    v-if="!provider.extra_config?.has_api_key"
+                    v-if="!provider.extra_config?.has_api_key && provider.auth_kind !== 'oauth'"
                     size="small"
                     type="primary"
                     link
@@ -1731,7 +1731,7 @@ const getProviderDisplayName = (providerId: string) => {
 
 // API密钥状态相关计算属性
 const configuredProvidersCount = computed(() => {
-  return providers.value.filter(p => p.extra_config?.has_api_key === true).length
+  return providers.value.filter(p => p.auth_kind === 'oauth' || p.extra_config?.has_api_key === true).length
 })
 
 const activeProvidersCount = computed(() => {
@@ -1740,6 +1740,9 @@ const activeProvidersCount = computed(() => {
 
 // 获取密钥状态类型
 const getKeyStatusType = (provider: LLMProvider) => {
+  if (provider.auth_kind === 'oauth') {
+    return 'success'
+  }
   if (!provider.extra_config?.has_api_key) {
     return 'info'
   }
@@ -1748,6 +1751,9 @@ const getKeyStatusType = (provider: LLMProvider) => {
 
 // 获取密钥状态文本
 const getKeyStatusText = (provider: LLMProvider) => {
+  if (provider.auth_kind === 'oauth') {
+    return '已配置(订阅)'
+  }
   if (!provider.extra_config?.has_api_key) {
     return '未配置'
   }

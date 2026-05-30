@@ -148,12 +148,12 @@
                 :key="index"
                 class="config-item"
                 :class="{
-                  'is-valid': item.status === '已配置',
+                  'is-valid': item.status === '已配置' || item.status === '已配置(订阅)',
                   'is-warning': item.status === '未配置或占位符'
                 }"
               >
                 <div class="item-icon">
-                  <el-icon v-if="item.status === '已配置'" color="#67C23A"><CircleCheck /></el-icon>
+                  <el-icon v-if="item.status === '已配置' || item.status === '已配置(订阅)'" color="#67C23A"><CircleCheck /></el-icon>
                   <el-icon v-else color="#E6A23C"><Warning /></el-icon>
                 </div>
                 <div class="item-content">
@@ -162,7 +162,7 @@
                 </div>
                 <div class="item-status">
                   <el-tag
-                    :type="item.status === '已配置' ? 'success' : item.enabled ? 'warning' : 'info'"
+                    :type="(item.status === '已配置' || item.status === '已配置(订阅)') ? 'success' : item.enabled ? 'warning' : 'info'"
                     size="small"
                   >
                     {{ item.status }}

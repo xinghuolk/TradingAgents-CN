@@ -109,12 +109,15 @@
         class="mb-2"
       />
       <el-form-item label="密钥状态">
-        <el-tag :type="(props.provider?.extra_config?.has_api_key ? 'success' : 'danger')" size="small">
-          {{ props.provider?.extra_config?.has_api_key ? '已配置' : '未配置' }}
-        </el-tag>
-        <el-tag v-if="props.provider?.extra_config?.has_api_key" :type="props.provider?.extra_config?.source === 'environment' ? 'warning' : 'success'" size="small" class="ml-2">
-          {{ props.provider?.extra_config?.source === 'environment' ? 'ENV' : '已配置' }}
-        </el-tag>
+        <el-tag v-if="isOauthProvider" type="success" size="small">已配置(订阅)</el-tag>
+        <template v-else>
+          <el-tag :type="(props.provider?.extra_config?.has_api_key ? 'success' : 'danger')" size="small">
+            {{ props.provider?.extra_config?.has_api_key ? '已配置' : '未配置' }}
+          </el-tag>
+          <el-tag v-if="props.provider?.extra_config?.has_api_key" :type="props.provider?.extra_config?.source === 'environment' ? 'warning' : 'success'" size="small" class="ml-2">
+            {{ props.provider?.extra_config?.source === 'environment' ? 'ENV' : '已配置' }}
+          </el-tag>
+        </template>
       </el-form-item>
 
       <!-- 🔥 新增：API Key 输入框 -->
