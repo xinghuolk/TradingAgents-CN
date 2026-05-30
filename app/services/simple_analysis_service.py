@@ -1084,6 +1084,74 @@ class SimpleAnalysisService:
         logger.info(f"✅ [线程池] 分析任务执行完成: {task_id}")
         return result
 
+    def _resolve_oauth_tokens(self, user_id: str, providers_by_role: Dict[str, str]) -> Dict[str, str]:
+        """Resolve fresh OAuth access tokens for a {role: provider} map.
+
+        Runs in the sync thread-pool path, so it creates a LOOP-LOCAL Motor
+        client inside the new event loop. The app's global Motor client is bound
+        to the main loop and would raise a cross-loop error if used here.
+        Returns {role: token}; raises on any resolution failure.
+        """
+        async def _run() -> Dict[str, str]:
+            from motor.motor_asyncio import AsyncIOMotorClient
+            from app.core.config import settings
+            from app.services import oauth_service
+
+            client = AsyncIOMotorClient(settings.MONGO_URI)
+            try:
+                coll = client[settings.MONGO_DB]["user_oauth_credentials"]
+                token_by_provider: Dict[str, str] = {}
+                out: Dict[str, str] = {}
+                for role, provider in providers_by_role.items():
+                    if provider not in token_by_provider:
+                        token_by_provider[provider] = await oauth_service.resolve(
+                            coll, str(user_id), provider
+                        )
+                    out[role] = token_by_provider[provider]
+                return out
+            finally:
+                client.close()
+
+        return asyncio.run(_run())
+
+    def _inject_oauth_token_if_needed_sync(self, user_id: str, config: Dict[str, Any]) -> None:
+        """Stamp the user's resolved OAuth access_token onto the matching role's
+        api_key for OAuth subscription providers (codex / claude_code).
+
+        Without this, ``create_llm_by_provider`` passes ``api_key=None`` to
+        ChatCodexOAuth / ChatClaudeCodeOAuth, which then fall back to a local
+        ``~/.codex/auth.json`` that does not exist in the container — the exact
+        "No Codex credentials found" failure. Short-circuits for non-OAuth
+        providers; raises on resolution failure so the run fails loudly instead
+        of silently mis-authenticating.
+        """
+        oauth_providers = ("claude_code", "codex")
+        quick_provider = config.get("quick_provider") or config.get("llm_provider")
+        deep_provider = config.get("deep_provider") or config.get("llm_provider")
+
+        providers_by_role: Dict[str, str] = {}
+        if quick_provider in oauth_providers:
+            providers_by_role["quick"] = quick_provider
+        if deep_provider in oauth_providers:
+            providers_by_role["deep"] = deep_provider
+        if not providers_by_role:
+            return
+
+        uid = str(user_id)
+        try:
+            tokens = self._resolve_oauth_tokens(uid, providers_by_role)
+        except Exception as exc:
+            logger.error(
+                f"❌ [OAuth] token 注入失败 (user={uid}, providers={providers_by_role}): {exc}"
+            )
+            raise
+
+        if "quick" in tokens:
+            config["quick_api_key"] = tokens["quick"]
+        if "deep" in tokens:
+            config["deep_api_key"] = tokens["deep"]
+        logger.info(f"✅ [OAuth] token 已注入: roles={list(providers_by_role)}, user={uid}")
+
     def _run_analysis_sync(
         self,
         task_id: str,
@@ -1249,6 +1317,11 @@ class SimpleAnalysisService:
             config["quick_backend_url"] = quick_backend_url
             config["deep_backend_url"] = deep_backend_url
             config["backend_url"] = quick_backend_url  # 保持向后兼容
+
+            # 🔑 OAuth 订阅 provider（codex/claude_code）：注入每用户 access_token。
+            # 否则核心 ChatCodexOAuth/ChatClaudeCodeOAuth 拿不到 token，会回退到容器内
+            # 不存在的 ~/.codex/auth.json 而失败（token 存于 oauth_credentials，由订阅授权页绑定）。
+            self._inject_oauth_token_if_needed_sync(user_id, config)
 
             # 🔍 验证配置中的模型
             logger.info(f"🔍 [模型验证] 配置中的快速模型: {config.get('quick_think_llm')}")

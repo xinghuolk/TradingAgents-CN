@@ -97,7 +97,7 @@
               style="flex: 1"
             >
               <el-option
-                v-for="provider in availableProviders"
+                v-for="provider in catalogProviders"
                 :key="provider.name"
                 :label="`${provider.display_name} (${provider.name})`"
                 :value="provider.name"
@@ -293,6 +293,9 @@ const aggregatorProviders = ['302ai', 'oneapi', 'newapi', 'openrouter', 'custom_
 const isAggregatorProvider = computed(() => {
   return aggregatorProviders.includes(formData.value.provider)
 })
+
+// OAuth订阅类厂家无需模型目录，过滤掉
+const catalogProviders = computed(() => availableProviders.value.filter(p => p.auth_kind !== 'oauth'))
 
 interface ModelInfo {
   name: string

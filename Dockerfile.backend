@@ -12,7 +12,10 @@ ARG PYPI_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
 # 第三方代理（如 gh-proxy.com）返回的可执行字节不经哈希/签名校验，故仅 opt-in：
 # 需要时显式 --build-arg GITHUB_PROXY=https://gh-proxy.com/
 ARG GITHUB_PROXY=
-ARG FINANCIAL_REPORT_EXTRACTOR_REV=b03775925a5be22f31c4d67e90f88c5842ecaec6
+# financial-report-llm-extractor 的 git rev。优先由 compose 的 build.args 注入
+# （可在 .env 设 FINANCIAL_REPORT_EXTRACTOR_REV 覆盖）；此处默认仅作 docker build 直接
+# 构建（不经 compose）时的回退值。
+ARG FINANCIAL_REPORT_EXTRACTOR_REV=e7c7d2d34e9253f33ac4a398bf56e9298dd47938
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
