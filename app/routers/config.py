@@ -596,6 +596,28 @@ async def init_subscription_providers(
         )
 
 
+@router.get("/financial-report/status", response_model=dict)
+async def financial_report_status(
+    current_user: User = Depends(get_current_user),
+):
+    """只读返回 financial-report-llm-extractor 集成的当前配置（来自 env）。"""
+    from tradingagents.dataflows.financial_reports.config import (
+        get_financial_report_client_config,
+    )
+
+    frc = get_financial_report_client_config()
+    return {
+        "enabled": frc.enabled,
+        "include_llm_supplement": frc.include_llm_supplement,
+        "cache_only": frc.cache_only,
+        "force_refresh": frc.force_refresh,
+        "pdf_root": frc.pdf_root,
+        "extractor_cache_root": frc.extractor_cache_root,
+        "llm_config_path": frc.llm_config_path,
+        "allow_llm_models": list(frc.allow_llm_models),
+    }
+
+
 @router.post("/llm/providers/{provider_id}/test", response_model=dict)
 async def test_provider_api(
     provider_id: str,
