@@ -246,6 +246,27 @@ async def validate_config():
 
                     mongodb_validation["data_source_configs"].append(validation_item)
 
+            # 财报提取器（financial-report-llm-extractor）：env 驱动，只读展示为一个数据源
+            try:
+                from tradingagents.dataflows.financial_reports.config import (
+                    get_financial_report_client_config,
+                )
+
+                frc = get_financial_report_client_config()
+                mongodb_validation["data_source_configs"].append({
+                    "name": "财报提取 (financial-report-extractor)",
+                    "type": "financial_report_llm",
+                    "enabled": frc.enabled,
+                    "has_api_key": True,  # 无需 API Key（OAuth / LLM 配置驱动）
+                    "status": "已配置(订阅)" if frc.enabled else "未启用",
+                    "source": "environment",
+                    "mongodb_configured": False,
+                    "env_configured": frc.enabled,
+                    "readonly": True,
+                })
+            except Exception as fr_exc:
+                logger.warning(f"读取财报提取器状态失败: {fr_exc}")
+
         except Exception as e:
             logger.error(f"验证 MongoDB 配置失败: {e}", exc_info=True)
             mongodb_validation["warnings"].append(f"MongoDB 配置验证失败: {str(e)}")

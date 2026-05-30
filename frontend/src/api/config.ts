@@ -469,7 +469,21 @@ export const configApi = {
   // 配置重载
   reloadConfig(): Promise<{ success: boolean; message: string; data?: any }> {
     return ApiClient.post('/api/config/reload')
-  }
+  },
+
+  // 获取财报提取器状态（env 驱动，只读）
+  getFinancialReportStatus(): Promise<{
+    enabled: boolean
+    include_llm_supplement: boolean
+    cache_only: boolean
+    force_refresh: boolean
+    pdf_root: string
+    extractor_cache_root: string
+    llm_config_path: string
+    allow_llm_models: string[]
+  }> {
+    return ApiClient.get('/api/config/financial-report/status')
+  },
 }
 
 // 配置相关的常量

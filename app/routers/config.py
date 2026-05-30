@@ -596,6 +596,34 @@ async def init_subscription_providers(
         )
 
 
+@router.get("/financial-report/status", response_model=dict)
+async def financial_report_status(
+    current_user: User = Depends(get_current_user),
+):
+    """只读返回 financial-report-llm-extractor 集成的当前配置（来自 env）。"""
+    try:
+        from tradingagents.dataflows.financial_reports.config import (
+            get_financial_report_client_config,
+        )
+
+        frc = get_financial_report_client_config()
+        return {
+            "enabled": frc.enabled,
+            "include_llm_supplement": frc.include_llm_supplement,
+            "cache_only": frc.cache_only,
+            "force_refresh": frc.force_refresh,
+            "pdf_root": frc.pdf_root,
+            "extractor_cache_root": frc.extractor_cache_root,
+            "llm_config_path": frc.llm_config_path,
+            "allow_llm_models": list(frc.allow_llm_models),
+        }
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"读取财报提取器状态失败: {str(e)}",
+        )
+
+
 @router.post("/llm/providers/{provider_id}/test", response_model=dict)
 async def test_provider_api(
     provider_id: str,
