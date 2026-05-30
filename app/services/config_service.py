@@ -2762,12 +2762,20 @@ class ConfigService:
             for provider_data in providers_data:
                 provider = LLMProvider(**provider_data)
 
+                # 初始化 extra_config
+                provider.extra_config = provider.extra_config or {}
+
+                # OAuth 供应商无需 API Key，直接标记为已配置
+                if getattr(provider, "auth_kind", "api_key") == "oauth":
+                    provider.extra_config["has_api_key"] = True
+                    provider.extra_config["source"] = "oauth"
+                    logger.info(f"✅ [get_llm_providers] 供应商 {provider.display_name} ({provider.name}) 是 OAuth 订阅服务，跳过 API Key 验证")
+                    providers.append(provider)
+                    continue
+
                 # 🔥 判断数据库中的 API Key 是否有效
                 db_key_valid = self._is_valid_api_key(provider.api_key)
                 logger.info(f"🔍 [get_llm_providers] 供应商 {provider.display_name} ({provider.name}): 数据库密钥有效={db_key_valid}")
-
-                # 初始化 extra_config
-                provider.extra_config = provider.extra_config or {}
 
                 if not db_key_valid:
                     # 数据库中的 Key 无效，尝试从环境变量获取
@@ -3351,6 +3359,13 @@ class ConfigService:
             provider_name = provider_data.get("name")
             api_key = provider_data.get("api_key")
             display_name = provider_data.get("display_name", provider_name)
+
+            # OAuth 供应商无需 API Key，直接返回友好成功消息
+            if provider_data.get("auth_kind", "api_key") == "oauth":
+                return {
+                    "success": True,
+                    "message": f"{display_name} 是 OAuth 订阅服务，无需 API 密钥测试。请在“订阅授权”页完成 OAuth 绑定。",
+                }
 
             # 🔥 判断数据库中的 API Key 是否有效
             if not self._is_valid_api_key(api_key):

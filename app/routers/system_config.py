@@ -137,6 +137,16 @@ async def validate_config():
                     "env_configured": False  # 环境变量是否配置
                 }
 
+                # OAuth 供应商无需 API Key，直接标记为已配置（订阅服务）
+                if getattr(provider, "auth_kind", "api_key") == "oauth":
+                    validation_item["has_api_key"] = True
+                    validation_item["mongodb_configured"] = True
+                    validation_item["env_configured"] = True
+                    validation_item["status"] = "已配置(订阅)"
+                    validation_item["source"] = "oauth"
+                    mongodb_validation["llm_providers"].append(validation_item)
+                    continue
+
                 # 🔥 关键：检查数据库中的原始 API Key 是否有效
                 db_key_valid = is_valid_api_key(provider.api_key)
                 validation_item["mongodb_configured"] = db_key_valid
