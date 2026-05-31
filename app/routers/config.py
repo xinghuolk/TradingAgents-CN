@@ -206,7 +206,7 @@ async def get_system_config(
 
 @router.get("/llm/providers", response_model=List[LLMProviderResponse])
 async def get_llm_providers(
-    current_user: User = Depends(get_current_user)
+    current_user: dict = Depends(get_current_user)
 ):
     """获取所有大模型厂家"""
     try:
@@ -215,11 +215,52 @@ async def get_llm_providers(
             truncate_api_key,
             get_env_api_key_for_provider
         )
+        from app.routers.oauth import get_credentials_collection
+        from app.services import oauth_service
 
         providers = await config_service.get_llm_providers()
         result = []
 
+        # OAuth providers: has_api_key reflects whether THIS user has bound a token
+        user_id = current_user.get("id", "")
+        try:
+            bound_oauth = await oauth_service.list_bound_providers(
+                get_credentials_collection(), user_id
+            ) if user_id else set()
+        except Exception:
+            bound_oauth = set()
+
         for provider in providers:
+            # OAuth 供应商：是否配置取决于当前用户是否已绑定 OAuth 令牌
+            if getattr(provider, "auth_kind", "api_key") == "oauth":
+                is_bound = provider.name in bound_oauth
+                result.append(
+                    LLMProviderResponse(
+                        id=str(provider.id),
+                        name=provider.name,
+                        display_name=provider.display_name,
+                        description=provider.description,
+                        website=provider.website,
+                        api_doc_url=provider.api_doc_url,
+                        logo_url=provider.logo_url,
+                        is_active=provider.is_active,
+                        auth_kind=provider.auth_kind,
+                        supported_features=provider.supported_features,
+                        default_base_url=provider.default_base_url,
+                        api_key=None,
+                        api_secret=None,
+                        extra_config={
+                            **provider.extra_config,
+                            "has_api_key": is_bound,
+                            "has_api_secret": False,
+                            "source": "oauth",
+                        },
+                        created_at=provider.created_at,
+                        updated_at=provider.updated_at
+                    )
+                )
+                continue
+
             # 处理 API Key：优先使用数据库配置，如果数据库没有则检查环境变量
             db_key_valid = is_valid_api_key(provider.api_key)
             if db_key_valid:

@@ -87,6 +87,17 @@ async def delete_credentials(
     await collection.delete_one({"user_id": user_id, "provider": provider})
 
 
+async def list_bound_providers(
+    collection: AsyncIOMotorCollection,
+    user_id: str,
+) -> set[str]:
+    """Return the set of provider names the user currently has an OAuth
+    credential bound for (existence check only; resolve() handles freshness
+    at call time)."""
+    cursor = collection.find({"user_id": user_id}, {"provider": 1})
+    return {doc["provider"] async for doc in cursor}
+
+
 async def resolve(
     collection: AsyncIOMotorCollection,
     user_id: str,

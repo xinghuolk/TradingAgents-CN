@@ -61,7 +61,7 @@ async def get_config_summary(current_user: dict = Depends(get_current_user)) -> 
 
 
 @router.get("/config/validate", tags=["system"], summary="验证配置完整性")
-async def validate_config():
+async def validate_config(current_user: dict = Depends(get_current_user)):
     """
     验证系统配置的完整性和有效性。
     返回验证结果，包括缺少的配置项和无效的配置。
@@ -121,6 +121,17 @@ async def validate_config():
 
             logger.info(f"🔍 获取到 {len(llm_providers)} 个大模型厂家")
 
+            # OAuth providers: check which ones the current user has bound
+            from app.routers.oauth import get_credentials_collection
+            from app.services import oauth_service as _oauth_service
+            _uid = current_user.get("id", "") if isinstance(current_user, dict) else str(getattr(current_user, "id", ""))
+            try:
+                _bound_oauth = await _oauth_service.list_bound_providers(
+                    get_credentials_collection(), _uid
+                ) if _uid else set()
+            except Exception:
+                _bound_oauth = set()
+
             for provider in llm_providers:
                 # 只验证已启用的厂家
                 if not provider.is_active:
@@ -137,13 +148,18 @@ async def validate_config():
                     "env_configured": False  # 环境变量是否配置
                 }
 
-                # OAuth 供应商无需 API Key，直接标记为已配置（订阅服务）
+                # OAuth 供应商：是否配置取决于当前用户是否已绑定 OAuth 令牌
                 if getattr(provider, "auth_kind", "api_key") == "oauth":
-                    validation_item["has_api_key"] = True
-                    validation_item["mongodb_configured"] = True
-                    validation_item["env_configured"] = True
-                    validation_item["status"] = "已配置(订阅)"
+                    is_bound = provider.name in _bound_oauth
+                    validation_item["has_api_key"] = is_bound
+                    validation_item["mongodb_configured"] = is_bound
+                    validation_item["env_configured"] = is_bound
+                    validation_item["status"] = "已配置(订阅)" if is_bound else "未绑定"
                     validation_item["source"] = "oauth"
+                    if not is_bound:
+                        mongodb_validation["warnings"].append(
+                            f"大模型厂家 {provider.display_name} 是订阅类，但当前用户尚未完成 OAuth 绑定（请前往「订阅授权」页）"
+                        )
                     mongodb_validation["llm_providers"].append(validation_item)
                     continue
 

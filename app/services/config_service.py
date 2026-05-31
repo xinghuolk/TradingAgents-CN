@@ -884,6 +884,16 @@ class ConfigService:
             # 获取 provider 字符串值（兼容枚举和字符串）
             provider_str = llm_config.provider.value if hasattr(llm_config.provider, 'value') else str(llm_config.provider)
 
+            # OAuth 订阅类供应商（codex/claude_code）无需 API 密钥测试
+            from tradingagents.utils.oauth_providers import OAUTH_SUBSCRIPTION_PROVIDER_NAMES
+            if provider_str in OAUTH_SUBSCRIPTION_PROVIDER_NAMES:
+                return {
+                    "success": True,
+                    "message": "OAuth 订阅模型（codex/claude_code）通过订阅授权使用，无需 API 密钥测试；请在「订阅授权」页确认已绑定。",
+                    "response_time": 0.0,
+                    "details": None,
+                }
+
             logger.info(f"🧪 测试大模型配置: {provider_str} - {llm_config.model_name}")
             logger.info(f"📍 API基础URL (模型配置): {llm_config.api_base}")
 
@@ -2765,9 +2775,9 @@ class ConfigService:
                 # 初始化 extra_config
                 provider.extra_config = provider.extra_config or {}
 
-                # OAuth 供应商无需 API Key，直接标记为已配置
+                # OAuth 供应商无需 API Key；has_api_key 由路由层根据用户绑定状态决定
                 if getattr(provider, "auth_kind", "api_key") == "oauth":
-                    provider.extra_config["has_api_key"] = True
+                    provider.extra_config["has_api_key"] = False  # 路由层会用绑定状态覆盖
                     provider.extra_config["source"] = "oauth"
                     logger.info(f"✅ [get_llm_providers] 供应商 {provider.display_name} ({provider.name}) 是 OAuth 订阅服务，跳过 API Key 验证")
                     providers.append(provider)

@@ -87,13 +87,16 @@ async def test_test_provider_api_non_oauth_provider_checks_api_key(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# Edit 1: get_llm_providers sets has_api_key=True + source="oauth" for oauth
+# Edit 1: get_llm_providers sets source="oauth" for oauth providers;
+# has_api_key is left False at service layer — route layer overrides it
+# based on per-user binding via oauth_service.list_bound_providers.
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_get_llm_providers_oauth_has_api_key_true(monkeypatch):
-    """get_llm_providers must return the oauth provider with has_api_key=True
-    and source='oauth', without touching api_key validation."""
+async def test_get_llm_providers_oauth_sets_source_and_defers_has_api_key(monkeypatch):
+    """get_llm_providers must return the oauth provider with source='oauth'
+    and has_api_key=False (deferred to route layer which checks binding).
+    The service layer must NOT touch api_key validation."""
     service = _make_service()
 
     from bson import ObjectId
@@ -127,5 +130,6 @@ async def test_get_llm_providers_oauth_has_api_key_true(monkeypatch):
     providers = await service.get_llm_providers()
     assert len(providers) == 1
     p = providers[0]
-    assert p.extra_config.get("has_api_key") is True
+    # Service layer sets has_api_key=False (route layer overrides based on binding)
+    assert p.extra_config.get("has_api_key") is False
     assert p.extra_config.get("source") == "oauth"
