@@ -1059,6 +1059,14 @@ class ConfigService:
         except Exception as exc:
             # 仅记录异常类型 + 截断信息，避免泄露 api_key / token
             logger.warning(f"[test] {provider_str} 真实调用失败: {type(exc).__name__}: {exc}")
+            # 完整调用栈用于定位真实出错行（例如 codex 的
+            # "'NoneType' object is not iterable" 截断后看不到抛出位置）。
+            # traceback.format_exc() 只输出调用栈与异常文本，不含局部变量值，
+            # 因此 api_key / OAuth token 不会出现在日志中。
+            import traceback
+            logger.warning(
+                f"[test] {provider_str} 真实调用失败完整调用栈:\n{traceback.format_exc()}"
+            )
             return {
                 "success": False,
                 "message": f"{provider_str} 调用失败: {type(exc).__name__}: {str(exc)[:200]}",

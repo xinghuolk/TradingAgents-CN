@@ -78,6 +78,23 @@ class ChatCodexOAuth(ChatOpenAI):
         # would silently send the wrong auth.
         kwargs.setdefault("base_url", CODEX_BASE_URL)
 
+        # Force langchain onto the chat.completions code path (``self.client``),
+        # which we hook with ``_CodexCompletionsAdapter`` below. ``langchain_openai``
+        # auto-routes some models (gpt-5 / reasoning families, or any payload that
+        # carries Responses-only args) through its BUILT-IN Responses API path
+        # (``self.root_client.responses.create``) — which bypasses our adapter
+        # entirely and hits the Codex backend with OpenAI-standard Responses
+        # semantics it does not speak. That surfaces as
+        # ``TypeError: 'NoneType' object is not iterable`` when langchain iterates
+        # the resulting empty ``response.output``. Because requirements pin
+        # ``langchain-openai>=0.1.0`` (unbounded), the auto-route heuristic varies
+        # by resolved version; pinning ``use_responses_api=False`` here makes
+        # ``ChatOpenAI._use_responses_api()`` short-circuit to False on every
+        # version, so Codex always stays on the chat.completions path our adapter
+        # translates to the Codex Responses wire format. Not caller-overridable —
+        # any other value re-breaks Codex.
+        kwargs["use_responses_api"] = False
+
         # ChatOpenAI's validator requires *some* api_key value. We seed it with
         # the access token so any introspection (``chat.openai_api_key``) shows
         # a sensible value, but the real auth happens on the OpenAI client we
@@ -121,8 +138,9 @@ class ChatCodexOAuth(ChatOpenAI):
         # 903, 971, 977 etc.) for the alternate Responses path. ChatOpenAI's
         # built-in Responses path expects OpenAI standard Responses semantics
         # — not the Codex variant — so we leave the real OpenAI clients in
-        # place there. Codex models go through the chat.completions path,
-        # which is what we've hooked.
+        # place there. Codex models are pinned to the chat.completions path
+        # (use_responses_api=False, set above), which is what we've hooked, so
+        # these Responses clients are never exercised for Codex.
         object.__setattr__(self, "root_client", real_sync_client)
         object.__setattr__(self, "root_async_client", real_async_client)
 
