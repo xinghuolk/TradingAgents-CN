@@ -875,24 +875,17 @@ class ConfigService:
             print(f"更新LLM配置失败: {e}")
             return False
     
-    async def test_llm_config(self, llm_config: LLMConfig) -> Dict[str, Any]:
+    async def test_llm_config(self, llm_config: LLMConfig, user_id: Optional[str] = None) -> Dict[str, Any]:
         """测试大模型配置 - 真实调用API进行验证"""
         start_time = time.time()
         try:
-            import requests
-
             # 获取 provider 字符串值（兼容枚举和字符串）
             provider_str = llm_config.provider.value if hasattr(llm_config.provider, 'value') else str(llm_config.provider)
 
-            # OAuth 订阅类供应商（codex/claude_code）无需 API 密钥测试
+            # OAuth 订阅类供应商（codex/claude_code）做真实绑定解析 + 推理 ping
             from tradingagents.utils.oauth_providers import OAUTH_SUBSCRIPTION_PROVIDER_NAMES
             if provider_str in OAUTH_SUBSCRIPTION_PROVIDER_NAMES:
-                return {
-                    "success": True,
-                    "message": "OAuth 订阅模型（codex/claude_code）通过订阅授权使用，无需 API 密钥测试；请在「订阅授权」页确认已绑定。",
-                    "response_time": 0.0,
-                    "details": None,
-                }
+                return await self._test_oauth_model(llm_config, provider_str, user_id, start_time)
 
             logger.info(f"🧪 测试大模型配置: {provider_str} - {llm_config.model_name}")
             logger.info(f"📍 API基础URL (模型配置): {llm_config.api_base}")
@@ -940,173 +933,14 @@ class ConfigService:
                     "details": None
                 }
 
-            # 3. 根据厂家类型选择测试方法
-            if provider_str == "google":
-                # Google AI 使用专门的测试方法
-                logger.info(f"🔍 使用 Google AI 专用测试方法")
-                result = self._test_google_api(api_key, f"{provider_str} {llm_config.model_name}", api_base, llm_config.model_name)
-                result["response_time"] = time.time() - start_time
-                return result
-            elif provider_str == "deepseek":
-                # DeepSeek 使用专门的测试方法
-                logger.info(f"🔍 使用 DeepSeek 专用测试方法")
-                result = self._test_deepseek_api(api_key, f"{provider_str} {llm_config.model_name}", llm_config.model_name)
-                result["response_time"] = time.time() - start_time
-                return result
-            elif provider_str == "dashscope":
-                # DashScope 使用专门的测试方法
-                logger.info(f"🔍 使用 DashScope 专用测试方法")
-                result = self._test_dashscope_api(api_key, f"{provider_str} {llm_config.model_name}", llm_config.model_name)
-                result["response_time"] = time.time() - start_time
-                return result
-            else:
-                # 其他厂家使用 OpenAI 兼容的测试方法
-                logger.info(f"🔍 使用 OpenAI 兼容测试方法")
+            # 3. 统一走真实 LLM 调用路径
+            #    所有 API Key 类供应商均通过 create_llm_by_provider(...).invoke(...) 测试，
+            #    与 analysis 实际运行时使用的机制完全一致（取代旧的手写 raw-HTTP 测试轮子）。
+            logger.info("🔍 使用统一真实调用测试路径 (create_llm_by_provider)")
+            return await self._ping_via_real_llm(
+                provider_str, llm_config.model_name, api_base, api_key, start_time
+            )
 
-                # 构建测试请求
-                api_base_normalized = api_base.rstrip("/")
-
-                # 🔧 智能版本号处理：只有在没有版本号的情况下才添加 /v1
-                # 避免对已有版本号的URL（如智谱AI的 /v4）重复添加 /v1
-                import re
-                if not re.search(r'/v\d+$', api_base_normalized):
-                    # URL末尾没有版本号，添加 /v1（OpenAI标准）
-                    api_base_normalized = api_base_normalized + "/v1"
-                    logger.info(f"   添加 /v1 版本号: {api_base_normalized}")
-                else:
-                    # URL已包含版本号（如 /v4），不添加
-                    logger.info(f"   检测到已有版本号，保持原样: {api_base_normalized}")
-
-                url = f"{api_base_normalized}/chat/completions"
-
-                headers = {
-                    "Content-Type": "application/json",
-                    "Authorization": f"Bearer {api_key}"
-                }
-
-                data = {
-                    "model": llm_config.model_name,
-                    "messages": [
-                        {"role": "user", "content": "Hello, please respond with 'OK' if you can read this."}
-                    ],
-                    "max_tokens": 200,  # 增加到200，给推理模型（如o1/gpt-5）足够空间
-                    "temperature": 0.1
-                }
-
-                logger.info(f"🌐 发送测试请求到: {url}")
-                logger.info(f"📦 使用模型: {llm_config.model_name}")
-                logger.info(f"📦 请求数据: {data}")
-
-                # 发送测试请求
-                response = requests.post(url, json=data, headers=headers, timeout=15)
-                response_time = time.time() - start_time
-
-                logger.info(f"📡 收到响应: HTTP {response.status_code}")
-
-                # 处理响应（仅用于 OpenAI 兼容的厂家）
-                if response.status_code == 200:
-                    try:
-                        result = response.json()
-                        logger.info(f"📦 响应JSON: {result}")
-
-                        if "choices" in result and len(result["choices"]) > 0:
-                            content = result["choices"][0]["message"]["content"]
-                            logger.info(f"📝 响应内容: {content}")
-
-                            if content and len(content.strip()) > 0:
-                                logger.info(f"✅ 测试成功: {content[:50]}")
-                                return {
-                                    "success": True,
-                                    "message": f"成功连接到 {provider_str} {llm_config.model_name}",
-                                    "response_time": response_time,
-                                    "details": {
-                                        "provider": provider_str,
-                                        "model": llm_config.model_name,
-                                        "api_base": api_base,
-                                        "response_preview": content[:100]
-                                    }
-                                }
-                            else:
-                                logger.warning(f"⚠️ API响应内容为空")
-                                return {
-                                    "success": False,
-                                    "message": "API响应内容为空",
-                                    "response_time": response_time,
-                                    "details": None
-                                }
-                        else:
-                            logger.warning(f"⚠️ API响应格式异常，缺少 choices 字段")
-                            logger.warning(f"   响应内容: {result}")
-                            return {
-                                "success": False,
-                                "message": "API响应格式异常",
-                                "response_time": response_time,
-                                "details": None
-                            }
-                    except Exception as e:
-                        logger.error(f"❌ 解析响应失败: {e}")
-                        logger.error(f"   响应文本: {response.text[:500]}")
-                        return {
-                            "success": False,
-                            "message": f"解析响应失败: {str(e)}",
-                            "response_time": response_time,
-                            "details": None
-                        }
-                elif response.status_code == 401:
-                    return {
-                        "success": False,
-                        "message": "API密钥无效或已过期",
-                        "response_time": response_time,
-                        "details": None
-                    }
-                elif response.status_code == 403:
-                    return {
-                        "success": False,
-                        "message": "API权限不足或配额已用完",
-                        "response_time": response_time,
-                        "details": None
-                    }
-                elif response.status_code == 404:
-                    return {
-                        "success": False,
-                        "message": f"API端点不存在，请检查API基础URL是否正确: {url}",
-                        "response_time": response_time,
-                        "details": None
-                    }
-                else:
-                    try:
-                        error_detail = response.json()
-                        error_msg = error_detail.get("error", {}).get("message", f"HTTP {response.status_code}")
-                        return {
-                            "success": False,
-                            "message": f"API测试失败: {error_msg}",
-                            "response_time": response_time,
-                            "details": None
-                        }
-                    except:
-                        return {
-                        "success": False,
-                        "message": f"API测试失败: HTTP {response.status_code}",
-                        "response_time": response_time,
-                        "details": None
-                    }
-
-        except requests.exceptions.Timeout:
-            response_time = time.time() - start_time
-            return {
-                "success": False,
-                "message": "连接超时，请检查API基础URL是否正确或网络是否可达",
-                "response_time": response_time,
-                "details": None
-            }
-        except requests.exceptions.ConnectionError as e:
-            response_time = time.time() - start_time
-            return {
-                "success": False,
-                "message": f"连接失败，请检查API基础URL是否正确: {str(e)}",
-                "response_time": response_time,
-                "details": None
-            }
         except Exception as e:
             response_time = time.time() - start_time
             logger.error(f"❌ 测试大模型配置失败: {e}")
@@ -1117,6 +951,121 @@ class ConfigService:
                 "details": None
             }
     
+    async def _test_oauth_model(
+        self,
+        llm_config: LLMConfig,
+        provider_str: str,
+        user_id: Optional[str],
+        start_time: float,
+    ) -> Dict[str, Any]:
+        """对 OAuth 订阅模型(codex/claude_code)做真实检查。
+
+        - 解析当前用户的 OAuth 令牌(校验绑定 + 刷新)；未绑定/过期则返回失败及真实原因。
+        - codex: 用解析到的令牌构建真实适配器并做一次最小推理("Hi", 极小 max_tokens)。
+        - claude_code: 其订阅推理接口(/v1/messages)受 Anthropic 限制(诊断专用)，
+          真实 ping 会误报失败，故仅做令牌有效性验证。
+        """
+        if not user_id:
+            return {
+                "success": False,
+                "message": "无法确定当前用户，无法测试 OAuth 订阅模型",
+                "response_time": round(time.time() - start_time, 3),
+                "details": None,
+            }
+
+        # 1) 解析令牌(校验绑定 + 刷新)
+        try:
+            from app.routers.oauth import get_credentials_collection
+            from app.services import oauth_service
+            token = await oauth_service.resolve(
+                get_credentials_collection(), str(user_id), provider_str
+            )
+        except Exception as exc:
+            return {
+                "success": False,
+                "message": f"OAuth 凭据无效或未绑定（请前往「订阅授权」页）：{exc}",
+                "response_time": round(time.time() - start_time, 3),
+                "details": None,
+            }
+
+        # 2) claude_code: 订阅推理接口受 Anthropic 限制 → 仅做令牌验证
+        if provider_str == "claude_code":
+            return {
+                "success": True,
+                "message": (
+                    "Claude Code 已绑定，凭据有效。注意：其订阅推理接口受 Anthropic "
+                    "限制，无法完整 ping 验证。"
+                ),
+                "response_time": round(time.time() - start_time, 3),
+                "details": {"verified": "token_only"},
+            }
+
+        # 3) codex: 通过适配器做一次最小推理 ping
+        #    复用统一的 _ping_via_real_llm，与 API Key 类模型走完全相同的真实调用路径。
+        return await self._ping_via_real_llm(
+            provider_str, llm_config.model_name, "", token, start_time
+        )
+
+    async def _ping_via_real_llm(self, provider_str, model_name, backend_url, api_key, start_time) -> Dict[str, Any]:
+        """统一的真实 LLM 探活调用。
+
+        所有供应商（OAuth codex + API Key 模型）共用此路径：
+        create_llm_by_provider(...).invoke(...) —— 与 analysis 运行时完全一致的真实调用。
+        claude_code 为 token-only，不走此方法。
+
+        Args:
+            provider_str: 供应商标识（小写）
+            model_name: 模型名称
+            backend_url: API base URL（可为空，工厂函数会回退到默认值/环境变量）
+            api_key: API 密钥或 OAuth token
+            start_time: 计时起点（time.time()）
+
+        Returns:
+            标准测试结果字典
+        """
+        try:
+            from tradingagents.graph.trading_graph import create_llm_by_provider
+            llm = create_llm_by_provider(
+                provider=provider_str,
+                model=model_name,
+                backend_url=backend_url or "",
+                temperature=0,
+                max_tokens=256,
+                timeout=30,
+                api_key=api_key,
+            )
+            resp = await asyncio.to_thread(llm.invoke, "Hi, please reply with OK.")
+            text = getattr(resp, "content", None)
+            if text is None:
+                text = str(resp)
+
+            if text and str(text).strip():
+                return {
+                    "success": True,
+                    "message": f"成功连接到 {provider_str} {model_name}",
+                    "response_time": round(time.time() - start_time, 3),
+                    "details": {
+                        "provider": provider_str,
+                        "model": model_name,
+                        "response_preview": str(text)[:100],
+                    },
+                }
+            return {
+                "success": False,
+                "message": "模型响应为空",
+                "response_time": round(time.time() - start_time, 3),
+                "details": None,
+            }
+        except Exception as exc:
+            # 仅记录异常类型 + 截断信息，避免泄露 api_key / token
+            logger.warning(f"[test] {provider_str} 真实调用失败: {type(exc).__name__}: {exc}")
+            return {
+                "success": False,
+                "message": f"{provider_str} 调用失败: {type(exc).__name__}: {str(exc)[:200]}",
+                "response_time": round(time.time() - start_time, 3),
+                "details": None,
+            }
+
     def _truncate_api_key(self, api_key: str, prefix_len: int = 6, suffix_len: int = 6) -> str:
         """
         截断 API Key 用于显示

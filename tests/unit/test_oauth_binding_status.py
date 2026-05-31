@@ -25,34 +25,39 @@ def _make_service():
 
 @pytest.mark.asyncio
 async def test_test_llm_config_oauth_model_skips_key_check():
-    """test_llm_config must short-circuit for OAuth subscription providers
-    and return success=True with a message mentioning 'OAuth' or '订阅'.
-    The early-return must NOT reach the DB or api_key validity checks."""
+    """test_llm_config must route OAuth subscription providers to the dedicated
+    OAuth path (NOT the generic api_key/DB check). With no user_id it cannot
+    resolve a binding, so it returns success=False with a user-related message —
+    but crucially it must NOT reach the DB or api_key validity branch."""
     service = _make_service()
 
     cfg = LLMConfig(provider="codex", model_name="gpt-5.5-codex", enabled=True)
     result = await service.test_llm_config(cfg)
 
-    assert result["success"] is True
+    # No user_id → cannot determine current user; OAuth path returns this msg.
+    assert result["success"] is False
     msg = result.get("message", "")
-    assert "OAuth" in msg or "订阅" in msg, (
-        f"Expected 'OAuth' or '订阅' in message, got: {msg!r}"
+    assert "用户" in msg, (
+        f"Expected OAuth-path '用户' message, got: {msg!r}"
     )
+    # Must not have fallen through to the generic api_key error.
+    assert "API密钥" not in msg
 
 
 @pytest.mark.asyncio
 async def test_test_llm_config_claude_code_skips_key_check():
-    """claude_code provider must also skip the key check."""
+    """claude_code provider must also route through the OAuth path."""
     service = _make_service()
 
     cfg = LLMConfig(provider="claude_code", model_name="claude-opus-4-5", enabled=True)
     result = await service.test_llm_config(cfg)
 
-    assert result["success"] is True
+    assert result["success"] is False
     msg = result.get("message", "")
-    assert "OAuth" in msg or "订阅" in msg, (
-        f"Expected 'OAuth' or '订阅' in message, got: {msg!r}"
+    assert "用户" in msg, (
+        f"Expected OAuth-path '用户' message, got: {msg!r}"
     )
+    assert "API密钥" not in msg
 
 
 @pytest.mark.asyncio

@@ -959,7 +959,8 @@ async def test_config(
     try:
         if request.config_type == "llm":
             llm_config = LLMConfig(**request.config_data)
-            result = await config_service.test_llm_config(llm_config)
+            user_id = current_user.get("id") if current_user else None
+            result = await config_service.test_llm_config(llm_config, user_id=user_id)
         elif request.config_type == "datasource":
             ds_config = DataSourceConfig(**request.config_data)
             result = await config_service.test_data_source_config(ds_config)
