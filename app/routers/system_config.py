@@ -1,5 +1,5 @@
-from fastapi import APIRouter, Depends, HTTPException, status
-from typing import Any, Dict
+from fastapi import APIRouter, Depends, Header, HTTPException, status
+from typing import Any, Dict, Optional
 import re
 import logging
 
@@ -8,6 +8,44 @@ from app.routers.auth_db import get_current_user
 
 router = APIRouter()
 logger = logging.getLogger("webapi")
+
+
+async def _optional_current_user(
+    authorization: Optional[str] = Header(default=None),
+) -> Optional[dict]:
+    """Return the current user if a valid Bearer token is present, else None.
+
+    Keeps /config/validate callable without auth (its historical contract).
+    When no token or an invalid token is supplied the function returns None
+    instead of raising 401 — OAuth providers will appear as '未绑定' for
+    unauthenticated callers.
+    """
+    if not authorization:
+        return None
+    if not authorization.lower().startswith("bearer "):
+        return None
+    try:
+        from app.services.auth_service import AuthService
+        from app.services.user_service import user_service
+
+        token = authorization.split(" ", 1)[1]
+        token_data = AuthService.verify_token(token)
+        if not token_data:
+            return None
+        user = await user_service.get_user_by_username(token_data.sub)
+        if not user or not user.is_active:
+            return None
+        return {
+            "id": str(user.id),
+            "username": user.username,
+            "email": user.email,
+            "name": user.username,
+            "is_admin": user.is_admin,
+            "roles": ["admin"] if user.is_admin else ["user"],
+            "preferences": user.preferences.model_dump() if user.preferences else {},
+        }
+    except Exception:
+        return None
 
 SENSITIVE_KEYS = {
     "MONGODB_PASSWORD",
@@ -61,7 +99,7 @@ async def get_config_summary(current_user: dict = Depends(get_current_user)) -> 
 
 
 @router.get("/config/validate", tags=["system"], summary="验证配置完整性")
-async def validate_config(current_user: dict = Depends(get_current_user)):
+async def validate_config(current_user: Optional[dict] = Depends(_optional_current_user)):
     """
     验证系统配置的完整性和有效性。
     返回验证结果，包括缺少的配置项和无效的配置。
