@@ -936,7 +936,7 @@ class ConfigService:
             # 3. 统一走真实 LLM 调用路径
             #    所有 API Key 类供应商均通过 create_llm_by_provider(...).invoke(...) 测试，
             #    与 analysis 实际运行时使用的机制完全一致（取代旧的手写 raw-HTTP 测试轮子）。
-            logger.info(f"🔍 使用统一真实调用测试路径 (create_llm_by_provider)")
+            logger.info("🔍 使用统一真实调用测试路径 (create_llm_by_provider)")
             return await self._ping_via_real_llm(
                 provider_str, llm_config.model_name, api_base, api_key, start_time
             )
