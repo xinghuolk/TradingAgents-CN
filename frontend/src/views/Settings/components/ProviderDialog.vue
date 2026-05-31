@@ -109,7 +109,14 @@
         class="mb-2"
       />
       <el-form-item label="密钥状态">
-        <el-tag v-if="isOauthProvider" type="success" size="small">已配置(订阅)</el-tag>
+        <template v-if="isOauthProvider">
+          <el-tag :type="props.provider?.extra_config?.has_api_key ? 'success' : 'info'" size="small">
+            {{ props.provider?.extra_config?.has_api_key ? '已配置(订阅)' : '未绑定' }}
+          </el-tag>
+          <div v-if="!props.provider?.extra_config?.has_api_key" style="font-size: 12px; color: var(--el-text-color-secondary); margin-top: 4px;">
+            请前往「订阅授权」页完成 OAuth 绑定
+          </div>
+        </template>
         <template v-else>
           <el-tag :type="(props.provider?.extra_config?.has_api_key ? 'success' : 'danger')" size="small">
             {{ props.provider?.extra_config?.has_api_key ? '已配置' : '未配置' }}
