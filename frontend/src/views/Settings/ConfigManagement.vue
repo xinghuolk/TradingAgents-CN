@@ -1777,7 +1777,7 @@ const getProviderDisplayName = (providerId: string) => {
 
 // API密钥状态相关计算属性
 const configuredProvidersCount = computed(() => {
-  return providers.value.filter(p => p.auth_kind === 'oauth' || p.extra_config?.has_api_key === true).length
+  return providers.value.filter(p => p.extra_config?.has_api_key === true).length
 })
 
 const activeProvidersCount = computed(() => {
@@ -1787,7 +1787,7 @@ const activeProvidersCount = computed(() => {
 // 获取密钥状态类型
 const getKeyStatusType = (provider: LLMProvider) => {
   if (provider.auth_kind === 'oauth') {
-    return 'success'
+    return provider.extra_config?.has_api_key ? 'success' : 'info'
   }
   if (!provider.extra_config?.has_api_key) {
     return 'info'
@@ -1798,7 +1798,7 @@ const getKeyStatusType = (provider: LLMProvider) => {
 // 获取密钥状态文本
 const getKeyStatusText = (provider: LLMProvider) => {
   if (provider.auth_kind === 'oauth') {
-    return '已配置(订阅)'
+    return provider.extra_config?.has_api_key ? '已配置(订阅)' : '未绑定'
   }
   if (!provider.extra_config?.has_api_key) {
     return '未配置'
