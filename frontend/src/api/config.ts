@@ -160,6 +160,12 @@ export interface SettingMeta {
 
 // 配置管理API
 export const configApi = {
+  // 验证配置完整性（通过统一 API 客户端发送，自动附带 Authorization 头，
+  // 便于后端解析当前用户以返回正确的 OAuth 绑定状态）
+  validateConfig(): Promise<any> {
+    return ApiClient.get('/api/system/config/validate')
+  },
+
   // 获取系统配置
   getSystemConfig(): Promise<SystemConfig> {
     return ApiClient.get('/api/config/system')

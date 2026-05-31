@@ -163,6 +163,7 @@ async def validate_config(current_user: Optional[dict] = Depends(_optional_curre
             from app.routers.oauth import get_credentials_collection
             from app.services import oauth_service as _oauth_service
             _uid = current_user.get("id", "") if isinstance(current_user, dict) else str(getattr(current_user, "id", ""))
+            _has_user = bool(_uid)
             try:
                 _bound_oauth = await _oauth_service.list_bound_providers(
                     get_credentials_collection(), _uid
@@ -188,6 +189,16 @@ async def validate_config(current_user: Optional[dict] = Depends(_optional_curre
 
                 # OAuth 供应商：是否配置取决于当前用户是否已绑定 OAuth 令牌
                 if getattr(provider, "auth_kind", "api_key") == "oauth":
+                    # 未认证调用（首次安装向导等）无法获知用户绑定状态，
+                    # 因此显示中性状态，不误报“未绑定”警告。
+                    if not _has_user:
+                        validation_item["has_api_key"] = True
+                        validation_item["status"] = "订阅类(OAuth)"
+                        validation_item["source"] = "oauth"
+                        validation_item["mongodb_configured"] = True
+                        validation_item["env_configured"] = True
+                        mongodb_validation["llm_providers"].append(validation_item)
+                        continue
                     is_bound = provider.name in _bound_oauth
                     validation_item["has_api_key"] = is_bound
                     validation_item["mongodb_configured"] = is_bound

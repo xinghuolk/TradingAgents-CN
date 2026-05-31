@@ -144,3 +144,152 @@ async def test_list_bound_providers_empty_when_none_bound():
 
     result = await list_bound_providers(_FakeCollection(), "u_nobody")
     assert result == set()
+
+
+# ---------------------------------------------------------------------------
+# validate_config: OAuth provider status vs. authentication state
+# ---------------------------------------------------------------------------
+
+
+def _run_validate_config(monkeypatch, *, current_user, bound):
+    """Drive app.routers.system_config.validate_config with all heavy
+    collaborators stubbed so it deterministically reaches the OAuth branch
+    with a single active OAuth provider named 'claude-code'.
+
+    `bound` is the set returned by list_bound_providers (only consulted on the
+    authenticated path). Returns the mongodb_validation dict from the response.
+    """
+    import app.routers.system_config as scmod
+    import app.core.config_bridge as bridge_mod
+    import app.core.startup_validator as sv_mod
+    import app.services.oauth_service as oauth_service_mod
+    import app.routers.oauth as oauth_router_mod
+    import pymongo
+
+    monkeypatch.setattr(bridge_mod, "bridge_config_to_env", lambda *a, **k: None)
+
+    # StartupValidator().validate() must expose .success and the *_configs lists.
+    class _FakeValidationResult:
+        success = True
+        missing_required = []
+        missing_recommended = []
+        invalid_configs = []
+        warnings = []
+
+    class _FakeStartupValidator:
+        def validate(self):
+            return _FakeValidationResult()
+
+    monkeypatch.setattr(sv_mod, "StartupValidator", _FakeStartupValidator)
+
+    provider_doc = {
+        "name": "claude-code",
+        "display_name": "Claude Code",
+        "auth_kind": "oauth",
+        "is_active": True,
+    }
+
+    class _FakeColl:
+        def find(self, *a, **k):
+            return [provider_doc]
+
+    class _FakeDB:
+        """Supports both ``db.llm_providers`` and ``db[name]`` access."""
+        def __getattr__(self, _name):
+            return _FakeColl()
+
+        def __getitem__(self, _name):
+            return _FakeColl()
+
+    class _FakeMongoClient:
+        def __init__(self, *a, **k):
+            pass
+
+        def __getitem__(self, _name):
+            return _FakeDB()
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(pymongo, "MongoClient", _FakeMongoClient)
+
+    monkeypatch.setattr(
+        oauth_router_mod, "get_credentials_collection", lambda: object(),
+        raising=False,
+    )
+
+    async def _list_bound(*a, **k):
+        return set(bound)
+
+    monkeypatch.setattr(oauth_service_mod, "list_bound_providers", _list_bound)
+
+    # config_service.get_system_config() is awaited for data-source validation;
+    # return None so that section is skipped harmlessly.
+    from app.services import config_service as cs_mod
+
+    async def _no_system_config():
+        return None
+
+    monkeypatch.setattr(cs_mod.config_service, "get_system_config", _no_system_config)
+
+    import asyncio
+    result = asyncio.get_event_loop().run_until_complete(
+        scmod.validate_config(current_user=current_user)
+    ) if False else None
+    # validate_config is async; call it directly from the async test instead.
+    return scmod
+
+
+@pytest.mark.asyncio
+async def test_validate_config_unauthenticated_oauth_is_neutral(monkeypatch):
+    """Unauthenticated caller (current_user=None): OAuth provider must show a
+    NEUTRAL subscription status and MUST NOT emit a 未绑定 warning."""
+    scmod = _run_validate_config(monkeypatch, current_user=None, bound=set())
+
+    result = await scmod.validate_config(current_user=None)
+    mongo = result["data"]["mongodb_validation"]
+    items = {it["name"]: it for it in mongo["llm_providers"]}
+    assert "claude-code" in items, mongo
+    item = items["claude-code"]
+    assert item["status"] == "订阅类(OAuth)"
+    assert item["has_api_key"] is True
+    assert item["source"] == "oauth"
+    assert not any("未完成 OAuth 绑定" in w for w in mongo["warnings"])
+
+
+@pytest.mark.asyncio
+async def test_validate_config_authenticated_unbound_oauth_warns(monkeypatch):
+    """Authenticated caller whose OAuth provider is NOT bound: status must be
+    '未绑定' and a 未绑定 warning MUST be emitted."""
+    scmod = _run_validate_config(monkeypatch, current_user={"id": "u1"}, bound=set())
+
+    result = await scmod.validate_config(current_user={"id": "u1"})
+    mongo = result["data"]["mongodb_validation"]
+    items = {it["name"]: it for it in mongo["llm_providers"]}
+    item = items["claude-code"]
+    assert item["status"] == "未绑定"
+    assert item["has_api_key"] is False
+    assert any("未完成 OAuth 绑定" in w for w in mongo["warnings"])
+
+
+@pytest.mark.asyncio
+async def test_validate_config_authenticated_bound_oauth_ok(monkeypatch):
+    """Authenticated caller whose OAuth provider IS bound: status must be
+    '已配置(订阅)' and NO 未绑定 warning."""
+    scmod = _run_validate_config(
+        monkeypatch, current_user={"id": "u1"}, bound={"claude-code"}
+    )
+
+    result = await scmod.validate_config(current_user={"id": "u1"})
+    mongo = result["data"]["mongodb_validation"]
+    items = {it["name"]: it for it in mongo["llm_providers"]}
+    item = items["claude-code"]
+    assert item["status"] == "已配置(订阅)"
+    assert item["has_api_key"] is True
+    assert not any("未完成 OAuth 绑定" in w for w in mongo["warnings"])
+
+
+if __name__ == "__main__":
+    import sys
+    import pytest
+    raise SystemExit(pytest.main([__file__, "-v"]))
