@@ -875,7 +875,7 @@ class ConfigService:
             print(f"更新LLM配置失败: {e}")
             return False
     
-    async def test_llm_config(self, llm_config: LLMConfig) -> Dict[str, Any]:
+    async def test_llm_config(self, llm_config: LLMConfig, user_id: Optional[str] = None) -> Dict[str, Any]:
         """测试大模型配置 - 真实调用API进行验证"""
         start_time = time.time()
         try:
@@ -884,15 +884,10 @@ class ConfigService:
             # 获取 provider 字符串值（兼容枚举和字符串）
             provider_str = llm_config.provider.value if hasattr(llm_config.provider, 'value') else str(llm_config.provider)
 
-            # OAuth 订阅类供应商（codex/claude_code）无需 API 密钥测试
+            # OAuth 订阅类供应商（codex/claude_code）做真实绑定解析 + 推理 ping
             from tradingagents.utils.oauth_providers import OAUTH_SUBSCRIPTION_PROVIDER_NAMES
             if provider_str in OAUTH_SUBSCRIPTION_PROVIDER_NAMES:
-                return {
-                    "success": True,
-                    "message": "OAuth 订阅模型（codex/claude_code）通过订阅授权使用，无需 API 密钥测试；请在「订阅授权」页确认已绑定。",
-                    "response_time": 0.0,
-                    "details": None,
-                }
+                return await self._test_oauth_model(llm_config, provider_str, user_id, start_time)
 
             logger.info(f"🧪 测试大模型配置: {provider_str} - {llm_config.model_name}")
             logger.info(f"📍 API基础URL (模型配置): {llm_config.api_base}")
@@ -1117,6 +1112,88 @@ class ConfigService:
                 "details": None
             }
     
+    async def _test_oauth_model(
+        self,
+        llm_config: LLMConfig,
+        provider_str: str,
+        user_id: Optional[str],
+        start_time: float,
+    ) -> Dict[str, Any]:
+        """对 OAuth 订阅模型(codex/claude_code)做真实检查。
+
+        - 解析当前用户的 OAuth 令牌(校验绑定 + 刷新)；未绑定/过期则返回失败及真实原因。
+        - codex: 用解析到的令牌构建真实适配器并做一次最小推理("Hi", 极小 max_tokens)。
+        - claude_code: 其订阅推理接口(/v1/messages)受 Anthropic 限制(诊断专用)，
+          真实 ping 会误报失败，故仅做令牌有效性验证。
+        """
+        if not user_id:
+            return {
+                "success": False,
+                "message": "无法确定当前用户，无法测试 OAuth 订阅模型",
+                "response_time": round(time.time() - start_time, 3),
+                "details": None,
+            }
+
+        # 1) 解析令牌(校验绑定 + 刷新)
+        try:
+            from app.routers.oauth import get_credentials_collection
+            from app.services import oauth_service
+            token = await oauth_service.resolve(
+                get_credentials_collection(), str(user_id), provider_str
+            )
+        except Exception as exc:
+            return {
+                "success": False,
+                "message": f"OAuth 凭据无效或未绑定（请前往「订阅授权」页）：{exc}",
+                "response_time": round(time.time() - start_time, 3),
+                "details": None,
+            }
+
+        # 2) claude_code: 订阅推理接口受 Anthropic 限制 → 仅做令牌验证
+        if provider_str == "claude_code":
+            return {
+                "success": True,
+                "message": (
+                    "Claude Code 已绑定，凭据有效。注意：其订阅推理接口受 Anthropic "
+                    "限制，无法完整 ping 验证。"
+                ),
+                "response_time": round(time.time() - start_time, 3),
+                "details": {"verified": "token_only"},
+            }
+
+        # 3) codex: 通过适配器做一次最小推理 ping
+        try:
+            from tradingagents.graph.trading_graph import create_llm_by_provider
+            import asyncio
+            llm = create_llm_by_provider(
+                provider=provider_str,
+                model=llm_config.model_name,
+                backend_url="",
+                temperature=0,
+                max_tokens=16,
+                timeout=30,
+                api_key=token,
+            )
+
+            def _ping():
+                return llm.invoke("Hi")
+
+            resp = await asyncio.to_thread(_ping)
+            text = getattr(resp, "content", str(resp))
+            return {
+                "success": True,
+                "message": f"{provider_str} 订阅可用，模型已响应。",
+                "response_time": round(time.time() - start_time, 3),
+                "details": {"sample": str(text)[:80]},
+            }
+        except Exception as exc:
+            return {
+                "success": False,
+                "message": f"{provider_str} 订阅调用失败：{exc}",
+                "response_time": round(time.time() - start_time, 3),
+                "details": None,
+            }
+
     def _truncate_api_key(self, api_key: str, prefix_len: int = 6, suffix_len: int = 6) -> str:
         """
         截断 API Key 用于显示
