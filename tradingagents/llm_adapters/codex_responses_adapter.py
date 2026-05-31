@@ -279,6 +279,52 @@ def _responses_tools_from_chat(tools: Optional[List[Dict[str, Any]]]) -> Optiona
 # Adapter — drop-in replacement for client.chat.completions
 # ---------------------------------------------------------------------------
 
+class _CodexRawResponse:
+    """Minimal mimic of the OpenAI SDK's raw-response wrapper.
+
+    Newer ``langchain_openai`` releases capture response headers/usage by
+    calling ``self.client.with_raw_response.create(**payload)`` instead of the
+    plain ``self.client.create(**payload)``. The OpenAI SDK returns a
+    ``LegacyAPIResponse``/``APIResponse`` object whose ``.parse()`` yields the
+    deserialized ``ChatCompletion`` and whose ``.headers`` exposes the HTTP
+    response headers. langchain then does roughly::
+
+        raw = self.client.with_raw_response.create(**payload)
+        response = raw.parse()
+        generation_info = {"headers": dict(raw.headers)}
+
+    Our Codex shim has no real HTTP response (it streams the Responses API and
+    reassembles a chat.completions-shaped object), so we wrap that reassembled
+    object and surface empty headers. ``parse()`` returns the SAME object the
+    normal ``.create()`` path returns, keeping both code paths identical.
+    """
+
+    def __init__(self, completion: Any):
+        self._completion = completion
+        # langchain reads ``.headers`` (a mapping). We have none, so expose an
+        # empty mapping rather than ``None`` to avoid ``dict(None)`` blowing up.
+        self.headers: Dict[str, str] = {}
+
+    def parse(self) -> Any:
+        return self._completion
+
+
+class _CodexRawResponseNamespace:
+    """The ``with_raw_response`` namespace object.
+
+    Mirrors ``client.chat.completions.with_raw_response`` from the OpenAI SDK:
+    a thin holder whose ``.create(**kwargs)`` issues the request and returns a
+    raw-response wrapper. We delegate straight back to the adapter's existing
+    ``.create()`` (keeping the request logic DRY) and wrap the result.
+    """
+
+    def __init__(self, adapter: "_CodexCompletionsAdapter"):
+        self._adapter = adapter
+
+    def create(self, **kwargs: Any) -> _CodexRawResponse:
+        return _CodexRawResponse(self._adapter.create(**kwargs))
+
+
 class _CodexCompletionsAdapter:
     """Drop-in shim accepting ``chat.completions.create(**kwargs)`` calls.
 
@@ -291,6 +337,18 @@ class _CodexCompletionsAdapter:
     def __init__(self, real_client: Any, model: str):
         self._client = real_client
         self._model = model
+
+    @property
+    def with_raw_response(self) -> _CodexRawResponseNamespace:
+        """Expose the OpenAI-SDK-compatible raw-response surface.
+
+        Some ``langchain_openai`` versions call
+        ``self.client.with_raw_response.create(...)`` (to read response headers)
+        instead of ``self.client.create(...)``. Without this property those
+        versions raise ``AttributeError: '_CodexCompletionsAdapter' object has
+        no attribute 'with_raw_response'`` on the first ``invoke()``.
+        """
+        return _CodexRawResponseNamespace(self)
 
     def create(self, **kwargs: Any) -> Any:
         messages = kwargs.get("messages") or []
@@ -442,6 +500,22 @@ class _CodexChatShim:
         self.completions = adapter
 
 
+class _AsyncCodexRawResponseNamespace:
+    """Async counterpart of ``_CodexRawResponseNamespace``.
+
+    Mirrors ``async_client.chat.completions.with_raw_response`` so async
+    ``_agenerate`` paths that call ``await ...with_raw_response.create(...)``
+    keep working. Delegates to the async adapter's ``.create`` and wraps the
+    awaited result in the same ``_CodexRawResponse`` shape.
+    """
+
+    def __init__(self, adapter: "_AsyncCodexCompletionsAdapter"):
+        self._adapter = adapter
+
+    async def create(self, **kwargs: Any) -> _CodexRawResponse:
+        return _CodexRawResponse(await self._adapter.create(**kwargs))
+
+
 class _AsyncCodexCompletionsAdapter:
     """Async wrapper that runs the sync adapter via ``asyncio.to_thread``.
 
@@ -453,6 +527,11 @@ class _AsyncCodexCompletionsAdapter:
 
     def __init__(self, sync_adapter: _CodexCompletionsAdapter):
         self._sync = sync_adapter
+
+    @property
+    def with_raw_response(self) -> _AsyncCodexRawResponseNamespace:
+        """Async raw-response surface; see ``_CodexCompletionsAdapter``."""
+        return _AsyncCodexRawResponseNamespace(self)
 
     async def create(self, **kwargs: Any) -> Any:
         return await asyncio.to_thread(self._sync.create, **kwargs)
