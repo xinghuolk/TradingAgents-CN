@@ -35,31 +35,13 @@ def _build():
     )
 
 
-class _FakeStream:
-    """Minimal stand-in for ``client.responses.stream(...)``'s context manager."""
-
-    def __init__(self, events, final):
-        self._events = events
-        self._final = final
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *exc):
-        return False
-
-    def __iter__(self):
-        return iter(self._events)
-
-    def get_final_response(self):
-        return self._final
-
-
-def _patch_stream(llm, events, final):
+def _patch_create(llm, final):
+    # The adapter calls NON-streaming ``responses.create(**kwargs)`` and reads
+    # ``final.output`` directly (see codex_responses_adapter._CodexCompletionsAdapter.create).
     # Replace the REAL openai client's responses surface inside the adapter so no
     # HTTP happens. ``llm.client`` is the _CodexCompletionsAdapter; ``._client``
     # is the underlying openai.OpenAI we stub.
-    llm.client._client.responses = SimpleNamespace(stream=lambda **kw: _FakeStream(events, final))
+    llm.client._client.responses = SimpleNamespace(create=lambda **kw: final)
 
 
 def _final(output):
@@ -93,7 +75,7 @@ def test_invoke_routes_through_adapter_normal_text():
             content=[SimpleNamespace(type="output_text", text="OK")],
         )
     ])
-    _patch_stream(llm, [SimpleNamespace(type="response.output_text.delta", delta="OK")], final)
+    _patch_create(llm, final)
     resp = llm.invoke("Hi, please reply with OK.")
     assert resp.content == "OK"
 
@@ -103,6 +85,6 @@ def test_invoke_handles_empty_or_none_output(output):
     """Reasoning-only / empty replies must not raise (the chat.completions path
     yields empty content rather than crashing)."""
     llm = _build()
-    _patch_stream(llm, [], _final(output))
+    _patch_create(llm, _final(output))
     resp = llm.invoke("Hi")
     assert resp.content == ""

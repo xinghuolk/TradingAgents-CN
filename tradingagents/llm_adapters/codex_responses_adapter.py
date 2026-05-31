@@ -401,36 +401,28 @@ class _CodexCompletionsAdapter:
                 resp_kwargs["reasoning"] = {"effort": effort, "summary": "auto"}
                 resp_kwargs["include"] = ["reasoning.encrypted_content"]
 
-        # 3. Stream the Responses API call, collecting items + text deltas.
-        collected_text: List[str] = []
-        collected_items: List[Any] = []
-        has_function_calls = False
+        # 3. Call the Responses API NON-streaming.
+        #
+        # We previously used ``self._client.responses.stream(...)``. That helper
+        # routes the SSE event stream through openai's streaming parser
+        # (``ResponseStreamState`` in ``openai/lib/streaming/responses/_responses.py``),
+        # which raises ``TypeError: 'NoneType' object is not iterable`` on Codex's
+        # event stream in openai>=1.x — the HTTP call returns 200 OK but parsing
+        # the stream blows up (confirmed via production traceback at
+        # ``_responses.py`` ``handle_event``/``accumulate_event``).
+        #
+        # The Codex backend accepts plain (non-streaming) Responses calls — the
+        # sibling financial-report-llm-extractor talks to the SAME
+        # ``chatgpt.com/backend-api/codex`` endpoint via langchain's native
+        # non-streaming Responses path and works. ``responses.create(...)``
+        # deserializes the final ``Response`` with pydantic instead of the SSE
+        # state machine, so it sidesteps the broken streaming parser entirely
+        # while returning the same ``.output`` we walk below.
+        final = self._client.responses.create(**resp_kwargs)
 
-        with self._client.responses.stream(**resp_kwargs) as stream:
-            for event in stream:
-                etype = getattr(event, "type", "") or ""
-                if "output_text.delta" in etype:
-                    delta = getattr(event, "delta", "")
-                    if delta:
-                        collected_text.append(delta)
-                elif etype == "response.output_item.done":
-                    item = getattr(event, "item", None)
-                    if item is not None:
-                        collected_items.append(item)
-                elif "function_call" in etype:
-                    has_function_calls = True
-            final = stream.get_final_response()
-
-        # 4. Backfill final.output when the SDK leaves it empty after streaming.
+        # 4. Read the response output (empty list when absent so the walk below
+        #    is safe for reasoning-only / empty replies).
         output = getattr(final, "output", None) or []
-        if not output:
-            if collected_items:
-                output = collected_items
-            elif collected_text and not has_function_calls:
-                output = [SimpleNamespace(
-                    type="message", role="assistant", status="completed",
-                    content=[SimpleNamespace(type="output_text", text="".join(collected_text))],
-                )]
 
         # 5. Walk the output and rebuild chat.completions text + tool_calls.
         def _item_get(obj: Any, key: str, default: Any = None) -> Any:
