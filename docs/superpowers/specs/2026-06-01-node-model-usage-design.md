@@ -112,16 +112,16 @@ Add `model_usage` to analysis results and report documents:
 Create a small runtime module, `tradingagents/graph/model_usage.py`, responsible for:
 
 - Tracking the current `task_id` and `node_name` with `contextvars.ContextVar`.
-- Providing `model_usage_context(task_id, node_name)` to wrap node execution.
+- Providing `model_usage_context(task_id=None, node_name=None)` to wrap whole-run and per-node execution.
 - Providing `record_llm_call(...)` for LLM wrappers to report actual usage.
 - Providing `get_model_usage_snapshot(task_id)` to return aggregate data.
 - Clearing temporary records in a `finally` block after `TradingAgentsGraph.propagate()` copies the snapshot into final state.
 
-The in-memory aggregate store must be keyed by an explicit analysis run id and protected against concurrent analysis tasks. Service entry points should pass the real task id into `TradingAgentsGraph.propagate(..., task_id=task_id)`; `None` must not be used as a shared aggregate key. If a non-service caller omits `task_id`, `propagate()` should create a unique local run id and still clean it up.
+The in-memory aggregate store must be keyed by an explicit analysis run id and protected against concurrent analysis tasks. Service entry points should pass the real task id into `TradingAgentsGraph.propagate(..., task_id=task_id)`; `None` must not be used as a shared aggregate key. If a non-service caller omits `task_id`, `propagate()` should create a unique local run id and still clean it up. `propagate()` should establish the whole-run context once, then graph node wrappers should set only `node_name` and inherit the current run id from the context variable.
 
 Wrap graph node callables when adding them in `GraphSetup.setup_graph()`, and pass the canonical node key into `model_usage_context(...)`. This is more reliable than trying to infer the current node from `graph.stream()` output, because stream chunks are yielded after node execution. Tool nodes such as `tools_value` should use the same canonical key as their owning analyst so tool-triggered internal LLM work appears beside the report module it supports.
 
-Wrap LLM instances returned by `create_llm_by_provider()` with a lightweight proxy that records:
+Wrap LLM instances returned by `create_llm_by_provider()` with a lightweight proxy or method-level wrapper that records:
 
 - provider
 - model
@@ -130,7 +130,7 @@ Wrap LLM instances returned by `create_llm_by_provider()` with a lightweight pro
 - output tokens
 - cost when exposed by adapter metadata
 
-The wrapper must preserve LangChain behavior and must not break `bind_tools()` or runnable composition. It should record direct `invoke`/`ainvoke`/`stream`/`astream` calls, wrap objects returned by `bind_tools(...)` so bound-tool invocations are still recorded, and keep delegating unknown attributes to the wrapped object. Usage extraction should check common LangChain/OpenAI locations such as `AIMessage.usage_metadata`, `response_metadata.token_usage`, `llm_output.token_usage`, raw response usage, and adapter-specific metadata. Calls without token/cost metadata should still record provider/model/duration and mark the node partial.
+The wrapper must preserve LangChain behavior and must not break class-sensitive code, `bind_tools()`, or runnable composition. A method-level wrapper that instruments the original runnable object is acceptable if it is safer than a standalone proxy. It should record direct `invoke`/`ainvoke`/`stream`/`astream` calls, wrap objects returned by `bind_tools(...)` so bound-tool invocations are still recorded, and keep delegating unknown attributes to the wrapped object when a proxy is used. Usage extraction should check common LangChain/OpenAI locations such as `AIMessage.usage_metadata`, `response_metadata.token_usage`, `llm_output.token_usage`, raw response usage, and adapter-specific metadata. Calls without token/cost metadata should still record provider/model/duration and mark the node partial.
 
 The wrapper must preserve the legacy `model_info` value. `TradingAgentsGraph` should either unwrap the original LLM when deriving `model_info` or use a helper that reports the original class/model instead of the wrapper class.
 
