@@ -249,7 +249,31 @@ def test_pdf_resolver_uses_report_collector_pdf_info(tmp_path):
         pdf_root="",
     ), report_collector=FakeReportCollector())
 
-    resolved = adapter.resolve_pdf(FakePdfQuery(company="00001", market="HK", period_end="2025-12-31"))
+    resolved = adapter.resolve_pdf(
+        FakePdfQuery(company="00001", market="HK", period_end="2025-12-31")
+    )
+
+    assert resolved == pdf
+
+
+def test_pdf_resolver_finds_hk_extractor_annual_pdf_layout(tmp_path):
+    pdf = tmp_path / "hk_stocks" / "00001" / "annual" / "2025_annual_en.pdf"
+    pdf.parent.mkdir(parents=True)
+    pdf.write_text("pdf", encoding="utf-8")
+    adapter = FinancialReportAdapter(config=FinancialReportClientConfig(
+        enabled=True,
+        cache_only=False,
+        force_refresh=False,
+        include_llm_supplement=True,
+        allow_llm_models=("codex",),
+        extractor_cache_root="",
+        llm_config_path="/tmp/llm.json",
+        pdf_root=str(tmp_path),
+    ))
+
+    resolved = adapter.resolve_pdf(
+        FakePdfQuery(company="00001", market="HK", period_end="2025-12-31")
+    )
 
     assert resolved == pdf
 

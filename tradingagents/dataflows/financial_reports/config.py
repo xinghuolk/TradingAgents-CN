@@ -17,6 +17,26 @@ def _split_csv(raw: str) -> tuple[str, ...]:
     return tuple(item.strip() for item in raw.split(",") if item.strip())
 
 
+def _remap_extractor_path_for_docker(raw: str) -> str:
+    """Map host extractor paths from .env to the Docker bind mount path."""
+    if not raw or not _env_bool("DOCKER_CONTAINER", False):
+        return raw
+
+    host_root = os.getenv("FINANCIAL_REPORT_EXTRACTOR_HOST_ROOT", "").rstrip("/")
+    if not host_root:
+        return raw
+
+    if raw != host_root and not raw.startswith(f"{host_root}/"):
+        return raw
+
+    container_root = os.getenv(
+        "FINANCIAL_REPORT_EXTRACTOR_CONTAINER_ROOT",
+        "/app/external/financial-report-llm-extractor",
+    ).rstrip("/")
+    suffix = raw[len(host_root):].lstrip("/")
+    return f"{container_root}/{suffix}" if suffix else container_root
+
+
 @dataclass(frozen=True)
 class FinancialReportClientConfig:
     enabled: bool
@@ -36,7 +56,13 @@ def get_financial_report_client_config() -> FinancialReportClientConfig:
         force_refresh=_env_bool("FINANCIAL_REPORT_FORCE_REFRESH", False),
         include_llm_supplement=_env_bool("FINANCIAL_REPORT_INCLUDE_LLM_SUPPLEMENT", False),
         allow_llm_models=_split_csv(os.getenv("FINANCIAL_REPORT_ALLOW_LLM_MODELS", "gpt-5.5,codex")),
-        extractor_cache_root=os.getenv("FINANCIAL_REPORT_EXTRACTOR_CACHE_ROOT", ""),
-        llm_config_path=os.getenv("FINANCIAL_REPORT_LLM_CONFIG_PATH", ""),
-        pdf_root=os.getenv("FINANCIAL_REPORT_PDF_ROOT", ""),
+        extractor_cache_root=_remap_extractor_path_for_docker(
+            os.getenv("FINANCIAL_REPORT_EXTRACTOR_CACHE_ROOT", "")
+        ),
+        llm_config_path=_remap_extractor_path_for_docker(
+            os.getenv("FINANCIAL_REPORT_LLM_CONFIG_PATH", "")
+        ),
+        pdf_root=_remap_extractor_path_for_docker(
+            os.getenv("FINANCIAL_REPORT_PDF_ROOT", "")
+        ),
     )

@@ -61,6 +61,51 @@ def _optional_path(raw: str) -> Path | None:
     return Path(raw) if raw else None
 
 
+def _extractor_market_dir(market: str) -> str:
+    normalized = str(market or "").strip().upper()
+    if normalized in {"HK", "HKG"}:
+        return "hk_stocks"
+    if normalized in {"CN", "A", "CHINA"}:
+        return "cn_stocks"
+    return f"{normalized.lower()}_stocks"
+
+
+def _annual_pdf_names(market: str, period_end: str) -> tuple[str, ...]:
+    year = str(period_end)[:4]
+    normalized = str(market or "").strip().upper()
+    if normalized in {"HK", "HKG"}:
+        return (f"{year}_annual_en.pdf", f"{year}_annual_zh.pdf")
+    if normalized in {"CN", "A", "CHINA"}:
+        return (
+            f"{year}_年度报告.pdf",
+            f"{year}_annual_zh.pdf",
+            f"{year}_annual_en.pdf",
+        )
+    return (f"{year}_annual_en.pdf", f"{year}_annual_zh.pdf", f"{year}.pdf")
+
+
+def _pdf_candidates(root: Path, query: Any) -> tuple[Path, ...]:
+    market = str(query.market)
+    company = str(query.company)
+    period_end = str(query.period_end)
+    candidates: list[Path] = [
+        root / market.lower() / company / f"{period_end}.pdf",
+        root / market.upper() / company / f"{period_end}.pdf",
+        root / company / f"{period_end}.pdf",
+    ]
+
+    annual_dirs = (
+        root / _extractor_market_dir(market) / company / "annual",
+        root / company / "annual",
+        root / "annual",
+        root,
+    )
+    for annual_dir in annual_dirs:
+        for filename in _annual_pdf_names(market, period_end):
+            candidates.append(annual_dir / filename)
+    return tuple(candidates)
+
+
 def resolve_injected_codex_token(deep_config: dict | None = None) -> str | None:
     """Per-request codex OAuth token to hand the extractor.
 
@@ -98,12 +143,7 @@ class FinancialReportAdapter:
     def resolve_pdf(self, query: Any) -> Path | None:
         if self.config.pdf_root:
             root = Path(self.config.pdf_root)
-            candidates = (
-                root / str(query.market).lower() / str(query.company) / f"{query.period_end}.pdf",
-                root / str(query.market).upper() / str(query.company) / f"{query.period_end}.pdf",
-                root / str(query.company) / f"{query.period_end}.pdf",
-            )
-            for candidate in candidates:
+            for candidate in _pdf_candidates(root, query):
                 if candidate.exists():
                     return candidate
 

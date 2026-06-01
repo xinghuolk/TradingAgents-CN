@@ -46,3 +46,36 @@ def test_env_config_ignores_empty_llm_model_entries(monkeypatch):
     config = get_financial_report_client_config()
 
     assert config.allow_llm_models == ("codex", "gpt-5.5")
+
+
+def test_env_config_remaps_extractor_host_paths_inside_docker(monkeypatch):
+    monkeypatch.setenv("DOCKER_CONTAINER", "true")
+    monkeypatch.setenv(
+        "FINANCIAL_REPORT_EXTRACTOR_HOST_ROOT",
+        "/home/like/git/financial-report-llm-extractor",
+    )
+    monkeypatch.setenv(
+        "FINANCIAL_REPORT_EXTRACTOR_CONTAINER_ROOT",
+        "/app/external/financial-report-llm-extractor",
+    )
+    monkeypatch.setenv(
+        "FINANCIAL_REPORT_PDF_ROOT",
+        "/home/like/git/financial-report-llm-extractor/downloads",
+    )
+    monkeypatch.setenv(
+        "FINANCIAL_REPORT_EXTRACTOR_CACHE_ROOT",
+        "/home/like/git/financial-report-llm-extractor/tmp/.cache",
+    )
+    monkeypatch.setenv(
+        "FINANCIAL_REPORT_LLM_CONFIG_PATH",
+        "/home/like/git/financial-report-llm-extractor/tmp/runs/quick_validation/00001_2025_en/llm_config_deepseek.json",
+    )
+
+    config = get_financial_report_client_config()
+
+    assert config.pdf_root == "/app/external/financial-report-llm-extractor/downloads"
+    assert config.extractor_cache_root == "/app/external/financial-report-llm-extractor/tmp/.cache"
+    assert config.llm_config_path == (
+        "/app/external/financial-report-llm-extractor/tmp/runs/quick_validation/"
+        "00001_2025_en/llm_config_deepseek.json"
+    )
