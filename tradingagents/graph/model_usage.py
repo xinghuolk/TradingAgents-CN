@@ -59,6 +59,8 @@ _current_node_name: ContextVar[str | None] = ContextVar(
 )
 
 _usage_lock = RLock()
+# The graph runner is expected to snapshot task usage and clear it in a finally
+# block so completed or failed runs do not leave stale task aggregates behind.
 _usage_by_task: dict[str, dict[str, dict[str, Any]]] = {}
 
 
@@ -98,29 +100,34 @@ def record_llm_call(
     if not task_id or not node_name:
         return
 
+    normalized_currency = _normalize_currency(currency)
     node_key = canonical_node_key(node_name)
     with _usage_lock:
         task_usage = _usage_by_task.setdefault(task_id, {})
         node_usage = task_usage.setdefault(node_key, _empty_node_aggregate())
         node_usage["calls"] += 1
-        node_usage["input_tokens"] += input_tokens or 0
-        node_usage["output_tokens"] += output_tokens or 0
-        node_usage["duration_seconds"] += duration_seconds or 0
+        node_usage["input_tokens"] += input_tokens if input_tokens is not None else 0
+        node_usage["output_tokens"] += (
+            output_tokens if output_tokens is not None else 0
+        )
+        node_usage["duration_seconds"] += (
+            duration_seconds if duration_seconds is not None else 0
+        )
         if provider:
             node_usage["providers"].add(provider)
         if model:
             node_usage["models"].add(model)
-        if cost is not None and currency:
-            node_usage["costs_by_currency"][currency] = (
-                node_usage["costs_by_currency"].get(currency, 0) + cost
+        if cost is not None and normalized_currency is not None:
+            node_usage["costs_by_currency"][normalized_currency] = (
+                node_usage["costs_by_currency"].get(normalized_currency, 0) + cost
             )
-        if cost is None or currency is None:
+        if cost is None or normalized_currency is None:
             node_usage["missing_cost_metadata"] = True
         if (
             input_tokens is None
             or output_tokens is None
             or cost is None
-            or currency is None
+            or normalized_currency is None
         ):
             node_usage["partial"] = True
 
@@ -216,3 +223,10 @@ def _single_or_mixed(values: list[str]) -> str | None:
     if len(values) > 1:
         return "mixed"
     return None
+
+
+def _normalize_currency(currency: str | None) -> str | None:
+    if currency is None:
+        return None
+    normalized = currency.strip()
+    return normalized or None

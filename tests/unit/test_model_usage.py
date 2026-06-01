@@ -118,3 +118,52 @@ def test_missing_cost_metadata_suppresses_cost_convenience_fields():
     assert node["cost"] is None
     assert node["currency"] is None
     assert node["costs_by_currency"] == {"CNY": 0.03}
+
+
+def test_blank_currency_with_cost_marks_partial_without_convenience_cost():
+    with model_usage_context(task_id="task-6", node_name="Trader"):
+        record_llm_call(
+            provider="codex",
+            model="gpt-5.5",
+            duration_seconds=0.2,
+            input_tokens=10,
+            output_tokens=5,
+            cost=0.03,
+            currency="CNY",
+        )
+        record_llm_call(
+            provider="codex",
+            model="gpt-5.5",
+            duration_seconds=0.2,
+            input_tokens=10,
+            output_tokens=5,
+            cost=0.04,
+            currency="  ",
+        )
+
+    node = get_model_usage_snapshot("task-6")["nodes"]["trader"]
+    assert node["partial"] is True
+    assert node["cost"] is None
+    assert node["currency"] is None
+    assert node["costs_by_currency"] == {"CNY": 0.03}
+
+
+def test_record_llm_call_noops_without_task_or_node_context():
+    record_llm_call(provider="codex", model="gpt-5.5", duration_seconds=0.1)
+
+    with model_usage_context(task_id="task-7"):
+        record_llm_call(provider="codex", model="gpt-5.5", duration_seconds=0.1)
+
+    assert get_model_usage_snapshot("task-7")["summary"]["total_calls"] == 0
+
+
+def test_nested_model_usage_context_restores_previous_node_context():
+    with model_usage_context(task_id="task-8", node_name="Market Analyst"):
+        record_llm_call(provider="codex", model="gpt-5.5", duration_seconds=0.1)
+        with model_usage_context(node_name="Value Analyst"):
+            record_llm_call(provider="codex", model="gpt-5.5", duration_seconds=0.1)
+        record_llm_call(provider="codex", model="gpt-5.5", duration_seconds=0.1)
+
+    nodes = get_model_usage_snapshot("task-8")["nodes"]
+    assert nodes["market_analyst"]["calls"] == 2
+    assert nodes["value_analyst"]["calls"] == 1
