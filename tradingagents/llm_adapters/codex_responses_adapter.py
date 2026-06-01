@@ -410,12 +410,12 @@ class _CodexCompletionsAdapter:
         # routes the SSE events through openai's streaming parser
         # (``ResponseStreamState``).
         #
-        # This previously crashed with ``TypeError: 'NoneType' object is not
-        # iterable`` inside the parser on **openai 1.86.0**. The fix is the
-        # openai 2.x upgrade (anchored on 2.24.0, the version the sibling
-        # ``hermes-agent`` project pins and runs the same ``responses.stream``
-        # path against Codex successfully): its Responses streaming parser is
-        # compatible with Codex's SSE event stream.
+        # The SDK helper parses terminal events internally. Some Codex replies
+        # have ``response.completed`` with ``response.output=None``; SDK versions
+        # through at least 2.38.0 still raise ``TypeError: 'NoneType' object is
+        # not iterable`` before callers can inspect the raw event. We catch that
+        # specific parser failure and fall back to ``responses.create(stream=True)``
+        # below, where we can collect terminal events and repair empty output.
         #
         # We accumulate text deltas and completed output items ourselves, then
         # ask the stream for the final assembled ``Response``. If the SDK didn't
@@ -424,20 +424,32 @@ class _CodexCompletionsAdapter:
         collected_text: List[str] = []
         collected_items: List[Any] = []
         has_function_calls = False
-        with self._client.responses.stream(**resp_kwargs) as stream:
-            for event in stream:
-                etype = getattr(event, "type", "") or ""
-                if "output_text.delta" in etype:
-                    d = getattr(event, "delta", "")
-                    if d:
-                        collected_text.append(d)
-                elif etype == "response.output_item.done":
-                    item = getattr(event, "item", None)
-                    if item is not None:
-                        collected_items.append(item)
-                elif "function_call" in etype:
-                    has_function_calls = True
-            final = stream.get_final_response()
+        try:
+            with self._client.responses.stream(**resp_kwargs) as stream:
+                for event in stream:
+                    etype = getattr(event, "type", "") or ""
+                    if "output_text.delta" in etype:
+                        d = getattr(event, "delta", "")
+                        if d:
+                            collected_text.append(d)
+                    elif etype == "response.output_item.done":
+                        item = getattr(event, "item", None)
+                        if item is not None:
+                            collected_items.append(item)
+                    elif "function_call" in etype:
+                        has_function_calls = True
+                final = stream.get_final_response()
+        except TypeError as exc:
+            if "'NoneType' object is not iterable" not in str(exc):
+                raise
+            logger.warning(
+                "Codex responses.stream parser failed on response.output=None; "
+                "falling back to responses.create(stream=True)."
+            )
+            final = self._create_stream_fallback(resp_kwargs)
+            collected_text = []
+            collected_items = []
+            has_function_calls = False
 
         # 4. Read the response output (empty list when absent so the walk below
         #    is safe for reasoning-only / empty replies). Fall back to the items
@@ -516,6 +528,110 @@ class _CodexCompletionsAdapter:
             )],
             usage=usage,
         )
+
+    def _create_stream_fallback(self, resp_kwargs: Dict[str, Any]) -> Any:
+        """Fallback for SDK parser failures in ``responses.stream``.
+
+        The ChatGPT Codex backend can emit a terminal ``response.completed``
+        event whose ``response.output`` is ``None``. The OpenAI SDK's
+        ``responses.stream`` helper parses that terminal event internally and
+        raises before callers can inspect the raw event. ``responses.create``
+        with ``stream=True`` exposes the event iterator directly enough for us
+        to collect output items/deltas and repair the terminal response.
+        """
+        fallback_kwargs = dict(resp_kwargs)
+        fallback_kwargs["stream"] = True
+        stream_or_response = self._client.responses.create(**fallback_kwargs)
+
+        if hasattr(stream_or_response, "output"):
+            return stream_or_response
+        if not hasattr(stream_or_response, "__iter__"):
+            return stream_or_response
+
+        terminal_response = None
+        collected_items: List[Any] = []
+        collected_text: List[str] = []
+        has_function_calls = False
+
+        try:
+            for event in stream_or_response:
+                etype = getattr(event, "type", None)
+                if etype is None and isinstance(event, dict):
+                    etype = event.get("type")
+                etype = etype or ""
+
+                if "output_text.delta" in etype:
+                    delta = getattr(event, "delta", "")
+                    if not delta and isinstance(event, dict):
+                        delta = event.get("delta", "")
+                    if delta:
+                        collected_text.append(delta)
+                elif etype == "response.output_item.done":
+                    item = getattr(event, "item", None)
+                    if item is None and isinstance(event, dict):
+                        item = event.get("item")
+                    if item is not None:
+                        collected_items.append(item)
+                elif "function_call" in etype:
+                    has_function_calls = True
+
+                if etype not in {"response.completed", "response.incomplete", "response.failed"}:
+                    continue
+
+                terminal_response = getattr(event, "response", None)
+                if terminal_response is None and isinstance(event, dict):
+                    terminal_response = event.get("response")
+                if terminal_response is not None:
+                    self._backfill_empty_output(
+                        terminal_response,
+                        collected_items=collected_items,
+                        collected_text=collected_text,
+                        has_function_calls=has_function_calls,
+                    )
+                    return terminal_response
+        finally:
+            close = getattr(stream_or_response, "close", None)
+            if callable(close):
+                try:
+                    close()
+                except Exception:
+                    pass
+
+        if terminal_response is not None:
+            self._backfill_empty_output(
+                terminal_response,
+                collected_items=collected_items,
+                collected_text=collected_text,
+                has_function_calls=has_function_calls,
+            )
+            return terminal_response
+        raise RuntimeError("Codex create(stream=True) fallback did not emit a terminal response.")
+
+    @staticmethod
+    def _backfill_empty_output(
+        response: Any,
+        *,
+        collected_items: List[Any],
+        collected_text: List[str],
+        has_function_calls: bool,
+    ) -> None:
+        output = getattr(response, "output", None)
+        if isinstance(output, list) and output:
+            return
+        if collected_items:
+            response.output = list(collected_items)
+        elif collected_text and not has_function_calls:
+            response.output = [SimpleNamespace(
+                type="message",
+                role="assistant",
+                status="completed",
+                content=[SimpleNamespace(
+                    type="output_text",
+                    text="".join(collected_text),
+                )],
+            )]
+        elif output is None:
+            response.output = []
 
 
 class _CodexChatShim:

@@ -16,10 +16,11 @@ Two production bugs are locked in here:
    adapter calls ``.stream`` (and never ``.create``), so a regression back to
    non-streaming would fail here.
 
-   (The ``TypeError: 'NoneType' object is not iterable`` that the streaming path
-   hit on openai 1.86.0 is fixed by the openai 2.x upgrade, whose Responses
-   streaming parser is compatible with Codex's SSE — the same path the sibling
-   ``hermes-agent`` project runs on openai 2.24.0.)
+3. ``TypeError: 'NoneType' object is not iterable`` — Codex can emit a terminal
+   ``response.completed`` whose ``response.output`` is ``None``. The OpenAI SDK
+   parser raises before callers can inspect the raw terminal event, so the
+   adapter falls back to ``responses.create(stream=True)`` and backfills output
+   from streamed items or text deltas.
 
 All HTTP/transport is mocked — no network, no OAuth token.
 """

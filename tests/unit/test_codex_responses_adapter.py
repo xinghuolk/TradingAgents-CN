@@ -265,6 +265,19 @@ class _MockStreamContext:
         return self._final
 
 
+class _BrokenParserStreamContext:
+    """Stream context that mimics the OpenAI parser crashing mid-iteration."""
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
+
+    def __iter__(self):
+        raise TypeError("'NoneType' object is not iterable")
+
+
 def _make_responses_client(events, final):
     """Build a fake ``openai.OpenAI`` client that returns the given stream."""
     stream_ctx = _MockStreamContext(events, final)
@@ -460,6 +473,23 @@ class TestAdapterCreate:
         )
         sent = client.responses.stream.call_args.kwargs
         assert "reasoning" not in sent
+
+    def test_stream_parser_typeerror_falls_back_to_create_stream_true(self):
+        terminal = SimpleNamespace(id="r_fallback", output=None, usage=None)
+        fallback_events = [
+            SimpleNamespace(type="response.output_text.delta", delta="OK"),
+            SimpleNamespace(type="response.completed", response=terminal),
+        ]
+        client = MagicMock()
+        client.responses.stream = MagicMock(return_value=_BrokenParserStreamContext())
+        client.responses.create = MagicMock(return_value=iter(fallback_events))
+        adapter = _CodexCompletionsAdapter(client, "gpt-5")
+
+        resp = adapter.create(messages=[{"role": "user", "content": "hi"}])
+
+        assert client.responses.create.call_args.kwargs["stream"] is True
+        assert resp.id == "r_fallback"
+        assert resp.choices[0].message.content == "OK"
 
 
 # ---------------------------------------------------------------------------
