@@ -404,7 +404,9 @@ def create_analysis_config(
     llm_provider: str,
     market_type: str = "A股",
     quick_model_config: dict = None,  # 新增：快速模型的完整配置
-    deep_model_config: dict = None    # 新增：深度模型的完整配置
+    deep_model_config: dict = None,   # 新增：深度模型的完整配置
+    quick_provider: str = None,       # 新增：快速模型所属厂家(区分跨厂家同名)
+    deep_provider: str = None         # 新增：深度模型所属厂家(区分跨厂家同名)
 ) -> dict:
     """
     创建分析配置 - 支持数字等级和中文等级
@@ -528,8 +530,8 @@ def create_analysis_config(
     # 🔧 获取 backend_url 和 API Key（优先级：模型配置 > 厂家配置 > 环境变量）
     try:
         # 1️⃣ 优先从数据库获取（包含模型配置的 api_base、API Key 和厂家的 default_base_url、API Key）
-        quick_provider_info = get_provider_and_url_by_model_sync(quick_model)
-        deep_provider_info = get_provider_and_url_by_model_sync(deep_model)
+        quick_provider_info = get_provider_and_url_by_model_sync(quick_model, quick_provider)
+        deep_provider_info = get_provider_and_url_by_model_sync(deep_model, deep_provider)
 
         config["backend_url"] = quick_provider_info["backend_url"]
         config["quick_api_key"] = quick_provider_info.get("api_key")  # 🔥 保存快速模型的 API Key
@@ -1261,6 +1263,10 @@ class SimpleAnalysisService:
 
             research_depth = request.parameters.research_depth if request.parameters else "标准"
 
+            # 前端指定的模型厂家(区分跨厂家同名);自动推荐分支保持 None → 两级回退
+            req_quick_provider = None
+            req_deep_provider = None
+
             # 1. 检查前端是否指定了模型
             if (request.parameters and
                 hasattr(request.parameters, 'quick_analysis_model') and
@@ -1271,6 +1277,8 @@ class SimpleAnalysisService:
                 # 使用前端指定的模型
                 quick_model = request.parameters.quick_analysis_model
                 deep_model = request.parameters.deep_analysis_model
+                req_quick_provider = getattr(request.parameters, 'quick_analysis_provider', None)
+                req_deep_provider = getattr(request.parameters, 'deep_analysis_provider', None)
 
                 logger.info(f"📝 [分析服务] 用户指定模型: quick={quick_model}, deep={deep_model}")
 
@@ -1304,8 +1312,8 @@ class SimpleAnalysisService:
                 logger.info(f"🤖 自动推荐模型: quick={quick_model}, deep={deep_model}")
 
             # 🔧 根据快速模型和深度模型分别查找对应的供应商和 API URL
-            quick_provider_info = get_provider_and_url_by_model_sync(quick_model)
-            deep_provider_info = get_provider_and_url_by_model_sync(deep_model)
+            quick_provider_info = get_provider_and_url_by_model_sync(quick_model, req_quick_provider)
+            deep_provider_info = get_provider_and_url_by_model_sync(deep_model, req_deep_provider)
 
             quick_provider = quick_provider_info["provider"]
             deep_provider = deep_provider_info["provider"]
@@ -1334,7 +1342,9 @@ class SimpleAnalysisService:
                 quick_model=quick_model,
                 deep_model=deep_model,
                 llm_provider=quick_provider,  # 主要使用快速模型的供应商
-                market_type=market_type  # 使用前端传递的市场类型
+                market_type=market_type,  # 使用前端传递的市场类型
+                quick_provider=req_quick_provider,
+                deep_provider=req_deep_provider
             )
 
             # 🔧 添加混合模式配置
