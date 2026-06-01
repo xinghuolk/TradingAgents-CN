@@ -1,3 +1,5 @@
+from unittest.mock import patch
+
 from tradingagents.graph.model_usage import (
     canonical_node_key,
     clear_model_usage,
@@ -5,6 +7,49 @@ from tradingagents.graph.model_usage import (
     model_usage_context,
     record_llm_call,
 )
+
+
+def test_cost_auto_computed_from_tokens_when_not_provided():
+    """未直接传 cost 但有 provider/model/token 时,用计价表自动估算成本。"""
+    with patch(
+        "tradingagents.config.config_manager.config_manager.calculate_cost",
+        return_value=(0.0123, "CNY"),
+    ) as mock_calc:
+        with model_usage_context(task_id="task-autocost", node_name="value_analyst"):
+            record_llm_call(
+                provider="codex",
+                model="gpt-5.5",
+                duration_seconds=1.0,
+                input_tokens=100,
+                output_tokens=20,
+            )
+    mock_calc.assert_called_once_with("codex", "gpt-5.5", 100, 20)
+    node = get_model_usage_snapshot("task-autocost")["nodes"]["value_analyst"]
+    assert node["cost"] == 0.0123
+    assert node["currency"] == "CNY"
+    assert node["costs_by_currency"] == {"CNY": 0.0123}
+    assert node["partial"] is False
+    clear_model_usage("task-autocost")
+
+
+def test_cost_not_computed_when_pricing_missing_stays_partial():
+    """计价表无匹配(返回 0.0)时不采纳,cost 保持 None / partial,不误报 0 成本。"""
+    with patch(
+        "tradingagents.config.config_manager.config_manager.calculate_cost",
+        return_value=(0.0, "CNY"),
+    ):
+        with model_usage_context(task_id="task-nopricing", node_name="value_analyst"):
+            record_llm_call(
+                provider="unknown",
+                model="mystery",
+                duration_seconds=1.0,
+                input_tokens=100,
+                output_tokens=20,
+            )
+    node = get_model_usage_snapshot("task-nopricing")["nodes"]["value_analyst"]
+    assert node["cost"] is None
+    assert node["partial"] is True
+    clear_model_usage("task-nopricing")
 
 
 def test_canonical_node_keys_cover_graph_and_tool_nodes():

@@ -103,6 +103,24 @@ def record_llm_call(
     if not task_id or not node_name:
         return
 
+    # 调用方未直接提供 cost 时,基于 provider/model + token 用项目计价表自动估算,
+    # 使 cost 维度不再恒为空。延迟 import config_manager,避免顶层循环导入。
+    if cost is None and provider and model and input_tokens is not None and output_tokens is not None:
+        try:
+            from tradingagents.config.config_manager import config_manager
+            computed_cost, computed_currency = config_manager.calculate_cost(
+                provider, model, input_tokens, output_tokens
+            )
+            # calculate_cost 找不到定价时返回 (0.0, "CNY");仅在确有定价(>0)时采纳,
+            # 否则保持 cost=None → partial,避免把"无定价"误报成 0 成本。
+            if computed_cost and computed_cost > 0:
+                cost = computed_cost
+                if currency is None:
+                    currency = computed_currency
+        except Exception:
+            # 计价失败不影响用量记录主流程
+            pass
+
     normalized_currency = _normalize_currency(currency)
     node_key = canonical_node_key(node_name)
     with _usage_lock:
