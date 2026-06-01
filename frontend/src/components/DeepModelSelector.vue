@@ -9,9 +9,9 @@
   >
     <el-option
       v-for="model in availableModels"
-      :key="model.model_name"
+      :key="`${model.provider}/${model.model_name}`"
       :label="model.model_display_name || model.model_name"
-      :value="model.model_name"
+      :value="`${model.provider}::${model.model_name}`"
     >
       <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
         <span style="flex:1;">{{ model.model_display_name || model.model_name }}</span>
