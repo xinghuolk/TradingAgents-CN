@@ -283,7 +283,7 @@ class AnalysisService:
                 progress_tracker.update_progress(message)
 
             # 调用现有的分析方法（同步调用，传递进度回调）
-            _, decision = trading_graph.propagate(task.symbol, analysis_date, progress_callback)
+            state, decision = trading_graph.propagate(task.symbol, analysis_date, progress_callback, task_id=task.task_id)
 
             execution_time = (datetime.now(timezone.utc) - start_time).total_seconds()
 
@@ -292,6 +292,9 @@ class AnalysisService:
 
             # 从决策中提取模型信息
             model_info = decision.get('model_info', 'Unknown') if isinstance(decision, dict) else 'Unknown'
+
+            # 提取节点级模型用量
+            model_usage = state.get("model_usage", {}) if isinstance(state, dict) else {}
 
             # 构建结果
             result = AnalysisResult(
@@ -304,7 +307,8 @@ class AnalysisService:
                 detailed_analysis=decision,
                 execution_time=execution_time,
                 tokens_used=decision.get("tokens_used", 0),
-                model_info=model_info  # 🔥 添加模型信息字段
+                model_info=model_info,  # 🔥 添加模型信息字段
+                model_usage=model_usage,  # 🆕 节点级模型用量
             )
 
             logger.info(f"✅ [线程池] 分析任务完成: {task.task_id} - 耗时{execution_time:.2f}秒")
@@ -409,12 +413,15 @@ class AnalysisService:
             analysis_date = task.parameters.analysis_date or datetime.now().strftime("%Y-%m-%d")
 
             # 调用现有的分析方法（同步调用）
-            _, decision = trading_graph.propagate(task.symbol, analysis_date)
+            state, decision = trading_graph.propagate(task.symbol, analysis_date, task_id=task.task_id)
 
             execution_time = (datetime.now(timezone.utc) - start_time).total_seconds()
 
             # 从决策中提取模型信息
             model_info = decision.get('model_info', 'Unknown') if isinstance(decision, dict) else 'Unknown'
+
+            # 提取节点级模型用量
+            model_usage = state.get("model_usage", {}) if isinstance(state, dict) else {}
 
             # 构建结果
             result = AnalysisResult(
@@ -427,7 +434,8 @@ class AnalysisService:
                 detailed_analysis=decision,
                 execution_time=execution_time,
                 tokens_used=decision.get("tokens_used", 0),
-                model_info=model_info  # 🔥 添加模型信息字段
+                model_info=model_info,  # 🔥 添加模型信息字段
+                model_usage=model_usage,  # 🆕 节点级模型用量
             )
 
             logger.info(f"✅ [线程池] 分析任务完成: {task.task_id} - 耗时{execution_time:.2f}秒")
@@ -784,15 +792,18 @@ class AnalysisService:
             analysis_date = task.parameters.analysis_date or datetime.now().strftime("%Y-%m-%d")
             
             # 调用现有的分析方法
-            _, decision = trading_graph.propagate(task.symbol, analysis_date)
-            
+            state, decision = trading_graph.propagate(task.symbol, analysis_date, task_id=task.task_id)
+
             execution_time = (datetime.utcnow() - start_time).total_seconds()
-            
+
             if progress_callback:
                 progress_callback(80, "处理分析结果...")
 
             # 从决策中提取模型信息
             model_info = decision.get('model_info', 'Unknown') if isinstance(decision, dict) else 'Unknown'
+
+            # 提取节点级模型用量
+            model_usage = state.get("model_usage", {}) if isinstance(state, dict) else {}
 
             # 构建结果
             result = AnalysisResult(
@@ -805,7 +816,8 @@ class AnalysisService:
                 detailed_analysis=decision,
                 execution_time=execution_time,
                 tokens_used=decision.get("tokens_used", 0),
-                model_info=model_info  # 🔥 添加模型信息字段
+                model_info=model_info,  # 🔥 添加模型信息字段
+                model_usage=model_usage,  # 🆕 节点级模型用量
             )
 
             if progress_callback:

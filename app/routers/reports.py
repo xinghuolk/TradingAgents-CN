@@ -203,6 +203,7 @@ async def get_reports_list(
                 "stock_name": stock_name,
                 "market_type": market_type,  # 🔥 添加市场类型字段
                 "model_info": doc.get("model_info", "Unknown"),  # 🔥 添加模型信息字段
+                "model_usage": doc.get("model_usage", {}),  # 🆕 节点级模型用量
                 "type": "single",  # 目前主要是单股分析
                 "format": "markdown",  # 主要格式
                 "status": doc.get("status", "completed"),
@@ -283,6 +284,7 @@ async def get_report_detail(
                 "stock_symbol": stock_symbol,
                 "stock_name": stock_name,  # 🔥 添加股票名称字段
                 "model_info": r.get("model_info", "Unknown"),  # 🔥 添加模型信息字段
+                "model_usage": r.get("model_usage", {}),  # 🆕 节点级模型用量
                 "analysis_date": r.get("analysis_date", ""),
                 "status": r.get("status", "completed"),
                 "created_at": to_iso(created_at_tz),
@@ -331,6 +333,7 @@ async def get_report_detail(
                 "stock_symbol": stock_symbol,
                 "stock_name": stock_name,  # 🔥 添加股票名称字段
                 "model_info": doc.get("model_info", "Unknown"),  # 🔥 添加模型信息字段
+                "model_usage": doc.get("model_usage", {}),  # 🆕 节点级模型用量
                 "analysis_date": doc.get("analysis_date", ""),
                 "status": doc.get("status", "completed"),
                 "created_at": created_at_tz.isoformat() if created_at_tz else str(created_at),

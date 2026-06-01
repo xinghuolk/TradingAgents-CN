@@ -1855,6 +1855,9 @@ class SimpleAnalysisService:
             # 从决策中提取模型信息
             model_info = decision.get('model_info', 'Unknown') if isinstance(decision, dict) else 'Unknown'
 
+            # 提取节点级模型用量
+            model_usage = state.get("model_usage", {}) if isinstance(state, dict) else {}
+
             # 构建结果
             result = {
                 "analysis_id": str(uuid.uuid4()),
@@ -1879,6 +1882,8 @@ class SimpleAnalysisService:
                 "decision": formatted_decision,
                 # 🔥 添加模型信息字段
                 "model_info": model_info,
+                # 🆕 节点级模型用量
+                "model_usage": model_usage,
                 # 🆕 性能指标数据
                 "performance_metrics": state.get("performance_metrics", {}) if isinstance(state, dict) else {}
             }
@@ -2672,6 +2677,7 @@ class SimpleAnalysisService:
                 "stock_name": stock_name,  # 🔥 添加股票名称字段
                 "market_type": market_type,  # 🔥 添加市场类型字段
                 "model_info": result.get("model_info", "Unknown"),  # 🔥 添加模型信息字段
+                "model_usage": result.get("model_usage", {}),  # 🆕 节点级模型用量
                 "analysis_date": timestamp.strftime('%Y-%m-%d'),
                 "timestamp": timestamp,
                 "status": "completed",
@@ -2733,6 +2739,8 @@ class SimpleAnalysisService:
                         "reports": reports,  # 包含提取的报告内容
                         # 🔥 关键修复：添加格式化后的decision字段！
                         "decision": result.get("decision", {}),
+                        # 🆕 节点级模型用量
+                        "model_usage": result.get("model_usage", {}),
                         # Spec 4: canonical turtle payload
                         "value_turtle_payload": _canonical_turtle_payload,
                     }}}

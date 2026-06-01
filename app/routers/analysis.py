@@ -294,6 +294,7 @@ async def get_task_result(
                     "decision": mongo_result.get("decision", {}),
                     "value_turtle_payload": mongo_result.get("value_turtle_payload", ""),
                     "state": mongo_result.get("state", {}),
+                    "model_usage": mongo_result.get("model_usage", {}),  # 🆕 节点级模型用量
                     "source": "mongodb"  # 标记数据来源
                 }
 
@@ -339,6 +340,7 @@ async def get_task_result(
                         "status": r.get("status", "completed"),
                         "decision": r.get("decision", {}),
                         "value_turtle_payload": r.get("value_turtle_payload", ""),
+                        "model_usage": r.get("model_usage", {}),  # 🆕 节点级模型用量
                         "source": "analysis_tasks"  # 数据来源标记
                     }
 
