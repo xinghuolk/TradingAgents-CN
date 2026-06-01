@@ -51,17 +51,21 @@ logger = logging.getLogger("app.services.simple_analysis_service")
 config_service = ConfigService()
 
 
-async def get_provider_by_model_name(model_name: str) -> str:
+async def get_provider_by_model_name(model_name: str, provider: str = None) -> str:
     """
     根据模型名称从数据库配置中查找对应的供应商（异步版本）
 
     Args:
         model_name: 模型名称，如 'qwen-turbo', 'gpt-4' 等
+        provider: 可选，调用方已知的供应商名称；非空时直接返回，跳过数据库反查
 
     Returns:
         str: 供应商名称，如 'dashscope', 'openai' 等
     """
     try:
+        # provider 已显式指定且有效时直接返回，无需反查
+        if provider:
+            return provider
         # 从配置服务获取系统配置
         system_config = await config_service.get_system_config()
         if not system_config or not system_config.llm_configs:
@@ -84,21 +88,43 @@ async def get_provider_by_model_name(model_name: str) -> str:
         return _get_default_provider_by_model(model_name)
 
 
-def get_provider_by_model_name_sync(model_name: str) -> str:
+def get_provider_by_model_name_sync(model_name: str, provider: str = None) -> str:
     """
     根据模型名称从数据库配置中查找对应的供应商（同步版本）
 
     Args:
         model_name: 模型名称，如 'qwen-turbo', 'gpt-4' 等
+        provider: 可选，调用方已知的供应商名称；非空时透传给底层查询以支持两级回退
 
     Returns:
         str: 供应商名称，如 'dashscope', 'openai' 等
     """
-    provider_info = get_provider_and_url_by_model_sync(model_name)
+    provider_info = get_provider_and_url_by_model_sync(model_name, provider)
     return provider_info["provider"]
 
 
-def get_provider_and_url_by_model_sync(model_name: str) -> dict:
+def _match_llm_config(llm_configs, model_name, provider=None):
+    """从 llm_configs 中按两级回退匹配模型配置。
+
+    1. provider 非空 → 先按 (provider, model_name) 精确匹配(provider 大小写不敏感)。
+    2. 第 1 步未命中(provider 为空 / 精确对不存在)→ 回退首个 model_name 匹配(等价旧逻辑)。
+    3. 仍未命中 → 返回 None(由调用方落默认映射)。
+
+    provider 是优先约束、非硬约束:精确未命中绝不直接返回 None,
+    必须回退 model_name 匹配,确保对存量配置永不劣化。
+    """
+    same_name = [c for c in llm_configs if c.get("model_name") == model_name]
+    if not same_name:
+        return None
+    if provider:
+        for c in same_name:
+            if str(c.get("provider") or "").lower() == provider.lower():
+                return c
+    # 回退:首个 model_name 匹配
+    return same_name[0]
+
+
+def get_provider_and_url_by_model_sync(model_name: str, provider: str = None) -> dict:
     """
     根据模型名称从数据库配置中查找对应的供应商和 API URL（同步版本）
 
@@ -123,9 +149,8 @@ def get_provider_and_url_by_model_sync(model_name: str) -> dict:
 
         if doc and "llm_configs" in doc:
             llm_configs = doc["llm_configs"]
-
-            for config_dict in llm_configs:
-                if config_dict.get("model_name") == model_name:
+            config_dict = _match_llm_config(llm_configs, model_name, provider)
+            if config_dict is not None:
                     provider = config_dict.get("provider")
                     api_base = config_dict.get("api_base")
                     model_api_key = config_dict.get("api_key")  # 🔥 获取模型配置的 API Key
