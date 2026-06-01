@@ -231,6 +231,13 @@
             :name="String(moduleName)"
           >
             <div class="module-content">
+              <!-- 节点级模型用量元数据行（向后兼容：model_usage 缺失时不渲染） -->
+              <div v-if="getModuleModelUsage(String(moduleName))" class="module-model-usage">
+                <el-tag size="small" type="info">{{ getModuleModelUsage(String(moduleName))?.provider }} / {{ getModuleModelUsage(String(moduleName))?.model }}</el-tag>
+                <span>{{ formatModelUsageTokens(getModuleModelUsage(String(moduleName))) }}</span>
+                <span>{{ formatModelUsageCost(getModuleModelUsage(String(moduleName))) }}</span>
+                <span>{{ formatModelUsageDuration(getModuleModelUsage(String(moduleName))) }}</span>
+              </div>
               <!-- value_report: use TurtlePayloadPanel (Spec 4 §6.1) -->
               <template v-if="String(moduleName) === 'value_report'">
                 <TurtlePayloadPanel
@@ -300,6 +307,7 @@ import { marked } from 'marked'
 import { getMarketByStockCode } from '@/utils/market'
 import type { CurrencyAmount } from '@/api/paper'
 import TurtlePayloadPanel from '@/components/Analysis/TurtlePayloadPanel.vue'
+import type { ModelUsageNode } from '@/types/analysis'
 
 // 路由和认证
 const route = useRoute()
@@ -822,6 +830,56 @@ const getModelDescription = (modelInfo: string) => {
   return `${modelInfo} - AI 大语言模型`
 }
 
+// 模块名 → 节点键映射（用于展示节点级模型用量）
+const moduleModelUsageMap: Record<string, string> = {
+  market_report: 'market_analyst',
+  fundamentals_report: 'fundamentals_analyst',
+  news_report: 'news_analyst',
+  sentiment_report: 'social_analyst',
+  value_report: 'value_analyst',
+  bull_researcher: 'bull_researcher',
+  bear_researcher: 'bear_researcher',
+  research_team_decision: 'research_manager',
+  trader_investment_plan: 'trader',
+  investment_plan: 'trader',
+  risky_analyst: 'risky_analyst',
+  safe_analyst: 'safe_analyst',
+  neutral_analyst: 'neutral_analyst',
+  risk_management_decision: 'risk_judge',
+  final_trade_decision: 'risk_judge'
+}
+
+const getModuleModelUsage = (moduleName: string): ModelUsageNode | undefined => {
+  const nodeKey = moduleModelUsageMap[moduleName]
+  if (!nodeKey) return undefined
+  const usage = (report.value as any)?.model_usage
+  return usage?.nodes?.[nodeKey]
+}
+
+const formatModelUsageTokens = (node?: ModelUsageNode): string => {
+  if (!node) return ''
+  return `${node.input_tokens} in / ${node.output_tokens} out`
+}
+
+const formatModelUsageCost = (node?: ModelUsageNode): string => {
+  if (!node) return ''
+  const symbolMap: Record<string, string> = { CNY: '¥', USD: '$' }
+  if (node.cost != null && node.currency) {
+    const sym = symbolMap[node.currency] || (node.currency + ' ')
+    return `${sym}${node.cost}`
+  }
+  const cbc = node.costs_by_currency
+  if (cbc && Object.keys(cbc).length) {
+    return Object.entries(cbc).map(([cur, val]) => `${symbolMap[cur] || cur + ' '}${val}`).join(' + ')
+  }
+  return ''
+}
+
+const formatModelUsageDuration = (node?: ModelUsageNode): string => {
+  if (!node) return ''
+  return `${node.duration_seconds}s`
+}
+
 const getModuleDisplayName = (moduleName: string) => {
   // 统一与单股分析的中文标签映射（完整的13个报告）
   const nameMap: Record<string, string> = {
@@ -1250,6 +1308,16 @@ onMounted(() => {
     }
 
     .module-content {
+      .module-model-usage {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px 12px;
+        align-items: center;
+        margin-bottom: 12px;
+        color: var(--el-text-color-secondary);
+        font-size: 12px;
+      }
+
       .markdown-content {
         line-height: 1.6;
         
