@@ -2238,8 +2238,9 @@ watch(() => analysisForm.researchDepth, () => {
   checkModelSuitability()
 })
 
-// 监听模型选择变化
-watch([() => modelSettings.value.quickAnalysisModel, () => modelSettings.value.deepAnalysisModel], () => {
+// 监听模型选择变化:下拉已改绑复合键 ref(quickModelKey/deepModelKey),
+// 用户手选时 modelSettings 不再更新,故监听复合键以保证兼容性提示不 stale。
+watch([quickModelKey, deepModelKey], () => {
   checkModelSuitability()
 })
 

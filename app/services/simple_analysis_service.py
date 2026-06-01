@@ -57,27 +57,41 @@ async def get_provider_by_model_name(model_name: str, provider: str = None) -> s
 
     Args:
         model_name: 模型名称，如 'qwen-turbo', 'gpt-4' 等
-        provider: 可选，调用方已知的供应商名称；非空时直接返回，跳过数据库反查
+        provider: 可选，调用方已知的供应商名称。仅当 (provider, model_name)
+            在当前配置中确实成对存在时才直接采用；否则视为过时提示(stale hint)，
+            落到按 model_name 的两级回退，避免返回与后端 URL/Key 不匹配的厂家。
 
     Returns:
         str: 供应商名称，如 'dashscope', 'openai' 等
     """
     try:
-        # provider 已显式指定且有效时直接返回，无需反查
-        if provider:
-            return provider
         # 从配置服务获取系统配置
         system_config = await config_service.get_system_config()
         if not system_config or not system_config.llm_configs:
+            # 无配置可校验时:有 hint 则沿用(总比默认映射准),否则默认映射
+            if provider:
+                return provider
             logger.warning(f"⚠️ 系统配置为空，使用默认供应商映射")
             return _get_default_provider_by_model(model_name)
 
-        # 在LLM配置中查找匹配的模型
+        def _cfg_provider(cfg) -> str:
+            return cfg.provider.value if hasattr(cfg.provider, 'value') else str(cfg.provider)
+
+        # provider 提示仅在 (provider, model_name) 成对存在时采用,防止 stale hint
+        # 绕过两级回退、返回与后端 URL/Key 不匹配的厂家。
+        if provider:
+            for llm_config in system_config.llm_configs:
+                if llm_config.model_name == model_name and \
+                        _cfg_provider(llm_config).lower() == provider.lower():
+                    return provider
+            logger.warning(f"⚠️ provider 提示 {provider}/{model_name} 在配置中不存在，回退按模型名反查")
+
+        # 在LLM配置中查找匹配的模型(首个 model_name 匹配)
         for llm_config in system_config.llm_configs:
             if llm_config.model_name == model_name:
-                provider = llm_config.provider.value if hasattr(llm_config.provider, 'value') else str(llm_config.provider)
-                logger.info(f"✅ 从数据库找到模型 {model_name} 的供应商: {provider}")
-                return provider
+                resolved = _cfg_provider(llm_config)
+                logger.info(f"✅ 从数据库找到模型 {model_name} 的供应商: {resolved}")
+                return resolved
 
         # 如果数据库中没有找到，使用默认映射
         logger.warning(f"⚠️ 数据库中未找到模型 {model_name}，使用默认映射")
