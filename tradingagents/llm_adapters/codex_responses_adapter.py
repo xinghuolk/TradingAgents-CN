@@ -401,28 +401,61 @@ class _CodexCompletionsAdapter:
                 resp_kwargs["reasoning"] = {"effort": effort, "summary": "auto"}
                 resp_kwargs["include"] = ["reasoning.encrypted_content"]
 
-        # 3. Call the Responses API NON-streaming.
+        # 3. Call the Responses API in STREAMING mode.
         #
-        # We previously used ``self._client.responses.stream(...)``. That helper
-        # routes the SSE event stream through openai's streaming parser
-        # (``ResponseStreamState`` in ``openai/lib/streaming/responses/_responses.py``),
-        # which raises ``TypeError: 'NoneType' object is not iterable`` on Codex's
-        # event stream in openai>=1.x — the HTTP call returns 200 OK but parsing
-        # the stream blows up (confirmed via production traceback at
-        # ``_responses.py`` ``handle_event``/``accumulate_event``).
+        # The Codex backend (``chatgpt.com/backend-api/codex``) REQUIRES
+        # ``stream=true`` — a non-streaming ``responses.create(...)`` is rejected
+        # with ``400 {'detail': 'Stream must be set to true'}``. We therefore use
+        # the ``responses.stream(...)`` helper, which sets ``stream=true`` and
+        # routes the SSE events through openai's streaming parser
+        # (``ResponseStreamState``).
         #
-        # The Codex backend accepts plain (non-streaming) Responses calls — the
-        # sibling financial-report-llm-extractor talks to the SAME
-        # ``chatgpt.com/backend-api/codex`` endpoint via langchain's native
-        # non-streaming Responses path and works. ``responses.create(...)``
-        # deserializes the final ``Response`` with pydantic instead of the SSE
-        # state machine, so it sidesteps the broken streaming parser entirely
-        # while returning the same ``.output`` we walk below.
-        final = self._client.responses.create(**resp_kwargs)
+        # This previously crashed with ``TypeError: 'NoneType' object is not
+        # iterable`` inside the parser on **openai 1.86.0**. The fix is the
+        # openai 2.x upgrade (anchored on 2.24.0, the version the sibling
+        # ``hermes-agent`` project pins and runs the same ``responses.stream``
+        # path against Codex successfully): its Responses streaming parser is
+        # compatible with Codex's SSE event stream.
+        #
+        # We accumulate text deltas and completed output items ourselves, then
+        # ask the stream for the final assembled ``Response``. If the SDK didn't
+        # populate ``.output`` (some Codex replies only emit deltas), we fall
+        # back to the items / text we collected during streaming.
+        collected_text: List[str] = []
+        collected_items: List[Any] = []
+        has_function_calls = False
+        with self._client.responses.stream(**resp_kwargs) as stream:
+            for event in stream:
+                etype = getattr(event, "type", "") or ""
+                if "output_text.delta" in etype:
+                    d = getattr(event, "delta", "")
+                    if d:
+                        collected_text.append(d)
+                elif etype == "response.output_item.done":
+                    item = getattr(event, "item", None)
+                    if item is not None:
+                        collected_items.append(item)
+                elif "function_call" in etype:
+                    has_function_calls = True
+            final = stream.get_final_response()
 
         # 4. Read the response output (empty list when absent so the walk below
-        #    is safe for reasoning-only / empty replies).
+        #    is safe for reasoning-only / empty replies). Fall back to the items
+        #    / text accumulated from the stream when ``.output`` is empty.
         output = getattr(final, "output", None) or []
+        if not output:
+            if collected_items:
+                output = collected_items
+            elif collected_text and not has_function_calls:
+                output = [SimpleNamespace(
+                    type="message",
+                    role="assistant",
+                    status="completed",
+                    content=[SimpleNamespace(
+                        type="output_text",
+                        text="".join(collected_text),
+                    )],
+                )]
 
         # 5. Walk the output and rebuild chat.completions text + tool_calls.
         def _item_get(obj: Any, key: str, default: Any = None) -> Any:

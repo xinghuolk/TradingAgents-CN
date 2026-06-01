@@ -68,15 +68,23 @@ class TestChatCodexOAuth:
         assert str(chat.root_async_client.base_url).rstrip("/") == CODEX_BASE_URL.rstrip("/")
 
     def test_passes_other_kwargs(self):
-        """Untouched kwargs (temperature, etc.) pass through to ChatOpenAI.
+        """Untouched kwargs (temperature, etc.) don't break construction.
 
         Note: the adapter strips temperature/max_tokens before sending to the
         Codex backend — that's tested in test_codex_responses_adapter.py.
         Here we only verify they don't break construction.
+
+        langchain-openai 1.x deliberately drops ``temperature`` for the gpt-5
+        family (those models reject a non-default temperature), so
+        ``chat.temperature`` is ``None`` for a gpt-5 Codex model — which is
+        exactly what the Codex backend needs (it rejects ``temperature``). We
+        therefore only assert construction succeeds and max_tokens survives;
+        temperature being nulled is the new, correct SDK behavior.
         """
         with patch.object(sc, "resolve", return_value=_fresh_codex_cred()):
             chat = ChatCodexOAuth(model="gpt-5", temperature=0.4, max_tokens=2000)
-        assert chat.temperature == 0.4
+        # gpt-5 family: langchain-openai 1.x nulls temperature (model rejects it).
+        assert chat.temperature is None
         # ChatOpenAI may store max_tokens at top level or in model_kwargs.
         assert (
             getattr(chat, "max_tokens", None) == 2000

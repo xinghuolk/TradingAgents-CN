@@ -3,8 +3,8 @@
 # 或使用 uv：uv pip install -e .
 
 typing-extensions
-openai>=1.0.0,<2.0.0
-langchain-openai>=0.1.0
+openai>=2.0,<3.0
+langchain-openai>=1.0,<2.0
 langchain-experimental
 pandas
 yfinance
