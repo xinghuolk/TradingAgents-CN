@@ -16,7 +16,7 @@
               v-for="model in availableModels"
               :key="`quick-${model.provider}/${model.model_name}`"
               :label="model.model_display_name || model.model_name"
-              :value="model.model_name"
+              :value="`${model.provider}::${model.model_name}`"
             >
               <div style="display: flex; justify-content: space-between; align-items: center; gap: 8px;">
                 <span style="flex: 1;">{{ model.model_display_name || model.model_name }}</span>
@@ -58,7 +58,7 @@
               v-for="model in availableModels"
               :key="`deep-${model.provider}/${model.model_name}`"
               :label="model.model_display_name || model.model_name"
-              :value="model.model_name"
+              :value="`${model.provider}::${model.model_name}`"
             >
               <div style="display: flex; justify-content: space-between; align-items: center; gap: 8px;">
                 <span style="flex: 1;">{{ model.model_display_name || model.model_name }}</span>
@@ -151,7 +151,18 @@ const modelRecommendation = ref<{
   type: 'success' | 'warning' | 'info' | 'error'
   quickModel?: string
   deepModel?: string
+  quickProvider?: string
+  deepProvider?: string
 } | null>(null)
+
+// 将裸 model_name + provider 转换为复合键
+const toModelKey = (model: string, providerHint?: string): string => {
+  if (!model) return ''
+  if (providerHint) return `${providerHint}::${model}`
+  const matches = (props.availableModels || []).filter((m: any) => m.model_name === model)
+  const prov = matches.length ? matches[0].provider : ''
+  return `${prov}::${model}`
+}
 
 // Watch props changes
 watch(() => props.quickAnalysisModel, (newVal) => {
@@ -265,7 +276,9 @@ const checkModelSuitability = async () => {
         message,
         type: 'info',
         quickModel,
-        deepModel
+        deepModel,
+        quickProvider: responseData.quick_provider,
+        deepProvider: responseData.deep_provider
       }
     } else {
       // 如果没有推荐数据，显示通用说明
@@ -293,11 +306,14 @@ const checkModelSuitability = async () => {
  */
 const applyRecommendedModels = () => {
   if (modelRecommendation.value?.quickModel && modelRecommendation.value?.deepModel) {
-    localQuickModel.value = modelRecommendation.value.quickModel
-    localDeepModel.value = modelRecommendation.value.deepModel
-    
-    emit('update:quickAnalysisModel', modelRecommendation.value.quickModel)
-    emit('update:deepAnalysisModel', modelRecommendation.value.deepModel)
+    const qKey = toModelKey(modelRecommendation.value.quickModel, modelRecommendation.value.quickProvider)
+    const dKey = toModelKey(modelRecommendation.value.deepModel, modelRecommendation.value.deepProvider)
+
+    localQuickModel.value = qKey
+    localDeepModel.value = dKey
+
+    emit('update:quickAnalysisModel', qKey)
+    emit('update:deepAnalysisModel', dKey)
 
     // 清除推荐提示
     modelRecommendation.value = null
