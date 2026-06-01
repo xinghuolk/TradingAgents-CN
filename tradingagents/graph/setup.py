@@ -1,5 +1,6 @@
 # TradingAgents/graph/setup.py
 
+from functools import wraps
 from typing import Dict, Any
 from langchain_openai import ChatOpenAI
 from langgraph.graph import END, StateGraph, START
@@ -52,12 +53,17 @@ class GraphSetup:
     def _wrap_model_usage_node(graph_node_name, node):
         from tradingagents.graph.model_usage import model_usage_context
 
-        def wrapped_node(state):
-            with model_usage_context(node_name=graph_node_name):
-                if callable(node):
-                    return node(state)
-                return node.invoke(state)
+        def invoke_node(*args, **kwargs):
+            if callable(node):
+                return node(*args, **kwargs)
+            return node.invoke(*args, **kwargs)
 
+        def wrapped_node(*args, **kwargs):
+            with model_usage_context(node_name=graph_node_name):
+                return invoke_node(*args, **kwargs)
+
+        if callable(node):
+            return wraps(node)(wrapped_node)
         return wrapped_node
 
     def setup_graph(

@@ -566,6 +566,11 @@ class TradingAgentsGraph:
             self._print_timing_summary(node_timings, total_elapsed)
             logger.info("🔍 [TIMING DEBUG] _print_timing_summary 调用完成")
 
+            if not isinstance(final_state, dict):
+                raise RuntimeError(
+                    "TradingAgentsGraph.propagate produced no final state"
+                )
+
             # 构建性能数据
             performance_data = self._build_performance_data(node_timings, total_elapsed)
 
