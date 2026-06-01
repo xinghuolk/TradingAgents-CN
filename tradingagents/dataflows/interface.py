@@ -193,6 +193,7 @@ import os
 import pandas as pd
 from tqdm import tqdm
 from openai import OpenAI
+from tradingagents.graph.model_usage import record_openai_response_usage
 
 # 尝试导入yfinance，如果失败则设置为None
 try:
@@ -939,9 +940,11 @@ def get_YFin_data(
 def get_stock_news_openai(ticker, curr_date):
     config = get_config()
     client = OpenAI(base_url=config["backend_url"])
+    model = config["quick_think_llm"]
 
+    start = time.perf_counter()
     response = client.responses.create(
-        model=config["quick_think_llm"],
+        model=model,
         input=[
             {
                 "role": "system",
@@ -967,6 +970,13 @@ def get_stock_news_openai(ticker, curr_date):
         top_p=1,
         store=True,
     )
+    record_openai_response_usage(
+        response,
+        provider="openai",
+        default_model=model,
+        duration_seconds=time.perf_counter() - start,
+        currency="USD",
+    )
 
     return response.output[1].content[0].text
 
@@ -974,9 +984,11 @@ def get_stock_news_openai(ticker, curr_date):
 def get_global_news_openai(curr_date):
     config = get_config()
     client = OpenAI(base_url=config["backend_url"])
+    model = config["quick_think_llm"]
 
+    start = time.perf_counter()
     response = client.responses.create(
-        model=config["quick_think_llm"],
+        model=model,
         input=[
             {
                 "role": "system",
@@ -1001,6 +1013,13 @@ def get_global_news_openai(curr_date):
         max_output_tokens=4096,
         top_p=1,
         store=True,
+    )
+    record_openai_response_usage(
+        response,
+        provider="openai",
+        default_model=model,
+        duration_seconds=time.perf_counter() - start,
+        currency="USD",
     )
 
     return response.output[1].content[0].text
@@ -1361,9 +1380,11 @@ def _get_fundamentals_openai_impl(ticker, curr_date, config, cache):
         logger.debug(f"📊 [OpenAI] 尝试使用OpenAI获取 {ticker} 的基本面数据...")
 
         client = OpenAI(base_url=config["backend_url"])
+        model = config["quick_think_llm"]
 
+        start = time.perf_counter()
         response = client.responses.create(
-            model=config["quick_think_llm"],
+            model=model,
             input=[
                 {
                     "role": "system",
@@ -1388,6 +1409,13 @@ def _get_fundamentals_openai_impl(ticker, curr_date, config, cache):
             max_output_tokens=4096,
             top_p=1,
             store=True,
+        )
+        record_openai_response_usage(
+            response,
+            provider="openai",
+            default_model=model,
+            duration_seconds=time.perf_counter() - start,
+            currency="USD",
         )
 
         result = response.output[1].content[0].text

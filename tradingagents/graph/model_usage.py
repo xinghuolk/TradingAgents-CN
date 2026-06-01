@@ -135,6 +135,25 @@ def record_llm_call(
             node_usage["partial"] = True
 
 
+def record_openai_response_usage(
+    response: Any,
+    provider: str = "openai",
+    default_model: str = "",
+    duration_seconds: float | None = None,
+    currency: str | None = None,
+) -> None:
+    usage = _tokens_from_usage(_get_value(response, "usage"))
+    model = _get_value(response, "model") or default_model
+    record_llm_call(
+        provider=provider,
+        model=model,
+        duration_seconds=duration_seconds,
+        input_tokens=usage["input_tokens"],
+        output_tokens=usage["output_tokens"],
+        currency=currency,
+    )
+
+
 def get_model_usage_snapshot(task_id: str) -> dict[str, Any]:
     with _usage_lock:
         task_usage = _usage_by_task.get(task_id)
