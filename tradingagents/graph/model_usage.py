@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from contextvars import ContextVar, Token
+from functools import wraps
 from threading import RLock
 import time
 from collections.abc import AsyncIterator, Iterator, Mapping
@@ -155,8 +156,6 @@ def clear_model_usage(task_id: str) -> None:
 
 def describe_llm(llm: Any) -> str:
     model_name = _get_value(llm, "model_name")
-    if model_name is None:
-        model_name = _get_value(llm, "model")
     if model_name:
         return f"{llm.__class__.__name__}:{model_name}"
     return llm.__class__.__name__
@@ -280,35 +279,33 @@ def _instrument_call_method(
 
     if method_name.startswith("a"):
 
+        @wraps(original)
         async def async_wrapped(*args, **kwargs):
             start = time.perf_counter()
+            context = _capture_usage_context()
             try:
                 result = await original(*args, **kwargs)
             except Exception:
-                _record_from_result(
-                    None, provider, model, currency, time.perf_counter() - start
-                )
+                _record_from_result(None, llm, time.perf_counter() - start, context)
                 raise
-            _record_from_result(
-                result, provider, model, currency, time.perf_counter() - start
-            )
+            _record_from_result(result, llm, time.perf_counter() - start, context)
             return result
 
         wrapped = async_wrapped
     else:
 
+        @wraps(original)
         def wrapped(*args, **kwargs):
             start = time.perf_counter()
+            context = _capture_usage_context()
             try:
                 result = original(*args, **kwargs)
             except Exception:
                 _record_from_result(
-                    None, provider, model, currency, time.perf_counter() - start
+                    None, llm, time.perf_counter() - start, context
                 )
                 raise
-            _record_from_result(
-                result, provider, model, currency, time.perf_counter() - start
-            )
+            _record_from_result(result, llm, time.perf_counter() - start, context)
             return result
 
     _set_private_attr(llm, original_attr, original)
@@ -330,43 +327,37 @@ def _instrument_stream_method(
 
     if method_name.startswith("a"):
 
+        @wraps(original)
         def async_stream_wrapped(*args, **kwargs):
             start = time.perf_counter()
+            context = _capture_usage_context()
             try:
                 result = original(*args, **kwargs)
             except Exception:
-                _record_from_result(
-                    None, provider, model, currency, time.perf_counter() - start
-                )
+                _record_from_result(None, llm, time.perf_counter() - start, context)
                 raise
             if hasattr(result, "__aiter__"):
-                return _recording_async_iterator(
-                    result, provider, model, currency, start
-                )
-            _record_from_result(
-                result, provider, model, currency, time.perf_counter() - start
-            )
+                return _recording_async_iterator(result, llm, start, context)
+            _record_from_result(result, llm, time.perf_counter() - start, context)
             return result
 
         wrapped = async_stream_wrapped
     else:
 
+        @wraps(original)
         def stream_wrapped(*args, **kwargs):
             start = time.perf_counter()
+            context = _capture_usage_context()
             try:
                 result = original(*args, **kwargs)
             except Exception:
-                _record_from_result(
-                    None, provider, model, currency, time.perf_counter() - start
-                )
+                _record_from_result(None, llm, time.perf_counter() - start, context)
                 raise
             if hasattr(result, "__iter__") and not isinstance(
                 result, (str, bytes, Mapping)
             ):
-                return _recording_iterator(result, provider, model, currency, start)
-            _record_from_result(
-                result, provider, model, currency, time.perf_counter() - start
-            )
+                return _recording_iterator(result, llm, start, context)
+            _record_from_result(result, llm, time.perf_counter() - start, context)
             return result
 
         wrapped = stream_wrapped
@@ -387,8 +378,10 @@ def _instrument_bind_tools(
 
     original = getattr(llm, "bind_tools")
 
+    @wraps(original)
     def bind_tools_wrapped(*args, **kwargs):
         bound = original(*args, **kwargs)
+        provider, model, currency = _get_instrumentation_metadata(llm)
         return instrument_llm_for_model_usage(
             bound, provider=provider, model=model, currency=currency
         )
@@ -399,10 +392,9 @@ def _instrument_bind_tools(
 
 def _recording_iterator(
     iterator: Iterator[Any],
-    provider: str,
-    model: str,
-    currency: str | None,
+    llm: Any,
     start: float,
+    context: tuple[str | None, str | None],
 ):
     last_chunk = None
     try:
@@ -410,17 +402,14 @@ def _recording_iterator(
             last_chunk = chunk
             yield chunk
     finally:
-        _record_from_result(
-            last_chunk, provider, model, currency, time.perf_counter() - start
-        )
+        _record_from_result(last_chunk, llm, time.perf_counter() - start, context)
 
 
 async def _recording_async_iterator(
     iterator: AsyncIterator[Any],
-    provider: str,
-    model: str,
-    currency: str | None,
+    llm: Any,
     start: float,
+    context: tuple[str | None, str | None],
 ):
     last_chunk = None
     try:
@@ -428,26 +417,40 @@ async def _recording_async_iterator(
             last_chunk = chunk
             yield chunk
     finally:
-        _record_from_result(
-            last_chunk, provider, model, currency, time.perf_counter() - start
-        )
+        _record_from_result(last_chunk, llm, time.perf_counter() - start, context)
 
 
 def _record_from_result(
     result: Any,
-    provider: str,
-    model: str,
-    currency: str | None,
+    llm: Any,
     duration_seconds: float,
+    context: tuple[str | None, str | None],
 ) -> None:
     usage = _extract_usage_tokens(result)
-    record_llm_call(
-        provider=provider,
-        model=model,
-        duration_seconds=duration_seconds,
-        input_tokens=usage.get("input_tokens"),
-        output_tokens=usage.get("output_tokens"),
-        currency=currency,
+    provider, model, currency = _get_instrumentation_metadata(llm)
+    task_id, node_name = context
+    if not task_id or not node_name:
+        return
+    with model_usage_context(task_id=task_id, node_name=node_name):
+        record_llm_call(
+            provider=provider,
+            model=model,
+            duration_seconds=duration_seconds,
+            input_tokens=usage.get("input_tokens"),
+            output_tokens=usage.get("output_tokens"),
+            currency=currency,
+        )
+
+
+def _capture_usage_context() -> tuple[str | None, str | None]:
+    return _current_task_id.get(), _current_node_name.get()
+
+
+def _get_instrumentation_metadata(llm: Any) -> tuple[str | None, str | None, str | None]:
+    return (
+        _get_value(llm, "_model_usage_provider"),
+        _get_value(llm, "_model_usage_model"),
+        _get_value(llm, "_model_usage_currency"),
     )
 
 
