@@ -440,10 +440,13 @@ export const configApi = {
   },
 
   // 获取默认模型配置
-  getDefaultModels(): Promise<{ quick_analysis_model: string; deep_analysis_model: string }> {
-    return ApiClient.get('/api/config/settings').then(settings => ({
+  getDefaultModels(): Promise<{ quick_analysis_model: string; deep_analysis_model: string; quick_analysis_provider?: string; deep_analysis_provider?: string }> {
+    return ApiClient.get('/api/config/settings').then((settings: any) => ({
       quick_analysis_model: settings.quick_analysis_model || 'qwen-turbo',
-      deep_analysis_model: settings.deep_analysis_model || 'qwen-max'
+      deep_analysis_model: settings.deep_analysis_model || 'qwen-max',
+      // 透传系统默认模型的厂家偏好,供前端回填时区分跨厂家同名模型
+      quick_analysis_provider: settings.quick_analysis_provider || undefined,
+      deep_analysis_provider: settings.deep_analysis_provider || undefined
     }))
   },
 
