@@ -10,8 +10,10 @@ from tradingagents.graph.model_usage import (
 def test_canonical_node_keys_cover_graph_and_tool_nodes():
     assert canonical_node_key("Market Analyst") == "market_analyst"
     assert canonical_node_key("tools_market") == "market_analyst"
+    assert canonical_node_key("Msg Clear Market") == "market_analyst"
     assert canonical_node_key("Value Analyst") == "value_analyst"
     assert canonical_node_key("tools_value") == "value_analyst"
+    assert canonical_node_key("Msg Clear Value") == "value_analyst"
     assert canonical_node_key("Risk Judge") == "risk_judge"
     assert canonical_node_key("SignalProcessor") == "signal_processor"
 
@@ -73,3 +75,46 @@ def test_clear_model_usage_removes_task_snapshot():
     assert get_model_usage_snapshot("task-3")["summary"]["total_calls"] == 1
     clear_model_usage("task-3")
     assert get_model_usage_snapshot("task-3")["summary"]["total_calls"] == 0
+
+
+def test_token_partial_call_with_known_cost_keeps_cost_convenience_fields():
+    with model_usage_context(task_id="task-4", node_name="Msg Clear Market"):
+        record_llm_call(
+            provider="codex",
+            model="gpt-5.5",
+            duration_seconds=0.2,
+            cost=0.03,
+            currency="CNY",
+        )
+
+    node = get_model_usage_snapshot("task-4")["nodes"]["market_analyst"]
+    assert node["partial"] is True
+    assert node["cost"] == 0.03
+    assert node["currency"] == "CNY"
+    assert node["costs_by_currency"] == {"CNY": 0.03}
+
+
+def test_missing_cost_metadata_suppresses_cost_convenience_fields():
+    with model_usage_context(task_id="task-5", node_name="Value Analyst"):
+        record_llm_call(
+            provider="codex",
+            model="gpt-5.5",
+            duration_seconds=0.2,
+            input_tokens=10,
+            output_tokens=5,
+            cost=0.03,
+            currency="CNY",
+        )
+        record_llm_call(
+            provider="codex",
+            model="gpt-5.5",
+            duration_seconds=0.2,
+            input_tokens=20,
+            output_tokens=10,
+        )
+
+    node = get_model_usage_snapshot("task-5")["nodes"]["value_analyst"]
+    assert node["partial"] is True
+    assert node["cost"] is None
+    assert node["currency"] is None
+    assert node["costs_by_currency"] == {"CNY": 0.03}

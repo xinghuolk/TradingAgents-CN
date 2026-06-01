@@ -9,14 +9,19 @@ from typing import Any
 CANONICAL_NODE_KEYS = {
     "Market Analyst": "market_analyst",
     "tools_market": "market_analyst",
+    "Msg Clear Market": "market_analyst",
     "Fundamentals Analyst": "fundamentals_analyst",
     "tools_fundamentals": "fundamentals_analyst",
+    "Msg Clear Fundamentals": "fundamentals_analyst",
     "News Analyst": "news_analyst",
     "tools_news": "news_analyst",
+    "Msg Clear News": "news_analyst",
     "Social Analyst": "social_analyst",
     "tools_social": "social_analyst",
+    "Msg Clear Social": "social_analyst",
     "Value Analyst": "value_analyst",
     "tools_value": "value_analyst",
+    "Msg Clear Value": "value_analyst",
     "Bull Researcher": "bull_researcher",
     "Bear Researcher": "bear_researcher",
     "Research Manager": "research_manager",
@@ -109,6 +114,8 @@ def record_llm_call(
             node_usage["costs_by_currency"][currency] = (
                 node_usage["costs_by_currency"].get(currency, 0) + cost
             )
+        if cost is None or currency is None:
+            node_usage["missing_cost_metadata"] = True
         if (
             input_tokens is None
             or output_tokens is None
@@ -147,6 +154,7 @@ def _empty_node_aggregate() -> dict[str, Any]:
         "models": set(),
         "costs_by_currency": {},
         "partial": False,
+        "missing_cost_metadata": False,
     }
 
 
@@ -167,7 +175,9 @@ def _node_snapshot(node_key: str, node_usage: dict[str, Any]) -> dict[str, Any]:
     providers = sorted(node_usage["providers"])
     models = sorted(node_usage["models"])
     costs_by_currency = dict(sorted(node_usage["costs_by_currency"].items()))
-    complete_cost = not node_usage["partial"] and len(costs_by_currency) == 1
+    complete_cost = (
+        not node_usage["missing_cost_metadata"] and len(costs_by_currency) == 1
+    )
     return {
         "display_name": DISPLAY_NAMES.get(node_key, node_key),
         "provider": _single_or_mixed(providers),
