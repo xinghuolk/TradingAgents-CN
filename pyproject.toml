@@ -54,12 +54,15 @@ dependencies = [
     "chainlit>=2.5.5",
     "chromadb>=1.0.12",
     "dashscope>=1.20.0",
-    "langchain-anthropic>=0.3.15",
+    "langchain-anthropic>=1.0,<2.0",
     "langchain-experimental>=0.3.4",
     "langchain-google-genai>=2.1.12",  # 修复 client_options 未定义错误
-    "langchain-openai>=0.3.23",
-    "langgraph>=0.4.8",
-    "openai>=1.0.0,<2.0.0",
+    # langchain-openai 1.x 是第一个允许 openai>=2 的系列（openai 2.x 是 Codex
+    # responses.stream 解析器修复所必需的），它会级联升级 langchain-core/langchain/
+    # langgraph 至 1.x。
+    "langchain-openai>=1.0,<2.0",
+    "langgraph>=1.0,<2.0",
+    "openai>=2.0,<3.0",
 
     # 数据处理和分析
     "pandas>=2.3.0",

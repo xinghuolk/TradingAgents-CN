@@ -13,6 +13,10 @@ Responses semantics it doesn't speak. langchain then iterates the empty
 must force ``use_responses_api=False`` to keep every call on that path. These
 tests lock that behaviour in (no network: the underlying ``responses.stream`` is
 mocked).
+
+The adapter talks to Codex via the STREAMING ``responses.stream(...)`` helper
+(Codex rejects non-streaming calls with ``400 Stream must be set to true``), so
+these tests stub ``responses.stream`` with a context-manager fake.
 """
 
 from types import SimpleNamespace
@@ -35,13 +39,37 @@ def _build():
     )
 
 
+class _FakeStream:
+    """Context-manager stand-in for ``responses.stream(...)``.
+
+    Yields no deltas; the final response carries the output. ``get_final_response``
+    returns the supplied ``final`` (matching the real SDK contract).
+    """
+
+    def __init__(self, final):
+        self._final = final
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def __iter__(self):
+        return iter([])
+
+    def get_final_response(self):
+        return self._final
+
+
 def _patch_create(llm, final):
-    # The adapter calls NON-streaming ``responses.create(**kwargs)`` and reads
-    # ``final.output`` directly (see codex_responses_adapter._CodexCompletionsAdapter.create).
-    # Replace the REAL openai client's responses surface inside the adapter so no
-    # HTTP happens. ``llm.client`` is the _CodexCompletionsAdapter; ``._client``
-    # is the underlying openai.OpenAI we stub.
-    llm.client._client.responses = SimpleNamespace(create=lambda **kw: final)
+    # The adapter calls STREAMING ``responses.stream(**kwargs)`` and reads
+    # ``stream.get_final_response().output`` (see
+    # codex_responses_adapter._CodexCompletionsAdapter.create). Codex requires
+    # ``stream=true``, so we stub ``responses.stream`` with a context-manager
+    # fake — no HTTP happens. ``llm.client`` is the _CodexCompletionsAdapter;
+    # ``._client`` is the underlying openai.OpenAI we stub.
+    llm.client._client.responses = SimpleNamespace(stream=lambda **kw: _FakeStream(final))
 
 
 def _final(output):
