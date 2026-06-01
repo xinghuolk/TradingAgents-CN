@@ -36,6 +36,7 @@ from .setup import GraphSetup
 from .propagation import Propagator
 from .reflection import Reflector
 from .signal_processing import SignalProcessor
+from .model_usage import describe_llm, instrument_llm_for_model_usage
 
 
 def create_llm_by_provider(provider: str, model: str, backend_url: str, temperature: float, max_tokens: int, timeout: int, api_key: str = None):
@@ -63,9 +64,11 @@ def create_llm_by_provider(provider: str, model: str, backend_url: str, temperat
     # === 订阅式鉴权分支（Claude Code / Codex） ===
     # 走这两个分支时 api_key/backend_url 被忽略，鉴权信息由 subscription_credentials 模块
     # 从本机 Claude Code / Codex CLI 凭据中读取并自动刷新。
-    if provider.lower() == "claude_code":
+    provider_key = provider.lower()
+
+    if provider_key == "claude_code":
         from tradingagents.llm_adapters.claude_code_adapter import ChatClaudeCodeOAuth
-        return ChatClaudeCodeOAuth(
+        llm = ChatClaudeCodeOAuth(
             model=model,
             access_token=api_key,  # None on CLI path → adapter falls back to local resolve
             temperature=temperature,
@@ -73,9 +76,9 @@ def create_llm_by_provider(provider: str, model: str, backend_url: str, temperat
             timeout=timeout,
         )
 
-    if provider.lower() == "codex":
+    elif provider_key == "codex":
         from tradingagents.llm_adapters.codex_adapter import ChatCodexOAuth
-        return ChatCodexOAuth(
+        llm = ChatCodexOAuth(
             model=model,
             access_token=api_key,
             temperature=temperature,
@@ -83,14 +86,14 @@ def create_llm_by_provider(provider: str, model: str, backend_url: str, temperat
             timeout=timeout,
         )
 
-    if provider.lower() == "google":
+    elif provider_key == "google":
         # 优先使用传入的 API Key，否则从环境变量读取
         google_api_key = api_key or os.getenv('GOOGLE_API_KEY')
         if not google_api_key:
             raise ValueError("使用Google需要设置GOOGLE_API_KEY环境变量或在数据库中配置API Key")
 
         # 传递 base_url 参数，使厂家配置的 default_base_url 生效
-        return ChatGoogleOpenAI(
+        llm = ChatGoogleOpenAI(
             model=model,
             google_api_key=google_api_key,
             base_url=backend_url if backend_url else None,
@@ -99,13 +102,13 @@ def create_llm_by_provider(provider: str, model: str, backend_url: str, temperat
             timeout=timeout
         )
 
-    elif provider.lower() == "deepseek":
+    elif provider_key == "deepseek":
         # 优先使用传入的 API Key，否则从环境变量读取
         deepseek_api_key = api_key or os.getenv('DEEPSEEK_API_KEY')
         if not deepseek_api_key:
             raise ValueError("使用DeepSeek需要设置DEEPSEEK_API_KEY环境变量或在数据库中配置API Key")
 
-        return ChatDeepSeek(
+        llm = ChatDeepSeek(
             model=model,
             api_key=deepseek_api_key,
             base_url=backend_url,
@@ -114,17 +117,17 @@ def create_llm_by_provider(provider: str, model: str, backend_url: str, temperat
             timeout=timeout
         )
 
-    elif provider.lower() in ["openai", "siliconflow", "openrouter", "ollama"]:
+    elif provider_key in ["openai", "siliconflow", "openrouter", "ollama"]:
         # 优先使用传入的 API Key，否则从环境变量读取
         if not api_key:
-            if provider.lower() == "siliconflow":
+            if provider_key == "siliconflow":
                 api_key = os.getenv('SILICONFLOW_API_KEY')
-            elif provider.lower() == "openrouter":
+            elif provider_key == "openrouter":
                 api_key = os.getenv('OPENROUTER_API_KEY') or os.getenv('OPENAI_API_KEY')
-            elif provider.lower() == "openai":
+            elif provider_key == "openai":
                 api_key = os.getenv('OPENAI_API_KEY')
 
-        return ChatOpenAI(
+        llm = ChatOpenAI(
             model=model,
             base_url=backend_url,
             api_key=api_key,
@@ -133,8 +136,8 @@ def create_llm_by_provider(provider: str, model: str, backend_url: str, temperat
             timeout=timeout
         )
 
-    elif provider.lower() == "anthropic":
-        return ChatAnthropic(
+    elif provider_key == "anthropic":
+        llm = ChatAnthropic(
             model=model,
             base_url=backend_url,
             temperature=temperature,
@@ -167,7 +170,7 @@ def create_llm_by_provider(provider: str, model: str, backend_url: str, temperat
             if not custom_api_key:
                 logger.warning(f"⚠️ 未找到自定义厂家 {provider} 的 API Key，尝试使用默认配置")
 
-        return ChatOpenAI(
+        llm = ChatOpenAI(
             model=model,
             base_url=backend_url,
             api_key=custom_api_key,
@@ -175,6 +178,8 @@ def create_llm_by_provider(provider: str, model: str, backend_url: str, temperat
             max_tokens=max_tokens,
             timeout=timeout
         )
+
+    return instrument_llm_for_model_usage(llm, provider=provider, model=model)
 
 
 class TradingAgentsGraph:
@@ -563,12 +568,8 @@ class TradingAgentsGraph:
         self._log_state(trade_date, final_state)
 
         # 获取模型信息
-        model_info = ""
         try:
-            if hasattr(self.deep_thinking_llm, 'model_name'):
-                model_info = f"{self.deep_thinking_llm.__class__.__name__}:{self.deep_thinking_llm.model_name}"
-            else:
-                model_info = self.deep_thinking_llm.__class__.__name__
+            model_info = describe_llm(self.deep_thinking_llm)
         except Exception:
             model_info = "Unknown"
 

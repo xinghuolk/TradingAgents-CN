@@ -3,6 +3,8 @@ from __future__ import annotations
 from contextlib import contextmanager
 from contextvars import ContextVar, Token
 from threading import RLock
+import time
+from collections.abc import AsyncIterator, Iterator, Mapping
 from typing import Any
 
 
@@ -151,6 +153,37 @@ def clear_model_usage(task_id: str) -> None:
         _usage_by_task.pop(task_id, None)
 
 
+def describe_llm(llm: Any) -> str:
+    model_name = _get_value(llm, "model_name")
+    if model_name is None:
+        model_name = _get_value(llm, "model")
+    if model_name:
+        return f"{llm.__class__.__name__}:{model_name}"
+    return llm.__class__.__name__
+
+
+def instrument_llm_for_model_usage(
+    llm: Any,
+    *,
+    provider: str,
+    model: str,
+    currency: str | None = None,
+) -> Any:
+    if llm is None:
+        return llm
+
+    _set_private_attr(llm, "_model_usage_provider", provider)
+    _set_private_attr(llm, "_model_usage_model", model)
+    _set_private_attr(llm, "_model_usage_currency", currency)
+
+    _instrument_call_method(llm, "invoke", provider, model, currency)
+    _instrument_call_method(llm, "ainvoke", provider, model, currency)
+    _instrument_stream_method(llm, "stream", provider, model, currency)
+    _instrument_stream_method(llm, "astream", provider, model, currency)
+    _instrument_bind_tools(llm, provider, model, currency)
+    return llm
+
+
 def _empty_node_aggregate() -> dict[str, Any]:
     return {
         "calls": 0,
@@ -230,3 +263,273 @@ def _normalize_currency(currency: str | None) -> str | None:
         return None
     normalized = currency.strip()
     return normalized or None
+
+
+def _instrument_call_method(
+    llm: Any,
+    method_name: str,
+    provider: str,
+    model: str,
+    currency: str | None,
+) -> None:
+    original_attr = f"_model_usage_original_{method_name}"
+    if _has_private_attr(llm, original_attr) or not hasattr(llm, method_name):
+        return
+
+    original = getattr(llm, method_name)
+
+    if method_name.startswith("a"):
+
+        async def async_wrapped(*args, **kwargs):
+            start = time.perf_counter()
+            try:
+                result = await original(*args, **kwargs)
+            except Exception:
+                _record_from_result(
+                    None, provider, model, currency, time.perf_counter() - start
+                )
+                raise
+            _record_from_result(
+                result, provider, model, currency, time.perf_counter() - start
+            )
+            return result
+
+        wrapped = async_wrapped
+    else:
+
+        def wrapped(*args, **kwargs):
+            start = time.perf_counter()
+            try:
+                result = original(*args, **kwargs)
+            except Exception:
+                _record_from_result(
+                    None, provider, model, currency, time.perf_counter() - start
+                )
+                raise
+            _record_from_result(
+                result, provider, model, currency, time.perf_counter() - start
+            )
+            return result
+
+    _set_private_attr(llm, original_attr, original)
+    _set_private_attr(llm, method_name, wrapped)
+
+
+def _instrument_stream_method(
+    llm: Any,
+    method_name: str,
+    provider: str,
+    model: str,
+    currency: str | None,
+) -> None:
+    original_attr = f"_model_usage_original_{method_name}"
+    if _has_private_attr(llm, original_attr) or not hasattr(llm, method_name):
+        return
+
+    original = getattr(llm, method_name)
+
+    if method_name.startswith("a"):
+
+        def async_stream_wrapped(*args, **kwargs):
+            start = time.perf_counter()
+            try:
+                result = original(*args, **kwargs)
+            except Exception:
+                _record_from_result(
+                    None, provider, model, currency, time.perf_counter() - start
+                )
+                raise
+            if hasattr(result, "__aiter__"):
+                return _recording_async_iterator(
+                    result, provider, model, currency, start
+                )
+            _record_from_result(
+                result, provider, model, currency, time.perf_counter() - start
+            )
+            return result
+
+        wrapped = async_stream_wrapped
+    else:
+
+        def stream_wrapped(*args, **kwargs):
+            start = time.perf_counter()
+            try:
+                result = original(*args, **kwargs)
+            except Exception:
+                _record_from_result(
+                    None, provider, model, currency, time.perf_counter() - start
+                )
+                raise
+            if hasattr(result, "__iter__") and not isinstance(
+                result, (str, bytes, Mapping)
+            ):
+                return _recording_iterator(result, provider, model, currency, start)
+            _record_from_result(
+                result, provider, model, currency, time.perf_counter() - start
+            )
+            return result
+
+        wrapped = stream_wrapped
+
+    _set_private_attr(llm, original_attr, original)
+    _set_private_attr(llm, method_name, wrapped)
+
+
+def _instrument_bind_tools(
+    llm: Any,
+    provider: str,
+    model: str,
+    currency: str | None,
+) -> None:
+    original_attr = "_model_usage_original_bind_tools"
+    if _has_private_attr(llm, original_attr) or not hasattr(llm, "bind_tools"):
+        return
+
+    original = getattr(llm, "bind_tools")
+
+    def bind_tools_wrapped(*args, **kwargs):
+        bound = original(*args, **kwargs)
+        return instrument_llm_for_model_usage(
+            bound, provider=provider, model=model, currency=currency
+        )
+
+    _set_private_attr(llm, original_attr, original)
+    _set_private_attr(llm, "bind_tools", bind_tools_wrapped)
+
+
+def _recording_iterator(
+    iterator: Iterator[Any],
+    provider: str,
+    model: str,
+    currency: str | None,
+    start: float,
+):
+    last_chunk = None
+    try:
+        for chunk in iterator:
+            last_chunk = chunk
+            yield chunk
+    finally:
+        _record_from_result(
+            last_chunk, provider, model, currency, time.perf_counter() - start
+        )
+
+
+async def _recording_async_iterator(
+    iterator: AsyncIterator[Any],
+    provider: str,
+    model: str,
+    currency: str | None,
+    start: float,
+):
+    last_chunk = None
+    try:
+        async for chunk in iterator:
+            last_chunk = chunk
+            yield chunk
+    finally:
+        _record_from_result(
+            last_chunk, provider, model, currency, time.perf_counter() - start
+        )
+
+
+def _record_from_result(
+    result: Any,
+    provider: str,
+    model: str,
+    currency: str | None,
+    duration_seconds: float,
+) -> None:
+    usage = _extract_usage_tokens(result)
+    record_llm_call(
+        provider=provider,
+        model=model,
+        duration_seconds=duration_seconds,
+        input_tokens=usage.get("input_tokens"),
+        output_tokens=usage.get("output_tokens"),
+        currency=currency,
+    )
+
+
+def _extract_usage_tokens(result: Any) -> dict[str, int | None]:
+    usage_sources = [
+        _get_value(result, "usage_metadata"),
+        _get_nested_value(result, ("response_metadata", "token_usage")),
+        _get_nested_value(result, ("llm_output", "token_usage")),
+        _get_value(result, "usage"),
+        result,
+    ]
+    for usage in usage_sources:
+        tokens = _tokens_from_usage(usage)
+        if tokens["input_tokens"] is not None or tokens["output_tokens"] is not None:
+            return tokens
+    return {"input_tokens": None, "output_tokens": None}
+
+
+def _tokens_from_usage(usage: Any) -> dict[str, int | None]:
+    if usage is None:
+        return {"input_tokens": None, "output_tokens": None}
+    return {
+        "input_tokens": _first_int(
+            usage,
+            (
+                "input_tokens",
+                "prompt_tokens",
+                "input_token_count",
+                "prompt_token_count",
+            ),
+        ),
+        "output_tokens": _first_int(
+            usage,
+            (
+                "output_tokens",
+                "completion_tokens",
+                "generated_tokens",
+                "completion_token_count",
+            ),
+        ),
+    }
+
+
+def _first_int(source: Any, keys: tuple[str, ...]) -> int | None:
+    for key in keys:
+        value = _get_value(source, key)
+        if value is None:
+            continue
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+def _get_nested_value(source: Any, path: tuple[str, ...]) -> Any:
+    value = source
+    for key in path:
+        value = _get_value(value, key)
+        if value is None:
+            return None
+    return value
+
+
+def _get_value(source: Any, key: str) -> Any:
+    if source is None:
+        return None
+    if isinstance(source, Mapping):
+        return source.get(key)
+    return getattr(source, key, None)
+
+
+def _has_private_attr(obj: Any, name: str) -> bool:
+    try:
+        object.__getattribute__(obj, name)
+        return True
+    except AttributeError:
+        return False
+
+
+def _set_private_attr(obj: Any, name: str, value: Any) -> None:
+    try:
+        setattr(obj, name, value)
+    except Exception:
+        object.__setattr__(obj, name, value)
