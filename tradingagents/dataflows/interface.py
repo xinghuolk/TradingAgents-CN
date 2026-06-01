@@ -193,7 +193,20 @@ import os
 import pandas as pd
 from tqdm import tqdm
 from openai import OpenAI
-from tradingagents.graph.model_usage import record_openai_response_usage
+
+
+def record_openai_response_usage(*args, **kwargs):
+    """模块级包装:延迟 import 真正的实现以打破循环导入。
+
+    直接在顶层 `from tradingagents.graph.model_usage import ...` 会触发循环导入
+    ——tradingagents.graph 包初始化会回头 import 本模块(interface.set_config),
+    此时 interface 仍在初始化(partially initialized)→ ImportError。
+    保留此模块级名字,使测试可对 `interface.record_openai_response_usage` 打桩。
+    """
+    from tradingagents.graph.model_usage import (
+        record_openai_response_usage as _impl,
+    )
+    return _impl(*args, **kwargs)
 
 # 尝试导入yfinance，如果失败则设置为None
 try:
