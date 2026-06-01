@@ -163,6 +163,31 @@ class FinancialReportAdapter:
             return refresh_policy_module.CACHE_ONLY
         return refresh_policy_module.CACHE_FIRST
 
+    def _result_from_extraction(
+        self,
+        *,
+        extraction: Any,
+        ticker: str,
+        market: str,
+        period_end: str,
+        warnings: list[str] | None = None,
+    ) -> FinancialReportAdapterResult:
+        result_warnings = list(warnings or [])
+        staleness = getattr(extraction, "staleness", None)
+        if bool(getattr(staleness, "is_missing", False)):
+            result_warnings.append("annual-report extraction missing")
+        if bool(getattr(staleness, "is_stale", False)):
+            result_warnings.append("annual-report extraction stale")
+        return FinancialReportAdapterResult(
+            available=not bool(getattr(staleness, "is_missing", False)),
+            company=ticker,
+            market=market,
+            period_end=period_end,
+            extraction=extraction,
+            warnings=result_warnings,
+            errors=[],
+        )
+
     def get_annual_report_data(
         self,
         *,
@@ -212,23 +237,35 @@ class FinancialReportAdapter:
                 include_llm_supplement=include_llm,
                 refresh_policy=self._refresh_policy(RefreshPolicy),
             )
-            warnings: list[str] = []
-            staleness = getattr(extraction, "staleness", None)
-            if bool(getattr(staleness, "is_missing", False)):
-                warnings.append("annual-report extraction missing")
-            if bool(getattr(staleness, "is_stale", False)):
-                warnings.append("annual-report extraction stale")
-            return FinancialReportAdapterResult(
-                available=not bool(getattr(staleness, "is_missing", False)),
-                company=ticker,
+            return self._result_from_extraction(
+                extraction=extraction,
+                ticker=ticker,
                 market=market,
                 period_end=resolved_period_end,
-                extraction=extraction,
-                warnings=warnings,
-                errors=[],
             )
         except ExtractorError as exc:
             reason = getattr(exc, "reason", "extractor_error")
+            if include_llm:
+                try:
+                    extraction = client.get_extraction(
+                        company=ticker,
+                        market=market,
+                        period_end=resolved_period_end,
+                        include_llm_supplement=False,
+                        refresh_policy=self._refresh_policy(RefreshPolicy),
+                    )
+                    return self._result_from_extraction(
+                        extraction=extraction,
+                        ticker=ticker,
+                        market=market,
+                        period_end=resolved_period_end,
+                        warnings=[
+                            "llm_supplement_failed; retried provider-only: "
+                            f"{reason}: {exc}"
+                        ],
+                    )
+                except Exception:
+                    pass
             return FinancialReportAdapterResult(
                 available=False,
                 company=ticker,

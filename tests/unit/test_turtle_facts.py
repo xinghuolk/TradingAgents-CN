@@ -1,3 +1,6 @@
+import json
+from decimal import Decimal
+
 import pytest
 
 from tradingagents.dataflows.value_investment.turtle.facts import (
@@ -145,6 +148,25 @@ def test_turtle_fact_serializers_return_defensive_copies():
     assert signals.results["R"].missing_inputs == ["input 1"]
     assert signals.veto_reasons == ["veto"]
     assert signals.caveats == ["signal caveat"]
+
+
+def test_turtle_fact_serializer_converts_decimal_values_to_json_safe_numbers():
+    report = TurtleReportFacts(
+        fields={
+            "display_only_amount": TurtleFactValue(
+                name="display_only_amount",
+                value=Decimal("123.45"),
+                source_label="financial-report-client",
+                source_reference="field p.1",
+                reliability="display_only",
+            )
+        }
+    )
+
+    payload = report.to_dict()
+
+    assert payload["fields"]["display_only_amount"]["value"] == 123.45
+    json.dumps(payload)
 
 
 class TestMergeStatus:

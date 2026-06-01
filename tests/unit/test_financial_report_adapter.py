@@ -209,6 +209,52 @@ def test_adapter_calls_extractor_with_cache_only(monkeypatch):
     assert callable(FakeClient.last_config.kwargs["pdf_resolver"])
 
 
+def test_adapter_falls_back_to_provider_only_when_llm_pipeline_fails(monkeypatch):
+    install_fake_extractor(monkeypatch)
+    calls = []
+    cash_field = object()
+
+    def get_extraction(self, **kwargs):
+        calls.append(kwargs)
+        if kwargs["include_llm_supplement"]:
+            raise FakeExtractorError(
+                "fetch_failed",
+                "no PDF text parser available: pdftotext is not on PATH",
+            )
+        return FakeExtraction(
+            company=kwargs["company"],
+            market=kwargs["market"],
+            period_end=kwargs["period_end"],
+            staleness=FakeStaleness(),
+            fields={"cash": cash_field},
+        )
+
+    monkeypatch.setattr(FakeClient, "get_extraction", get_extraction)
+    adapter = FinancialReportAdapter(config=FinancialReportClientConfig(
+        enabled=True,
+        cache_only=False,
+        force_refresh=False,
+        include_llm_supplement=True,
+        allow_llm_models=("codex",),
+        extractor_cache_root="/tmp/cache",
+        llm_config_path="/tmp/llm.json",
+        pdf_root="",
+    ))
+
+    result = adapter.get_annual_report_data(
+        ticker="00001", market="HK", period_end="2025-12-31"
+    )
+
+    assert result.available is True
+    assert result.extraction.fields == {"cash": cash_field}
+    assert [call["include_llm_supplement"] for call in calls] == [True, False]
+    assert result.errors == []
+    assert result.warnings == [
+        "llm_supplement_failed; retried provider-only: fetch_failed: "
+        "no PDF text parser available: pdftotext is not on PATH"
+    ]
+
+
 def test_adapter_does_not_request_llm_supplement_without_llm_config(monkeypatch):
     install_fake_extractor(monkeypatch)
     FakeClient.calls.clear()

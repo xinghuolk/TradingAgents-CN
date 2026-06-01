@@ -5,6 +5,7 @@ from __future__ import annotations
 from copy import deepcopy
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
+from decimal import Decimal
 from typing import Any, Literal
 
 
@@ -35,6 +36,18 @@ def _copy_historical(value: dict[str, "TurtleReportFacts"]) -> dict[str, "Turtle
         )
         for period_end, facts in value.items()
     }
+
+
+def _json_safe_value(value: Any) -> Any:
+    if isinstance(value, Decimal):
+        return float(value)
+    if isinstance(value, dict):
+        return {key: _json_safe_value(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_json_safe_value(item) for item in value]
+    if isinstance(value, tuple):
+        return [_json_safe_value(item) for item in value]
+    return value
 
 
 def infer_turtle_period_end(reference_date: str | None) -> str:
@@ -169,6 +182,8 @@ class TurtleFactValue:
         data = deepcopy(asdict(self))
         if isinstance(self.value, MoneyAmount):
             data["value"] = self.value.to_dict()
+        else:
+            data["value"] = _json_safe_value(data["value"])
         return data
 
 
