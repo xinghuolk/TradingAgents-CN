@@ -48,10 +48,11 @@ export interface ModelUsageNode {
 
 export interface ModelUsage {
   summary?: {
+    // 字段名与后端 _summary_snapshot 实际产出对齐:仅 calls 带 total_ 前缀
     total_calls: number
-    total_input_tokens: number
-    total_output_tokens: number
-    total_duration_seconds: number
+    input_tokens: number
+    output_tokens: number
+    duration_seconds: number
     costs_by_currency?: Record<string, number>
   }
   nodes?: Record<string, ModelUsageNode>
