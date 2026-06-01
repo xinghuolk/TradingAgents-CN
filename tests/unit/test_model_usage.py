@@ -1,0 +1,75 @@
+from tradingagents.graph.model_usage import (
+    canonical_node_key,
+    clear_model_usage,
+    get_model_usage_snapshot,
+    model_usage_context,
+    record_llm_call,
+)
+
+
+def test_canonical_node_keys_cover_graph_and_tool_nodes():
+    assert canonical_node_key("Market Analyst") == "market_analyst"
+    assert canonical_node_key("tools_market") == "market_analyst"
+    assert canonical_node_key("Value Analyst") == "value_analyst"
+    assert canonical_node_key("tools_value") == "value_analyst"
+    assert canonical_node_key("Risk Judge") == "risk_judge"
+    assert canonical_node_key("SignalProcessor") == "signal_processor"
+
+
+def test_record_llm_call_aggregates_under_current_node():
+    with model_usage_context(task_id="task-1"):
+        with model_usage_context(node_name="Value Analyst"):
+            record_llm_call(
+                provider="codex",
+                model="gpt-5.5",
+                duration_seconds=1.25,
+                input_tokens=100,
+                output_tokens=25,
+                cost=0.12,
+                currency="CNY",
+            )
+
+    snapshot = get_model_usage_snapshot("task-1")
+    node = snapshot["nodes"]["value_analyst"]
+    assert node["display_name"] == "价值投资分析"
+    assert node["provider"] == "codex"
+    assert node["model"] == "gpt-5.5"
+    assert node["calls"] == 1
+    assert node["input_tokens"] == 100
+    assert node["output_tokens"] == 25
+    assert node["cost"] == 0.12
+    assert node["currency"] == "CNY"
+    assert node["partial"] is False
+    assert snapshot["summary"]["total_calls"] == 1
+    assert snapshot["summary"]["costs_by_currency"] == {"CNY": 0.12}
+
+
+def test_partial_and_mixed_currency_snapshot():
+    with model_usage_context(task_id="task-2"):
+        with model_usage_context(node_name="News Analyst"):
+            record_llm_call(
+                provider="openai",
+                model="gpt-4.1",
+                duration_seconds=0.5,
+                cost=0.01,
+                currency="USD",
+            )
+            record_llm_call(provider="codex", model="gpt-5.5", duration_seconds=0.7)
+
+    node = get_model_usage_snapshot("task-2")["nodes"]["news_analyst"]
+    assert node["provider"] == "mixed"
+    assert node["model"] == "mixed"
+    assert node["providers"] == ["codex", "openai"]
+    assert node["models"] == ["gpt-4.1", "gpt-5.5"]
+    assert node["cost"] is None
+    assert node["currency"] is None
+    assert node["costs_by_currency"] == {"USD": 0.01}
+    assert node["partial"] is True
+
+
+def test_clear_model_usage_removes_task_snapshot():
+    with model_usage_context(task_id="task-3", node_name="Trader"):
+        record_llm_call(provider="deepseek", model="flash", duration_seconds=0.1)
+    assert get_model_usage_snapshot("task-3")["summary"]["total_calls"] == 1
+    clear_model_usage("task-3")
+    assert get_model_usage_snapshot("task-3")["summary"]["total_calls"] == 0
