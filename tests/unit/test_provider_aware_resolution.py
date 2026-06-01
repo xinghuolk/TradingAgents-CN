@@ -33,3 +33,15 @@ def test_precise_miss_falls_back_to_model_name_not_default():
 
 def test_no_match_returns_none():
     assert _match_llm_config(_cfgs(), "no-such-model", "openai") is None
+
+
+def test_recommend_models_with_providers_returns_four_tuple():
+    """recommend_models_with_providers 必须返回 4 元组 (q_model, q_provider, d_model, d_provider)。"""
+    from app.services.model_capability_service import get_model_capability_service
+    svc = get_model_capability_service()
+    result = svc.recommend_models_with_providers("标准")
+    assert isinstance(result, tuple) and len(result) == 4
+    q_model, q_provider, d_model, d_provider = result
+    # 模型名应为字符串(或在无配置时来自默认);provider 可能为 None
+    assert q_model is None or isinstance(q_model, str)
+    assert d_model is None or isinstance(d_model, str)

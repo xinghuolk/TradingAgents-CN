@@ -180,9 +180,8 @@ async def recommend_models(request: ModelRecommendationRequest):
         capability_service = get_model_capability_service()
 
         # 获取推荐模型
-        quick_model, deep_model = capability_service.recommend_models_for_depth(
-            request.research_depth
-        )
+        quick_model, quick_provider, deep_model, deep_provider = \
+            capability_service.recommend_models_with_providers(request.research_depth)
 
         logger.info(f"🔍 推荐模型: quick={quick_model}, deep={deep_model}")
 
@@ -217,7 +216,9 @@ async def recommend_models(request: ModelRecommendationRequest):
 
         response_data = {
             "quick_model": quick_model,
+            "quick_provider": quick_provider,
             "deep_model": deep_model,
+            "deep_provider": deep_provider,
             "quick_model_info": quick_info,
             "deep_model_info": deep_info,
             "reason": reason

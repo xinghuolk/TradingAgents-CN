@@ -309,56 +309,46 @@ class ModelCapabilityService:
 
         return result
     
-    def recommend_models_for_depth(
-        self,
-        research_depth: str
-    ) -> Tuple[str, str]:
-        """
-        根据分析深度推荐合适的模型对
-        
-        Args:
-            research_depth: 研究深度（快速/基础/标准/深度/全面）
-            
-        Returns:
-            (quick_model, deep_model) 元组
+    def _recommend_candidates(self, research_depth: str):
+        """返回 (quick_candidate_obj_or_None, deep_candidate_obj_or_None)。
+        候选对象保留 .provider / .model_name，供上层决定带不带 provider。
         """
         requirements = ANALYSIS_DEPTH_REQUIREMENTS.get(research_depth, ANALYSIS_DEPTH_REQUIREMENTS["标准"])
-        
+
         # 获取所有启用的模型
         try:
             llm_configs = unified_config.get_llm_configs()
             enabled_models = [c for c in llm_configs if c.enabled]
         except Exception as e:
             logger.error(f"获取模型配置失败: {e}")
-            # 使用默认模型
-            return self._get_default_models()
-        
+            return None, None
+
         if not enabled_models:
             logger.warning("没有启用的模型，使用默认配置")
-            return self._get_default_models()
-        
+            return None, None
+
         # 筛选适合快速分析的模型
         quick_candidates = []
         for m in enabled_models:
             roles = getattr(m, 'suitable_roles', [ModelRole.BOTH])
             level = getattr(m, 'capability_level', 2)
             features = getattr(m, 'features', [])
-            
+
             if (ModelRole.QUICK_ANALYSIS in roles or ModelRole.BOTH in roles) and \
                level >= requirements["quick_model_min"] and \
                ModelFeature.TOOL_CALLING in features:
                 quick_candidates.append(m)
-        
+
         # 筛选适合深度分析的模型
         deep_candidates = []
         for m in enabled_models:
             roles = getattr(m, 'suitable_roles', [ModelRole.BOTH])
             level = getattr(m, 'capability_level', 2)
-            
+
             if (ModelRole.DEEP_ANALYSIS in roles or ModelRole.BOTH in roles) and \
                level >= requirements["deep_model_min"]:
                 deep_candidates.append(m)
-        
+
         # 按性价比排序（能力等级 vs 成本）
         quick_candidates.sort(
             key=lambda x: (
@@ -367,7 +357,7 @@ class ModelCapabilityService:
             ),
             reverse=True
         )
-        
+
         deep_candidates.sort(
             key=lambda x: (
                 getattr(x, 'capability_level', 2),
@@ -375,22 +365,52 @@ class ModelCapabilityService:
             ),
             reverse=True
         )
-        
-        # 选择最佳模型
-        quick_model = quick_candidates[0].model_name if quick_candidates else None
-        deep_model = deep_candidates[0].model_name if deep_candidates else None
-        
-        # 如果没找到合适的，使用系统默认
+
+        quick_obj = quick_candidates[0] if quick_candidates else None
+        deep_obj = deep_candidates[0] if deep_candidates else None
+        return quick_obj, deep_obj
+
+    def recommend_models_for_depth(
+        self,
+        research_depth: str
+    ) -> Tuple[str, str]:
+        """
+        根据分析深度推荐合适的模型对（保持旧签名，返回纯名字 2 元组）。
+
+        Args:
+            research_depth: 研究深度（快速/基础/标准/深度/全面）
+
+        Returns:
+            (quick_model, deep_model) 元组
+        """
+        q, _pq, d, _pd = self.recommend_models_with_providers(research_depth)
+        return q, d
+
+    def recommend_models_with_providers(self, research_depth: str):
+        """返回 (quick_model, quick_provider, deep_model, deep_provider)。
+        候选对象本身带 .provider，不再丢弃；落默认时 provider 为 None，走两级回退。
+        """
+        quick_obj, deep_obj = self._recommend_candidates(research_depth)
+        if quick_obj is None or deep_obj is None:
+            q, d = self._get_default_models()
+            return q, None, d, None
+
+        # 如果候选对象的 model_name 为空，也走默认
+        quick_model = getattr(quick_obj, 'model_name', None)
+        deep_model = getattr(deep_obj, 'model_name', None)
         if not quick_model or not deep_model:
-            return self._get_default_models()
-        
+            q, d = self._get_default_models()
+            return q, None, d, None
+
         logger.info(
             f"🤖 为 {research_depth} 分析推荐模型: "
             f"quick={quick_model} (角色:快速分析), "
             f"deep={deep_model} (角色:深度推理)"
         )
-        
-        return quick_model, deep_model
+        return (
+            quick_model, getattr(quick_obj, "provider", None),
+            deep_model, getattr(deep_obj, "provider", None),
+        )
     
     def _get_default_models(self) -> Tuple[str, str]:
         """获取默认模型对"""

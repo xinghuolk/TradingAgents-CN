@@ -1294,9 +1294,8 @@ class SimpleAnalysisService:
 
                     # 如果模型不合适，自动切换到推荐模型
                     logger.info(f"🔄 自动切换到推荐模型...")
-                    quick_model, deep_model = capability_service.recommend_models_for_depth(
-                        research_depth
-                    )
+                    quick_model, req_quick_provider, deep_model, req_deep_provider = \
+                        capability_service.recommend_models_with_providers(research_depth)
                     logger.info(f"✅ 已切换: quick={quick_model}, deep={deep_model}")
                 else:
                     # 即使验证通过，也记录警告信息
@@ -1306,9 +1305,8 @@ class SimpleAnalysisService:
 
             else:
                 # 2. 自动推荐模型
-                quick_model, deep_model = capability_service.recommend_models_for_depth(
-                    research_depth
-                )
+                quick_model, req_quick_provider, deep_model, req_deep_provider = \
+                    capability_service.recommend_models_with_providers(research_depth)
                 logger.info(f"🤖 自动推荐模型: quick={quick_model}, deep={deep_model}")
 
             # 🔧 根据快速模型和深度模型分别查找对应的供应商和 API URL
