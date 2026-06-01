@@ -584,14 +584,14 @@
                 filterable
               >
                 <el-option
-                  v-for="model in availableModelsForProvider(systemSettings.default_provider)"
+                  v-for="model in enabledModels"
                   :key="`${model.provider}/${model.model_name}`"
                   :label="model.model_display_name || model.model_name"
                   :value="model.model_name"
                 >
                   <div style="display: flex; flex-direction: column;">
                     <span>{{ model.model_display_name || model.model_name }}</span>
-                    <span style="font-size: 12px; color: #909399;">{{ model.model_name }}</span>
+                    <span style="font-size: 12px; color: #909399;">{{ model.provider }} / {{ model.model_name }}</span>
                   </div>
                 </el-option>
               </el-select>
@@ -606,14 +606,14 @@
                 filterable
               >
                 <el-option
-                  v-for="model in availableModelsForProvider(systemSettings.default_provider)"
+                  v-for="model in enabledModels"
                   :key="`${model.provider}/${model.model_name}`"
                   :label="model.model_display_name || model.model_name"
                   :value="model.model_name"
                 >
                   <div style="display: flex; flex-direction: column;">
                     <span>{{ model.model_display_name || model.model_name }}</span>
-                    <span style="font-size: 12px; color: #909399;">{{ model.model_name }}</span>
+                    <span style="font-size: 12px; color: #909399;">{{ model.provider }} / {{ model.model_name }}</span>
                   </div>
                 </el-option>
               </el-select>
@@ -1283,20 +1283,12 @@ const enabledProviders = computed(() => {
 })
 
 // 函数：根据厂家获取可用的模型
-const availableModelsForProvider = (providerId: string) => {
-  console.log('🔍 获取厂家模型:', providerId)
-  console.log('📊 所有大模型配置:', llmConfigs.value)
-  if (!providerId) {
-    console.log('⚠️ 厂家ID为空')
-    return []
-  }
-  const models = llmConfigs.value.filter(config => {
-    console.log(`检查模型: ${config.model_name}, provider: ${config.provider}, enabled: ${config.enabled}`)
-    return config.provider === providerId && config.enabled
-  })
-  console.log(`✅ 找到 ${models.length} 个可用模型:`, models)
-  return models
-}
+// 快速分析 / 深度决策模型是全局选择，允许跨厂家混用，
+// 因此下拉应展示所有“已启用”的模型，而不是被 default_provider 限制。
+// （此前按 default_provider 过滤导致只显示默认厂家的模型，如 qwen-turbo/qwen-max。）
+const enabledModels = computed(() =>
+  llmConfigs.value.filter(config => config.enabled)
+)
 
 // 加载厂家列表
 const loadProviders = async () => {
@@ -2283,22 +2275,22 @@ const migrateLegacyConfig = async () => {
   }
 }
 
-// 监听供应商变化，自动清空不匹配的模型选择
+// 监听供应商变化，仅在所选模型已不再可用时清空。
+// 快速/深度模型为全局选择、允许跨厂家混用，因此判据是“是否仍在已启用模型列表中”，
+// 而非“是否属于新的 default_provider”——否则切换默认厂家会误清掉跨厂家的选择。
 watch(
   () => systemSettings.value.default_provider,
   (newProvider, oldProvider) => {
     if (newProvider !== oldProvider && newProvider) {
-      const availableModels = availableModelsForProvider(newProvider)
+      const models = enabledModels.value
       const quickModel = systemSettings.value.quick_analysis_model
       const deepModel = systemSettings.value.deep_analysis_model
 
-      // 如果当前选择的快速分析模型不属于新供应商，清空
-      if (quickModel && !availableModels.find(m => m.model_name === quickModel)) {
+      // 仅当所选模型已不在“已启用模型”列表中时才清空
+      if (quickModel && !models.find(m => m.model_name === quickModel)) {
         systemSettings.value.quick_analysis_model = ''
       }
-
-      // 如果当前选择的深度决策模型不属于新供应商，清空
-      if (deepModel && !availableModels.find(m => m.model_name === deepModel)) {
+      if (deepModel && !models.find(m => m.model_name === deepModel)) {
         systemSettings.value.deep_analysis_model = ''
       }
     }
