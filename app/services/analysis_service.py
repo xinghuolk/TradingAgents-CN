@@ -43,6 +43,17 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+def _cfg_matches(cfg: dict, model_name: str, provider: str = None) -> bool:
+    """worker 内联模型配置读取的匹配判据:provider 给了精确配对(大小写不敏感)、未给按 model_name。
+
+    跨厂家精确未命中的两级回退由 get_provider_and_url_by_model_sync 负责;
+    此处仅决定读取哪条模型完整配置(max_tokens 等),取首个满足判据者。
+    """
+    if cfg.get("model_name") != model_name:
+        return False
+    return (not provider) or str(cfg.get("provider") or "").lower() == provider.lower()
+
+
 class AnalysisService:
     """股票分析服务类"""
 
@@ -179,6 +190,8 @@ class AnalysisService:
 
             quick_model = getattr(task.parameters, 'quick_analysis_model', None) or unified_config.get_quick_analysis_model()
             deep_model = getattr(task.parameters, 'deep_analysis_model', None) or unified_config.get_deep_analysis_model()
+            quick_provider = getattr(task.parameters, 'quick_analysis_provider', None)
+            deep_provider = getattr(task.parameters, 'deep_analysis_provider', None)
 
             # 🔧 从 MongoDB 数据库读取模型的完整配置参数（而不是从 JSON 文件）
             quick_model_config = None
@@ -201,7 +214,7 @@ class AnalysisService:
                     logger.info(f"✅ 从 MongoDB 读取到 {len(llm_configs)} 个模型配置")
 
                     for llm_config in llm_configs:
-                        if llm_config.get("model_name") == quick_model:
+                        if quick_model_config is None and _cfg_matches(llm_config, quick_model, quick_provider):
                             quick_model_config = {
                                 "max_tokens": llm_config.get("max_tokens", 4000),
                                 "temperature": llm_config.get("temperature", 0.7),
@@ -214,7 +227,7 @@ class AnalysisService:
                             logger.info(f"   timeout={quick_model_config['timeout']}, retry_times={quick_model_config['retry_times']}")
                             logger.info(f"   api_base={quick_model_config['api_base']}")
 
-                        if llm_config.get("model_name") == deep_model:
+                        if deep_model_config is None and _cfg_matches(llm_config, deep_model, deep_provider):
                             deep_model_config = {
                                 "max_tokens": llm_config.get("max_tokens", 4000),
                                 "temperature": llm_config.get("temperature", 0.7),
@@ -237,7 +250,7 @@ class AnalysisService:
             llm_provider = "dashscope"
             try:
                 from app.services.simple_analysis_service import get_provider_by_model_name_sync
-                discovered_provider = get_provider_by_model_name_sync(quick_model)
+                discovered_provider = get_provider_by_model_name_sync(quick_model, quick_provider)
                 if discovered_provider:
                     llm_provider = discovered_provider
                     logger.info(f"🔍 模型 {quick_model} 对应的 provider: {llm_provider}")
@@ -257,7 +270,9 @@ class AnalysisService:
                 llm_provider=llm_provider,
                 market_type=getattr(task.parameters, 'market_type', "A股"),
                 quick_model_config=quick_model_config,  # 传递模型配置
-                deep_model_config=deep_model_config     # 传递模型配置
+                deep_model_config=deep_model_config,    # 传递模型配置
+                quick_provider=quick_provider,
+                deep_provider=deep_provider
             )
 
             # OAuth subscription providers (claude_code / codex): resolve the
@@ -324,6 +339,8 @@ class AnalysisService:
 
             quick_model = getattr(task.parameters, 'quick_analysis_model', None) or unified_config.get_quick_analysis_model()
             deep_model = getattr(task.parameters, 'deep_analysis_model', None) or unified_config.get_deep_analysis_model()
+            quick_provider = getattr(task.parameters, 'quick_analysis_provider', None)
+            deep_provider = getattr(task.parameters, 'deep_analysis_provider', None)
 
             # 🔧 从 MongoDB 数据库读取模型的完整配置参数（而不是从 JSON 文件）
             quick_model_config = None
@@ -346,7 +363,7 @@ class AnalysisService:
                     logger.info(f"✅ 从 MongoDB 读取到 {len(llm_configs)} 个模型配置")
 
                     for llm_config in llm_configs:
-                        if llm_config.get("model_name") == quick_model:
+                        if quick_model_config is None and _cfg_matches(llm_config, quick_model, quick_provider):
                             quick_model_config = {
                                 "max_tokens": llm_config.get("max_tokens", 4000),
                                 "temperature": llm_config.get("temperature", 0.7),
@@ -359,7 +376,7 @@ class AnalysisService:
                             logger.info(f"   timeout={quick_model_config['timeout']}, retry_times={quick_model_config['retry_times']}")
                             logger.info(f"   api_base={quick_model_config['api_base']}")
 
-                        if llm_config.get("model_name") == deep_model:
+                        if deep_model_config is None and _cfg_matches(llm_config, deep_model, deep_provider):
                             deep_model_config = {
                                 "max_tokens": llm_config.get("max_tokens", 4000),
                                 "temperature": llm_config.get("temperature", 0.7),
@@ -377,7 +394,7 @@ class AnalysisService:
             llm_provider = "dashscope"  # 默认使用dashscope
             try:
                 from app.services.simple_analysis_service import get_provider_by_model_name_sync
-                discovered_provider = get_provider_by_model_name_sync(quick_model)
+                discovered_provider = get_provider_by_model_name_sync(quick_model, quick_provider)
                 if discovered_provider:
                     llm_provider = discovered_provider
                     logger.info(f"🔍 模型 {quick_model} 对应的 provider: {llm_provider}")
@@ -394,7 +411,9 @@ class AnalysisService:
                 llm_provider=llm_provider,
                 market_type=getattr(task.parameters, 'market_type', "A股"),
                 quick_model_config=quick_model_config,  # 传递模型配置
-                deep_model_config=deep_model_config     # 传递模型配置
+                deep_model_config=deep_model_config,    # 传递模型配置
+                quick_provider=quick_provider,
+                deep_provider=deep_provider
             )
 
             # OAuth subscription providers: inject access_token per-request.
@@ -725,14 +744,21 @@ class AnalysisService:
 
             quick_model = getattr(task.parameters, 'quick_analysis_model', None) or unified_config.get_quick_analysis_model()
             deep_model = getattr(task.parameters, 'deep_analysis_model', None) or unified_config.get_deep_analysis_model()
+            quick_provider = getattr(task.parameters, 'quick_analysis_provider', None)
+            deep_provider = getattr(task.parameters, 'deep_analysis_provider', None)
 
             # 🔧 从数据库读取模型的完整配置参数
+            # 注意：unified_config.get_llm_configs() 返回的是对象列表（非 dict），
+            # 使用 getattr 访问属性；_cfg_matches 的等价逻辑内联实现。
             quick_model_config = None
             deep_model_config = None
             llm_configs = unified_config.get_llm_configs()
 
             for llm_config in llm_configs:
-                if llm_config.model_name == quick_model:
+                cfg_model = getattr(llm_config, 'model_name', None)
+                cfg_prov = str(getattr(llm_config, 'provider', '') or '').lower()
+                if quick_model_config is None and cfg_model == quick_model and (
+                        not quick_provider or cfg_prov == quick_provider.lower()):
                     quick_model_config = {
                         "max_tokens": llm_config.max_tokens,
                         "temperature": llm_config.temperature,
@@ -741,7 +767,8 @@ class AnalysisService:
                         "api_base": llm_config.api_base
                     }
 
-                if llm_config.model_name == deep_model:
+                if deep_model_config is None and cfg_model == deep_model and (
+                        not deep_provider or cfg_prov == deep_provider.lower()):
                     deep_model_config = {
                         "max_tokens": llm_config.max_tokens,
                         "temperature": llm_config.temperature,
@@ -751,7 +778,7 @@ class AnalysisService:
                     }
 
             # 根据模型名称动态查找供应商
-            llm_provider = await get_provider_by_model_name(quick_model)
+            llm_provider = await get_provider_by_model_name(quick_model, quick_provider)
 
             # 使用标准配置函数创建完整配置
             config = create_analysis_config(
@@ -762,7 +789,9 @@ class AnalysisService:
                 llm_provider=llm_provider,
                 market_type=getattr(task.parameters, 'market_type', "A股"),
                 quick_model_config=quick_model_config,  # 传递模型配置
-                deep_model_config=deep_model_config     # 传递模型配置
+                deep_model_config=deep_model_config,    # 传递模型配置
+                quick_provider=quick_provider,
+                deep_provider=deep_provider
             )
             
             if progress_callback:
