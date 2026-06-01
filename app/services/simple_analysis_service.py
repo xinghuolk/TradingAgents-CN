@@ -103,7 +103,7 @@ def get_provider_by_model_name_sync(model_name: str, provider: str = None) -> st
     return provider_info["provider"]
 
 
-def _match_llm_config(llm_configs, model_name, provider=None):
+def _match_llm_config(llm_configs: List[Dict[str, Any]], model_name: str, provider: Optional[str] = None) -> Optional[Dict[str, Any]]:
     """从 llm_configs 中按两级回退匹配模型配置。
 
     1. provider 非空 → 先按 (provider, model_name) 精确匹配(provider 大小写不敏感)。
@@ -130,6 +130,7 @@ def get_provider_and_url_by_model_sync(model_name: str, provider: str = None) ->
 
     Args:
         model_name: 模型名称，如 'qwen-turbo', 'gpt-4' 等
+        provider: 可选供应商名；指定时按 (provider, model_name) 精确匹配，否则按 model_name 回退
 
     Returns:
         dict: {"provider": "google", "backend_url": "https://...", "api_key": "xxx"}
@@ -151,51 +152,51 @@ def get_provider_and_url_by_model_sync(model_name: str, provider: str = None) ->
             llm_configs = doc["llm_configs"]
             config_dict = _match_llm_config(llm_configs, model_name, provider)
             if config_dict is not None:
-                    provider = config_dict.get("provider")
-                    api_base = config_dict.get("api_base")
-                    model_api_key = config_dict.get("api_key")  # 🔥 获取模型配置的 API Key
+                provider = config_dict.get("provider")
+                api_base = config_dict.get("api_base")
+                model_api_key = config_dict.get("api_key")  # 🔥 获取模型配置的 API Key
 
-                    # 从 llm_providers 集合中查找厂家配置
-                    providers_collection = db.llm_providers
-                    provider_doc = providers_collection.find_one({"name": provider})
+                # 从 llm_providers 集合中查找厂家配置
+                providers_collection = db.llm_providers
+                provider_doc = providers_collection.find_one({"name": provider})
 
-                    # 🔥 确定 API Key（优先级：模型配置 > 厂家配置 > 环境变量）
-                    api_key = None
-                    if model_api_key and model_api_key.strip() and model_api_key != "your-api-key":
-                        api_key = model_api_key
-                        logger.info(f"✅ [同步查询] 使用模型配置的 API Key")
-                    elif provider_doc and provider_doc.get("api_key"):
-                        provider_api_key = provider_doc["api_key"]
-                        if provider_api_key and provider_api_key.strip() and provider_api_key != "your-api-key":
-                            api_key = provider_api_key
-                            logger.info(f"✅ [同步查询] 使用厂家配置的 API Key")
+                # 🔥 确定 API Key（优先级：模型配置 > 厂家配置 > 环境变量）
+                api_key = None
+                if model_api_key and model_api_key.strip() and model_api_key != "your-api-key":
+                    api_key = model_api_key
+                    logger.info(f"✅ [同步查询] 使用模型配置的 API Key")
+                elif provider_doc and provider_doc.get("api_key"):
+                    provider_api_key = provider_doc["api_key"]
+                    if provider_api_key and provider_api_key.strip() and provider_api_key != "your-api-key":
+                        api_key = provider_api_key
+                        logger.info(f"✅ [同步查询] 使用厂家配置的 API Key")
 
-                    # 如果数据库中没有有效的 API Key，尝试从环境变量获取
-                    if not api_key:
-                        api_key = _get_env_api_key_for_provider(provider)
-                        if api_key:
-                            logger.info(f"✅ [同步查询] 使用环境变量的 API Key")
-                        else:
-                            logger.warning(f"⚠️ [同步查询] 未找到 {provider} 的 API Key")
-
-                    # 确定 backend_url
-                    backend_url = None
-                    if api_base:
-                        backend_url = api_base
-                        logger.info(f"✅ [同步查询] 模型 {model_name} 使用自定义 API: {api_base}")
-                    elif provider_doc and provider_doc.get("default_base_url"):
-                        backend_url = provider_doc["default_base_url"]
-                        logger.info(f"✅ [同步查询] 模型 {model_name} 使用厂家默认 API: {backend_url}")
+                # 如果数据库中没有有效的 API Key，尝试从环境变量获取
+                if not api_key:
+                    api_key = _get_env_api_key_for_provider(provider)
+                    if api_key:
+                        logger.info(f"✅ [同步查询] 使用环境变量的 API Key")
                     else:
-                        backend_url = _get_default_backend_url(provider)
-                        logger.warning(f"⚠️ [同步查询] 厂家 {provider} 没有配置 default_base_url，使用硬编码默认值")
+                        logger.warning(f"⚠️ [同步查询] 未找到 {provider} 的 API Key")
 
-                    client.close()
-                    return {
-                        "provider": provider,
-                        "backend_url": backend_url,
-                        "api_key": api_key
-                    }
+                # 确定 backend_url
+                backend_url = None
+                if api_base:
+                    backend_url = api_base
+                    logger.info(f"✅ [同步查询] 模型 {model_name} 使用自定义 API: {api_base}")
+                elif provider_doc and provider_doc.get("default_base_url"):
+                    backend_url = provider_doc["default_base_url"]
+                    logger.info(f"✅ [同步查询] 模型 {model_name} 使用厂家默认 API: {backend_url}")
+                else:
+                    backend_url = _get_default_backend_url(provider)
+                    logger.warning(f"⚠️ [同步查询] 厂家 {provider} 没有配置 default_base_url，使用硬编码默认值")
+
+                client.close()
+                return {
+                    "provider": provider,
+                    "backend_url": backend_url,
+                    "api_key": api_key
+                }
 
         client.close()
 
