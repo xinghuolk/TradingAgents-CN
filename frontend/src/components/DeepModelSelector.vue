@@ -10,11 +10,11 @@
     <el-option
       v-for="model in availableModels"
       :key="`${model.provider}/${model.model_name}`"
-      :label="model.model_display_name || model.model_name"
+      :label="`${model.provider} / ${model.model_display_name || model.model_name}`"
       :value="`${model.provider}::${model.model_name}`"
     >
       <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
-        <span style="flex:1;">{{ model.model_display_name || model.model_name }}</span>
+        <span style="flex:1;"><span style="color:var(--el-text-color-secondary);">{{ model.provider }} /</span> {{ model.model_name }}</span>
         <div style="display:flex;align-items:center;gap:4px;">
           <el-tag
             v-if="model.capability_level"
@@ -32,7 +32,6 @@
           >
             {{ type === 'deep' ? '🧠深度' : '⚡快速' }}
           </el-tag>
-          <span style="font-size:12px;color:#909399;">{{ model.provider }}</span>
         </div>
       </div>
     </el-option>
