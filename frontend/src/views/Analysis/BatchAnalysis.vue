@@ -389,7 +389,15 @@ const initializeModelSettings = async () => {
   try {
     // 先获取可用模型列表（resolve 需要用到）
     const llmConfigs = await configApi.getLLMConfigs()
-    availableModels.value = llmConfigs.filter((config: any) => config.enabled)
+    // 按 provider 再按模型名排序,使同厂家模型在下拉里聚在一起
+    availableModels.value = llmConfigs
+      .filter((config: any) => config.enabled)
+      .sort((a: any, b: any) => {
+        const pa = String(a.provider || '')
+        const pb = String(b.provider || '')
+        if (pa !== pb) return pa.localeCompare(pb)
+        return String(a.model_name || '').localeCompare(String(b.model_name || ''))
+      })
 
     // 获取默认模型，回填复合键
     const defaultModels = await configApi.getDefaultModels()

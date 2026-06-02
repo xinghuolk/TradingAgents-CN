@@ -586,12 +586,12 @@
                 <el-option
                   v-for="model in enabledModels"
                   :key="`${model.provider}/${model.model_name}`"
-                  :label="model.model_display_name || model.model_name"
+                  :label="`${model.provider} / ${model.model_display_name || model.model_name}`"
                   :value="makeModelKey(model.provider, model.model_name)"
                 >
-                  <div style="display: flex; flex-direction: column;">
-                    <span>{{ model.model_display_name || model.model_name }}</span>
-                    <span style="font-size: 12px; color: #909399;">{{ model.provider }} / {{ model.model_name }}</span>
+                  <div style="display: flex; justify-content: space-between; align-items: center; gap: 12px;">
+                    <span><span style="color: var(--el-text-color-secondary);">{{ model.provider }} /</span> {{ model.model_name }}</span>
+                    <span v-if="model.model_display_name && model.model_display_name !== model.model_name" style="font-size: 12px; color: var(--el-text-color-secondary);">{{ model.model_display_name }}</span>
                   </div>
                 </el-option>
               </el-select>
@@ -608,12 +608,12 @@
                 <el-option
                   v-for="model in enabledModels"
                   :key="`${model.provider}/${model.model_name}`"
-                  :label="model.model_display_name || model.model_name"
+                  :label="`${model.provider} / ${model.model_display_name || model.model_name}`"
                   :value="makeModelKey(model.provider, model.model_name)"
                 >
-                  <div style="display: flex; flex-direction: column;">
-                    <span>{{ model.model_display_name || model.model_name }}</span>
-                    <span style="font-size: 12px; color: #909399;">{{ model.provider }} / {{ model.model_name }}</span>
+                  <div style="display: flex; justify-content: space-between; align-items: center; gap: 12px;">
+                    <span><span style="color: var(--el-text-color-secondary);">{{ model.provider }} /</span> {{ model.model_name }}</span>
+                    <span v-if="model.model_display_name && model.model_display_name !== model.model_name" style="font-size: 12px; color: var(--el-text-color-secondary);">{{ model.model_display_name }}</span>
                   </div>
                 </el-option>
               </el-select>
@@ -1287,7 +1287,16 @@ const enabledProviders = computed(() => {
 // 因此下拉应展示所有”已启用”的模型，而不是被 default_provider 限制。
 // （此前按 default_provider 过滤导致只显示默认厂家的模型，如 qwen-turbo/qwen-max。）
 const enabledModels = computed(() =>
-  llmConfigs.value.filter(config => config.enabled)
+  llmConfigs.value
+    .filter(config => config.enabled)
+    // 按 provider 再按模型名排序,使同厂家模型聚在一起(下拉 provider 前缀对齐)
+    .slice()
+    .sort((a: any, b: any) => {
+      const pa = String(a.provider || '')
+      const pb = String(b.provider || '')
+      if (pa !== pb) return pa.localeCompare(pb)
+      return String(a.model_name || '').localeCompare(String(b.model_name || ''))
+    })
 )
 
 // ===== 复合键工具函数：provider::model_name，用于解决跨厂家同名模型歧义 =====
