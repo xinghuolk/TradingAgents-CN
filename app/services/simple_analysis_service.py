@@ -548,6 +548,11 @@ def create_analysis_config(
         deep_provider_info = get_provider_and_url_by_model_sync(deep_model, deep_provider)
 
         config["backend_url"] = quick_provider_info["backend_url"]
+        config["quick_provider"] = quick_provider_info.get("provider") or quick_provider or llm_provider
+        config["deep_provider"] = deep_provider_info.get("provider") or deep_provider or llm_provider
+        config["quick_backend_url"] = quick_provider_info.get("backend_url") or config["backend_url"]
+        config["deep_backend_url"] = deep_provider_info.get("backend_url") or config["backend_url"]
+        config["backend_url"] = config["quick_backend_url"]
         config["quick_api_key"] = quick_provider_info.get("api_key")  # 🔥 保存快速模型的 API Key
         config["deep_api_key"] = deep_provider_info.get("api_key")    # 🔥 保存深度模型的 API Key
 
@@ -594,6 +599,11 @@ def create_analysis_config(
                 config["backend_url"] = "https://api.openai.com/v1"
 
         logger.info(f"⚠️  使用回退的 backend_url: {config['backend_url']}")
+
+    config.setdefault("quick_provider", quick_provider or llm_provider)
+    config.setdefault("deep_provider", deep_provider or llm_provider)
+    config.setdefault("quick_backend_url", config.get("backend_url", ""))
+    config.setdefault("deep_backend_url", config.get("backend_url", ""))
 
     # 添加分析师配置
     config["selected_analysts"] = selected_analysts
@@ -1298,7 +1308,11 @@ class SimpleAnalysisService:
 
                 # 验证模型是否合适
                 validation = capability_service.validate_model_pair(
-                    quick_model, deep_model, research_depth
+                    quick_model,
+                    deep_model,
+                    research_depth,
+                    quick_provider=req_quick_provider,
+                    deep_provider=req_deep_provider,
                 )
 
                 if not validation["valid"]:

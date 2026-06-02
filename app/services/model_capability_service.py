@@ -110,12 +110,13 @@ class ModelCapabilityService:
 
         return capability
     
-    def get_model_config(self, model_name: str) -> Dict[str, Any]:
+    def get_model_config(self, model_name: str, provider: str = None) -> Dict[str, Any]:
         """
         获取模型的完整配置信息（支持聚合渠道模型映射）
 
         Args:
             model_name: 模型名称（可能包含聚合渠道前缀）
+            provider: 可选厂家提示；有同名模型时优先精确匹配厂家
 
         Returns:
             模型配置字典
@@ -142,46 +143,58 @@ class ModelCapabilityService:
                 llm_configs = doc["llm_configs"]
                 logger.info(f"🔍 [MongoDB] llm_configs 数量: {len(llm_configs)}")
 
+                provider_lower = provider.lower() if provider else None
+                matched_config = None
                 for config_dict in llm_configs:
-                    if config_dict.get("model_name") == model_name:
-                        logger.info(f"🔍 [MongoDB] 找到模型配置: {model_name}")
-                        # 🔧 将字符串列表转换为枚举列表
-                        features_str = config_dict.get('features', [])
-                        features_enum = []
-                        for feature_str in features_str:
-                            try:
-                                # 将字符串转换为 ModelFeature 枚举
-                                features_enum.append(ModelFeature(feature_str))
-                            except ValueError:
-                                logger.warning(f"⚠️ 未知的特性值: {feature_str}")
+                    if config_dict.get("model_name") != model_name:
+                        continue
+                    if matched_config is None:
+                        matched_config = config_dict
+                    cfg_provider = str(config_dict.get("provider") or "").lower()
+                    if provider_lower is None or cfg_provider == provider_lower:
+                        matched_config = config_dict
+                        break
 
-                        # 🔧 将字符串列表转换为枚举列表
-                        roles_str = config_dict.get('suitable_roles', ["both"])
-                        roles_enum = []
-                        for role_str in roles_str:
-                            try:
-                                # 将字符串转换为 ModelRole 枚举
-                                roles_enum.append(ModelRole(role_str))
-                            except ValueError:
-                                logger.warning(f"⚠️ 未知的角色值: {role_str}")
+                if matched_config:
+                    logger.info(f"🔍 [MongoDB] 找到模型配置: {model_name}, provider={matched_config.get('provider')}")
+                    # 🔧 将字符串列表转换为枚举列表
+                    features_str = matched_config.get('features', [])
+                    features_enum = []
+                    for feature_str in features_str:
+                        try:
+                            # 将字符串转换为 ModelFeature 枚举
+                            features_enum.append(ModelFeature(feature_str))
+                        except ValueError:
+                            logger.warning(f"⚠️ 未知的特性值: {feature_str}")
 
-                        # 如果没有角色，默认为 both
-                        if not roles_enum:
-                            roles_enum = [ModelRole.BOTH]
+                    # 🔧 将字符串列表转换为枚举列表
+                    roles_str = matched_config.get('suitable_roles', ["both"])
+                    roles_enum = []
+                    for role_str in roles_str:
+                        try:
+                            # 将字符串转换为 ModelRole 枚举
+                            roles_enum.append(ModelRole(role_str))
+                        except ValueError:
+                            logger.warning(f"⚠️ 未知的角色值: {role_str}")
 
-                        logger.info(f"📊 [MongoDB配置] {model_name}: features={features_enum}, roles={roles_enum}")
+                    # 如果没有角色，默认为 both
+                    if not roles_enum:
+                        roles_enum = [ModelRole.BOTH]
 
-                        # 关闭连接
-                        client.close()
+                    logger.info(f"📊 [MongoDB配置] {model_name}: features={features_enum}, roles={roles_enum}")
 
-                        return {
-                            "model_name": config_dict.get("model_name"),
-                            "capability_level": config_dict.get('capability_level', 2),
-                            "suitable_roles": roles_enum,
-                            "features": features_enum,
-                            "recommended_depths": config_dict.get('recommended_depths', ["快速", "基础", "标准"]),
-                            "performance_metrics": config_dict.get('performance_metrics', None)
-                        }
+                    # 关闭连接
+                    client.close()
+
+                    return {
+                        "model_name": matched_config.get("model_name"),
+                        "provider": matched_config.get("provider"),
+                        "capability_level": matched_config.get('capability_level', 2),
+                        "suitable_roles": roles_enum,
+                        "features": features_enum,
+                        "recommended_depths": matched_config.get('recommended_depths', ["快速", "基础", "标准"]),
+                        "performance_metrics": matched_config.get('performance_metrics', None)
+                    }
 
             # 关闭连接
             client.close()
@@ -218,7 +231,9 @@ class ModelCapabilityService:
         self,
         quick_model: str,
         deep_model: str,
-        research_depth: str
+        research_depth: str,
+        quick_provider: str = None,
+        deep_provider: str = None,
     ) -> Dict[str, Any]:
         """
         验证模型对是否适合当前分析深度
@@ -227,17 +242,22 @@ class ModelCapabilityService:
             quick_model: 快速分析模型名称
             deep_model: 深度分析模型名称
             research_depth: 研究深度（快速/基础/标准/深度/全面）
+            quick_provider: 可选快速模型厂家
+            deep_provider: 可选深度模型厂家
 
         Returns:
             验证结果字典，包含 valid, warnings, recommendations
         """
-        logger.info(f"🔍 开始验证模型对: quick={quick_model}, deep={deep_model}, depth={research_depth}")
+        logger.info(
+            f"🔍 开始验证模型对: quick={quick_provider}:{quick_model}, "
+            f"deep={deep_provider}:{deep_model}, depth={research_depth}"
+        )
 
         requirements = ANALYSIS_DEPTH_REQUIREMENTS.get(research_depth, ANALYSIS_DEPTH_REQUIREMENTS["标准"])
         logger.info(f"🔍 分析深度要求: {requirements}")
 
-        quick_config = self.get_model_config(quick_model)
-        deep_config = self.get_model_config(deep_model)
+        quick_config = self.get_model_config(quick_model, quick_provider)
+        deep_config = self.get_model_config(deep_model, deep_provider)
 
         logger.info(f"🔍 快速模型配置: {quick_config}")
         logger.info(f"🔍 深度模型配置: {deep_config}")
@@ -447,4 +467,3 @@ def get_model_capability_service() -> ModelCapabilityService:
     if _model_capability_service is None:
         _model_capability_service = ModelCapabilityService()
     return _model_capability_service
-

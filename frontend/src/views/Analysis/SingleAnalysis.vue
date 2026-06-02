@@ -2219,8 +2219,8 @@ const applyRecommendedModels = () => {
     const quickModel: string = rec.quickModel
     const deepModel: string = rec.deepModel
     // 用复合键 ref 驱动下拉（provider 有值时精确绑定，否则按名字找首个）
-    quickModelKey.value = makeModelKey(rec.quickProvider || '', quickModel)
-    deepModelKey.value = makeModelKey(rec.deepProvider || '', deepModel)
+    quickModelKey.value = resolveModelKey(quickModel, rec.quickProvider)
+    deepModelKey.value = resolveModelKey(deepModel, rec.deepProvider)
     // 同步 modelSettings（保留兼容，提交以复合键 ref 为准）
     modelSettings.value.quickAnalysisModel = quickModel
     modelSettings.value.deepAnalysisModel = deepModel
