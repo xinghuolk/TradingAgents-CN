@@ -28,6 +28,36 @@ export interface AnalysisParameters {
   language: 'zh-CN' | 'en-US'
 }
 
+// 节点级模型用量
+export interface ModelUsageNode {
+  display_name: string
+  provider: string
+  model: string
+  providers?: string[]
+  models?: string[]
+  calls: number
+  input_tokens: number
+  output_tokens: number
+  cost?: number | null
+  currency?: string | null
+  costs_by_currency?: Record<string, number>
+  duration_seconds: number
+  partial?: boolean
+  partial_reason?: string | null
+}
+
+export interface ModelUsage {
+  summary?: {
+    // 字段名与后端 _summary_snapshot 实际产出对齐:仅 calls 带 total_ 前缀
+    total_calls: number
+    input_tokens: number
+    output_tokens: number
+    duration_seconds: number
+    costs_by_currency?: Record<string, number>
+  }
+  nodes?: Record<string, ModelUsageNode>
+}
+
 // 分析结果
 export interface AnalysisResult {
   analysis_id: string
@@ -41,6 +71,8 @@ export interface AnalysisResult {
   tokens_used: number
   execution_time: number
   error_message?: string
+  model_info?: string
+  model_usage?: ModelUsage
 }
 
 // 分析任务

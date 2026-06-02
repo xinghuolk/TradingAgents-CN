@@ -294,6 +294,7 @@ async def get_task_result(
                     "decision": mongo_result.get("decision", {}),
                     "value_turtle_payload": mongo_result.get("value_turtle_payload", ""),
                     "state": mongo_result.get("state", {}),
+                    "model_usage": mongo_result.get("model_usage", {}),  # 🆕 节点级模型用量
                     "source": "mongodb"  # 标记数据来源
                 }
 
@@ -339,6 +340,7 @@ async def get_task_result(
                         "status": r.get("status", "completed"),
                         "decision": r.get("decision", {}),
                         "value_turtle_payload": r.get("value_turtle_payload", ""),
+                        "model_usage": r.get("model_usage", {}),  # 🆕 节点级模型用量
                         "source": "analysis_tasks"  # 数据来源标记
                     }
 
@@ -665,6 +667,7 @@ async def get_task_result(
             "state": safe_dict(result_data.get("state")),
             # 🔥 关键修复：添加decision字段！
             "decision": safe_dict(result_data.get("decision")),
+            "model_usage": safe_dict(result_data.get("model_usage")),
             # Spec 4: canonical turtle payload (cross-source extraction + disk fallback)
             "value_turtle_payload": extract_turtle_payload(result_data, reports_dir=resolve_reports_dir(result_data.get("stock_symbol") or result_data.get("stock_code"), result_data.get("analysis_date"))),
         }

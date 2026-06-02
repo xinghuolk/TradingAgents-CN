@@ -70,6 +70,7 @@ class AnalysisResult(BaseModel):
     execution_time: float = 0.0
     error_message: Optional[str] = None
     model_info: Optional[str] = None  # 🔥 添加模型信息字段
+    model_usage: Optional[Dict[str, Any]] = None  # 🆕 节点级模型用量记录
 
 
 class AnalysisTask(BaseModel):

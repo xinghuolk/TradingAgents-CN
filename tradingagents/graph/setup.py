@@ -1,5 +1,6 @@
 # TradingAgents/graph/setup.py
 
+from functools import wraps
 from typing import Dict, Any
 from langchain_openai import ChatOpenAI
 from langgraph.graph import END, StateGraph, START
@@ -47,6 +48,23 @@ class GraphSetup:
         self.conditional_logic = conditional_logic
         self.config = config or {}
         self.react_llm = react_llm
+
+    @staticmethod
+    def _wrap_model_usage_node(graph_node_name, node):
+        from tradingagents.graph.model_usage import model_usage_context
+
+        def invoke_node(*args, **kwargs):
+            if callable(node):
+                return node(*args, **kwargs)
+            return node.invoke(*args, **kwargs)
+
+        def wrapped_node(*args, **kwargs):
+            with model_usage_context(node_name=graph_node_name):
+                return invoke_node(*args, **kwargs)
+
+        if callable(node):
+            return wraps(node)(wrapped_node)
+        return wrapped_node
 
     def setup_graph(
         self, selected_analysts=["market", "social", "news", "fundamentals"]
@@ -141,7 +159,7 @@ class GraphSetup:
             # 价值投资分析师 - 基于穿透回报率模型
             logger.debug(f"📊 [DEBUG] 使用价值投资分析师（穿透回报率模型）")
             analyst_nodes["value"] = create_value_analyst(
-                self.quick_thinking_llm, self.toolkit
+                self.deep_thinking_llm, self.toolkit
             )
             delete_nodes["value"] = create_msg_delete()
             tool_nodes["value"] = self.tool_nodes["value"]
@@ -171,21 +189,50 @@ class GraphSetup:
 
         # Add analyst nodes to the graph
         for analyst_type, node in analyst_nodes.items():
-            workflow.add_node(f"{analyst_type.capitalize()} Analyst", node)
+            analyst_node_name = f"{analyst_type.capitalize()} Analyst"
+            workflow.add_node(
+                analyst_node_name,
+                self._wrap_model_usage_node(analyst_node_name, node),
+            )
             workflow.add_node(
                 f"Msg Clear {analyst_type.capitalize()}", delete_nodes[analyst_type]
             )
-            workflow.add_node(f"tools_{analyst_type}", tool_nodes[analyst_type])
+            tool_node_name = f"tools_{analyst_type}"
+            workflow.add_node(
+                tool_node_name,
+                self._wrap_model_usage_node(tool_node_name, tool_nodes[analyst_type]),
+            )
 
         # Add other nodes
-        workflow.add_node("Bull Researcher", bull_researcher_node)
-        workflow.add_node("Bear Researcher", bear_researcher_node)
-        workflow.add_node("Research Manager", research_manager_node)
-        workflow.add_node("Trader", trader_node)
-        workflow.add_node("Risky Analyst", risky_analyst)
-        workflow.add_node("Neutral Analyst", neutral_analyst)
-        workflow.add_node("Safe Analyst", safe_analyst)
-        workflow.add_node("Risk Judge", risk_manager_node)
+        workflow.add_node(
+            "Bull Researcher",
+            self._wrap_model_usage_node("Bull Researcher", bull_researcher_node),
+        )
+        workflow.add_node(
+            "Bear Researcher",
+            self._wrap_model_usage_node("Bear Researcher", bear_researcher_node),
+        )
+        workflow.add_node(
+            "Research Manager",
+            self._wrap_model_usage_node("Research Manager", research_manager_node),
+        )
+        workflow.add_node("Trader", self._wrap_model_usage_node("Trader", trader_node))
+        workflow.add_node(
+            "Risky Analyst",
+            self._wrap_model_usage_node("Risky Analyst", risky_analyst),
+        )
+        workflow.add_node(
+            "Neutral Analyst",
+            self._wrap_model_usage_node("Neutral Analyst", neutral_analyst),
+        )
+        workflow.add_node(
+            "Safe Analyst",
+            self._wrap_model_usage_node("Safe Analyst", safe_analyst),
+        )
+        workflow.add_node(
+            "Risk Judge",
+            self._wrap_model_usage_node("Risk Judge", risk_manager_node),
+        )
 
         # Define edges
         # Start with the first analyst
