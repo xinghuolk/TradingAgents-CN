@@ -83,8 +83,10 @@ services:
       # 如需修改配置，请修改代码后重新构建镜像
       # - ./config:/app/config
       - ./data:/app/data
-      # 复用本机 financial-report-llm-extractor 的 PDF、缓存和 LLM 配置
+      # 复用本机 financial-report-llm-extractor checkout；缓存默认落在该目录的 tmp/.cache
       - ${FINANCIAL_REPORT_EXTRACTOR_HOST_ROOT:-./external/financial-report-llm-extractor}:/app/external/financial-report-llm-extractor
+      # 年报 PDF 独立挂载，可直接指向 report-collector 的 downloads 目录
+      - ${FINANCIAL_REPORT_PDF_HOST_ROOT:-./external/financial-report-pdfs}:/app/external/financial-report-pdfs
     env_file:
       - .env
     environment:
@@ -144,9 +146,9 @@ services:
       FINANCIAL_REPORT_FORCE_REFRESH: "${FINANCIAL_REPORT_FORCE_REFRESH:-false}"
       FINANCIAL_REPORT_INCLUDE_LLM_SUPPLEMENT: "${FINANCIAL_REPORT_INCLUDE_LLM_SUPPLEMENT:-false}"
       FINANCIAL_REPORT_ALLOW_LLM_MODELS: "${FINANCIAL_REPORT_ALLOW_LLM_MODELS:-}"
-      FINANCIAL_REPORT_PDF_ROOT: "${FINANCIAL_REPORT_PDF_ROOT:-/app/external/financial-report-llm-extractor/downloads}"
-      FINANCIAL_REPORT_EXTRACTOR_CACHE_ROOT: "${FINANCIAL_REPORT_EXTRACTOR_CACHE_ROOT:-/app/external/financial-report-llm-extractor/tmp/.cache}"
-      FINANCIAL_REPORT_LLM_CONFIG_PATH: "${FINANCIAL_REPORT_LLM_CONFIG_PATH:-}"
+      FINANCIAL_REPORT_EXTRACTOR_CONTAINER_ROOT: "/app/external/financial-report-llm-extractor"
+      FINANCIAL_REPORT_PDF_CONTAINER_ROOT: "/app/external/financial-report-pdfs"
+      FINANCIAL_REPORT_PDF_ROOT: "${FINANCIAL_REPORT_PDF_ROOT:-/app/external/financial-report-pdfs}"
       TURTLE_RF_RATE_CN: "${TURTLE_RF_RATE_CN:-0.02}"
       TURTLE_RF_RATE_HK: "${TURTLE_RF_RATE_HK:-0.04}"
     depends_on:
