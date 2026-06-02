@@ -302,6 +302,45 @@ def test_pdf_resolver_uses_report_collector_pdf_info(tmp_path):
     assert resolved == pdf
 
 
+def test_pdf_resolver_remaps_report_collector_host_path_inside_docker(monkeypatch, tmp_path):
+    pdf = tmp_path / "hk_stocks" / "00001" / "annual" / "2025_annual_en.pdf"
+    pdf.parent.mkdir(parents=True)
+    pdf.write_text("pdf", encoding="utf-8")
+
+    monkeypatch.setenv("DOCKER_CONTAINER", "true")
+    monkeypatch.setenv(
+        "FINANCIAL_REPORT_PDF_HOST_ROOT",
+        "/home/like/mycode/finanice/report-collector/report/downloads",
+    )
+    monkeypatch.setenv("FINANCIAL_REPORT_PDF_CONTAINER_ROOT", str(tmp_path))
+
+    class FakeReportCollector:
+        def fetch_latest_pdf_info(self, stock_code, market, report_types):
+            return {
+                "file_path": (
+                    "/home/like/mycode/finanice/report-collector/report/downloads/"
+                    "hk_stocks/00001/annual/2025_annual_en.pdf"
+                )
+            }
+
+    adapter = FinancialReportAdapter(config=FinancialReportClientConfig(
+        enabled=True,
+        cache_only=True,
+        force_refresh=False,
+        include_llm_supplement=False,
+        allow_llm_models=("codex",),
+        extractor_cache_root="",
+        llm_config_path="",
+        pdf_root="",
+    ), report_collector=FakeReportCollector())
+
+    resolved = adapter.resolve_pdf(
+        FakePdfQuery(company="00001", market="HK", period_end="2025-12-31")
+    )
+
+    assert resolved == pdf
+
+
 def test_pdf_resolver_finds_hk_extractor_annual_pdf_layout(tmp_path):
     pdf = tmp_path / "hk_stocks" / "00001" / "annual" / "2025_annual_en.pdf"
     pdf.parent.mkdir(parents=True)

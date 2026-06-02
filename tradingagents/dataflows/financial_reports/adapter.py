@@ -8,7 +8,7 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
-from .config import FinancialReportClientConfig
+from .config import FinancialReportClientConfig, remap_pdf_path_for_docker
 from .llm_config_export import materialize_extractor_llm_config
 
 
@@ -51,9 +51,12 @@ def _path_from_pdf_info(pdf_info: dict[str, Any] | None) -> Path | None:
     for key in ("file_path", "path", "pdf_path", "local_path"):
         raw = pdf_info.get(key)
         if raw:
-            path = Path(str(raw))
-            if path.exists():
-                return path
+            raw_path = str(raw)
+            candidates = (remap_pdf_path_for_docker(raw_path), raw_path)
+            for candidate in dict.fromkeys(candidates):
+                path = Path(candidate)
+                if path.exists():
+                    return path
     return None
 
 

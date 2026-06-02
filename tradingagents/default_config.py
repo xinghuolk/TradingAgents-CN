@@ -37,6 +37,9 @@ DEFAULT_CONFIG = {
     "financial_report_force_refresh": os.getenv("FINANCIAL_REPORT_FORCE_REFRESH", "false").lower() == "true",
     "financial_report_include_llm_supplement": os.getenv("FINANCIAL_REPORT_INCLUDE_LLM_SUPPLEMENT", "false").lower() == "true",
     "financial_report_allow_llm_models": os.getenv("FINANCIAL_REPORT_ALLOW_LLM_MODELS", "gpt-5.5,codex"),
+    # 注意：以下三个路径键仅为信息性快照（原始 env 值），不参与实际路径解析。
+    # 运行期有效路径以 financial_reports/config.py::get_financial_report_client_config()
+    # 为准——它在 Docker 下会自动派生默认值并做 host→container 重映射，与此处可能不一致。
     "financial_report_extractor_cache_root": os.getenv("FINANCIAL_REPORT_EXTRACTOR_CACHE_ROOT", ""),
     "financial_report_llm_config_path": os.getenv("FINANCIAL_REPORT_LLM_CONFIG_PATH", ""),
     "financial_report_pdf_root": os.getenv("FINANCIAL_REPORT_PDF_ROOT", ""),
