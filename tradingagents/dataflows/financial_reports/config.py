@@ -56,7 +56,12 @@ def _remap_extractor_path_for_docker(raw: str) -> str:
     )
 
 
-def _remap_pdf_path_for_docker(raw: str) -> str:
+def remap_pdf_path_for_docker(raw: str) -> str:
+    """Public: map a host PDF path to its Docker container path.
+
+    Imported by ``adapter.py`` to remap report-collector ``file_path`` values
+    before existence checks, so it is part of this module's public surface.
+    """
     remapped = _remap_host_path_for_docker(
         raw,
         host_root_env="FINANCIAL_REPORT_PDF_HOST_ROOT",
@@ -71,7 +76,7 @@ def _remap_pdf_path_for_docker(raw: str) -> str:
 def _default_pdf_root() -> str:
     raw = os.getenv("FINANCIAL_REPORT_PDF_ROOT", "")
     if raw:
-        return _remap_pdf_path_for_docker(raw)
+        return remap_pdf_path_for_docker(raw)
     if _env_bool("DOCKER_CONTAINER", False):
         return _container_root("FINANCIAL_REPORT_PDF_CONTAINER_ROOT", _DEFAULT_PDF_CONTAINER_ROOT)
     return os.getenv("FINANCIAL_REPORT_PDF_HOST_ROOT", "")
