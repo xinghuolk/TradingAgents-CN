@@ -15,6 +15,7 @@ from tradingagents.dataflows.value_investment.turtle import (
     TurtleRunContext,
     collect_fx_currencies,
     compute_turtle_signals,
+    default_holding_channel,
     get_turtle_market_facts,
     get_turtle_report_facts,
     merge_status,
@@ -45,6 +46,17 @@ def _market_facts(value: Any) -> TurtleMarketFacts:
     )
 
 
+def _tool_holding_channel(market: str, holding_channel: str | None) -> str | None:
+    stripped = holding_channel.strip() if holding_channel else ""
+    if stripped:
+        return stripped
+
+    normalized_market = market.strip().upper()
+    if normalized_market in {"HK", "HKG"}:
+        return default_holding_channel(market)
+    return holding_channel
+
+
 def prepare_turtle_analysis_payload(
     ticker: str,
     market: str,
@@ -53,12 +65,13 @@ def prepare_turtle_analysis_payload(
     holding_channel: str | None = None,
 ) -> str:
     """Return serialized Turtle facts and deterministic computed signals."""
+    active_holding_channel = _tool_holding_channel(market, holding_channel)
     context = TurtleRunContext.for_ticker(
         ticker=ticker,
         market=market,
         trade_date=trade_date,
         company_name=company_name,
-        holding_channel=holding_channel,
+        holding_channel=active_holding_channel,
     )
     report = _report_facts(
         get_turtle_report_facts(
@@ -70,7 +83,7 @@ def prepare_turtle_analysis_payload(
         get_turtle_market_facts(
             ticker=ticker,
             market=market,
-            holding_channel=holding_channel,
+            holding_channel=active_holding_channel,
         )
     )
 

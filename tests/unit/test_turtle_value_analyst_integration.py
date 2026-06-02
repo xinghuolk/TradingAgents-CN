@@ -408,6 +408,29 @@ class TestHoldingChannelPassthrough:
             )
         assert captured["holding_channel"] is None
 
+    def test_hk_none_holding_channel_defaults_to_stock_connect_for_market_adapter(self):
+        captured = {}
+
+        def fake_market(ticker, market, holding_channel):
+            captured["holding_channel"] = holding_channel
+            return TurtleMarketFacts(status="complete")
+
+        with patch(
+            "tradingagents.tools.turtle_analysis_tool.get_turtle_report_facts",
+            return_value=TurtleReportFacts(status="complete"),
+        ), patch(
+            "tradingagents.tools.turtle_analysis_tool.get_turtle_market_facts",
+            side_effect=fake_market,
+        ):
+            payload = prepare_turtle_analysis_payload(
+                ticker="00001", market="HK",
+                trade_date="2026-06-02", company_name="长和",
+                holding_channel=None,
+            )
+        data = json.loads(payload)
+        assert captured["holding_channel"] == "stock_connect"
+        assert data["facts"]["context"]["holding_channel"] == "stock_connect"
+
     def test_explicit_holding_channel_propagated(self):
         captured = {}
 
@@ -428,6 +451,29 @@ class TestHoldingChannelPassthrough:
                 holding_channel="long_term_domestic",
             )
         assert captured["holding_channel"] == "long_term_domestic"
+
+    def test_hk_explicit_holding_channel_is_not_overwritten_by_default(self):
+        captured = {}
+
+        def fake_market(ticker, market, holding_channel):
+            captured["holding_channel"] = holding_channel
+            return TurtleMarketFacts(status="complete")
+
+        with patch(
+            "tradingagents.tools.turtle_analysis_tool.get_turtle_report_facts",
+            return_value=TurtleReportFacts(status="complete"),
+        ), patch(
+            "tradingagents.tools.turtle_analysis_tool.get_turtle_market_facts",
+            side_effect=fake_market,
+        ):
+            payload = prepare_turtle_analysis_payload(
+                ticker="00001", market="HK",
+                trade_date="2026-06-02", company_name="长和",
+                holding_channel="direct_h_share",
+            )
+        data = json.loads(payload)
+        assert captured["holding_channel"] == "direct_h_share"
+        assert data["facts"]["context"]["holding_channel"] == "direct_h_share"
 
 
 class TestPrepareTurtlePayloadMultiPeriod:

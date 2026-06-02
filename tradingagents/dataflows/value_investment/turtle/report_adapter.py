@@ -60,7 +60,7 @@ def _field_unit(field: Any) -> MoneyUnit | None:
     lowered = raw.lower()
     compact = lowered.replace(" ", "")
 
-    if lowered in {"yuan", "rmb", "cny", "hkd", "hk$", "usd", "us$"} or raw in {
+    if lowered in {"raw", "yuan", "rmb", "cny", "hkd", "hk$", "usd", "us$"} or raw in {
         "港元",
         "港币",
         "美元",
@@ -206,6 +206,74 @@ def _is_reliable_numeric_field(field: TurtleFactValue | None) -> bool:
     return isfinite(float(field.value))
 
 
+def _money_to_absolute_base_units(value: MoneyAmount) -> float:
+    amount = value.to_hundred_million(target_currency=value.currency)
+    return float(amount.value) * 100_000_000
+
+
+def _derive_interest_bearing_debt(
+    fields: dict[str, TurtleFactValue],
+    caveats: list[str],
+) -> None:
+    if "interest_bearing_debt" in fields:
+        return
+
+    component_names = ("st_borr", "lt_borr", "bond_payable")
+    components = [fields.get(name) for name in component_names]
+    # 三项原语全无:多半是该数据源根本不提供这些字段,保持静默不污染 caveats。
+    if all(component is None for component in components):
+        return
+    # 仅部分缺失:说明抽取出现缺口,留痕提示派生被跳过,避免静默低估有息负债。
+    missing = [name for name, component in zip(component_names, components) if component is None]
+    if missing:
+        _append_caveat(
+            caveats,
+            "interest_bearing_debt derivation skipped: missing " + ", ".join(missing),
+        )
+        return
+
+    money_components = [_reliable_money_field(fields, name) for name in component_names]
+    unreliable = [
+        name for name, money in zip(component_names, money_components) if money is None
+    ]
+    if unreliable:
+        _append_caveat(
+            caveats,
+            "interest_bearing_debt derivation skipped: non-reliable " + ", ".join(unreliable),
+        )
+        return
+
+    first_money = money_components[0].value  # type: ignore[union-attr]
+    target_currency = normalize_currency(first_money.currency)
+    if any(
+        normalize_currency(component.value.currency) != target_currency  # type: ignore[union-attr]
+        for component in money_components
+    ):
+        _append_caveat(caveats, "interest_bearing_debt derivation skipped: currency mismatch")
+        return
+
+    try:
+        total = sum(_money_to_absolute_base_units(component.value) for component in money_components)  # type: ignore[union-attr]
+    except (TypeError, ValueError, OverflowError) as exc:
+        _append_caveat(caveats, f"interest_bearing_debt derivation skipped: {exc}")
+        return
+
+    source_reference = "; ".join(component.source_reference for component in money_components)  # type: ignore[union-attr]
+    fields["interest_bearing_debt"] = TurtleFactValue(
+        name="interest_bearing_debt",
+        value=MoneyAmount(
+            value=total,
+            currency=first_money.currency,
+            unit="yuan",
+            source_label="financial-report-client:derived",
+            source_reference=source_reference,
+        ),
+        source_label="financial-report-client:derived",
+        source_reference=source_reference,
+        reliability="reliable",
+    )
+
+
 def _derive_report_payout_fields(
     fields: dict[str, TurtleFactValue],
     caveats: list[str],
@@ -315,6 +383,7 @@ def build_report_facts_from_extraction(
         _append_caveat(caveats, degradation_caveat)
 
     _derive_report_payout_fields(adapted, caveats)
+    _derive_interest_bearing_debt(adapted, caveats)
 
     metadata = {
         "company": getattr(extraction, "company", None),

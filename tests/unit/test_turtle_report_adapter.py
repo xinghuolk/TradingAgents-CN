@@ -198,6 +198,31 @@ def test_report_adapter_normalizes_negative_repurchase_of_stock_to_positive_buyb
     assert report.fields["capex"].value.value == -2_000_000_000.0
 
 
+def test_report_adapter_treats_raw_money_as_absolute_amount_with_field_currency():
+    extraction = FakeExtraction(fields={
+        "net_profit": FakeField(
+            "net_profit",
+            Decimal("11841000000"),
+            currency="HKD",
+            unit="raw",
+        ),
+    })
+
+    facts = build_report_facts_from_extraction(
+        extraction=extraction,
+        allow_llm_models=(),
+        adapter_caveats=[],
+    )
+
+    field = facts.fields["net_profit"]
+    assert isinstance(field.value, MoneyAmount)
+    assert field.reliability == "reliable"
+    assert field.value.value == 11_841_000_000.0
+    assert field.value.currency == "HKD"
+    assert field.value.unit == "yuan"
+    assert "unsupported unit raw" not in " ".join(facts.caveats)
+
+
 def test_unsupported_unit_and_missing_currency_become_display_only():
     extraction = FakeExtraction(fields={
         "revenue": FakeField("revenue", Decimal("123"), unit="shares"),
@@ -398,6 +423,122 @@ def test_report_adapter_maps_repurchase_of_stock_to_buyback_amount():
     assert facts.fields["buyback_amount"].name == "buyback_amount"
     assert facts.fields["buyback_amount"].value.value == 123000000.0
     assert facts.fields["buyback_amount"].value.currency == "HKD"
+
+
+def test_report_adapter_derives_interest_bearing_debt_from_reliable_debt_primitives():
+    extraction = FakeExtraction(fields={
+        "st_borr": FakeField("st_borr", Decimal("38416000000"), currency="HKD", unit="raw"),
+        "lt_borr": FakeField("lt_borr", Decimal("229699000000"), currency="HKD", unit="raw"),
+        "bond_payable": FakeField("bond_payable", Decimal("165366"), currency="HKD", unit="million"),
+    })
+
+    facts = build_report_facts_from_extraction(
+        extraction=extraction,
+        allow_llm_models=(),
+        adapter_caveats=[],
+    )
+
+    debt = facts.fields["interest_bearing_debt"]
+    assert isinstance(debt.value, MoneyAmount)
+    assert debt.reliability == "reliable"
+    assert debt.value.currency == "HKD"
+    assert debt.value.unit == "yuan"
+    assert debt.value.value == 38416000000 + 229699000000 + 165366000000
+    assert debt.source_reference == "st_borr p.7; lt_borr p.7; bond_payable p.7"
+
+
+def test_report_adapter_does_not_overwrite_direct_interest_bearing_debt():
+    extraction = FakeExtraction(fields={
+        "interest_bearing_debt": FakeField(
+            "interest_bearing_debt",
+            Decimal("5000000000"),
+            currency="HKD",
+            unit="raw",
+        ),
+        "st_borr": FakeField("st_borr", Decimal("38416000000"), currency="HKD", unit="raw"),
+        "lt_borr": FakeField("lt_borr", Decimal("229699000000"), currency="HKD", unit="raw"),
+        "bond_payable": FakeField("bond_payable", Decimal("165366"), currency="HKD", unit="million"),
+    })
+
+    facts = build_report_facts_from_extraction(
+        extraction=extraction,
+        allow_llm_models=(),
+        adapter_caveats=[],
+    )
+
+    debt = facts.fields["interest_bearing_debt"]
+    assert isinstance(debt.value, MoneyAmount)
+    assert debt.value.value == 5_000_000_000.0
+    assert debt.source_label == "financial-report-client"
+    assert debt.source_reference == "interest_bearing_debt p.7"
+
+
+def test_report_adapter_skips_interest_bearing_debt_derivation_for_mixed_currencies():
+    extraction = FakeExtraction(fields={
+        "st_borr": FakeField("st_borr", Decimal("38416000000"), currency="HKD", unit="raw"),
+        "lt_borr": FakeField("lt_borr", Decimal("229699000000"), currency="CNY", unit="raw"),
+        "bond_payable": FakeField("bond_payable", Decimal("165366"), currency="HKD", unit="million"),
+    })
+
+    facts = build_report_facts_from_extraction(
+        extraction=extraction,
+        allow_llm_models=(),
+        adapter_caveats=[],
+    )
+
+    assert "interest_bearing_debt" not in facts.fields
+    assert "interest_bearing_debt derivation skipped: currency mismatch" in facts.caveats
+
+
+def test_report_adapter_caveats_partial_interest_bearing_debt_primitives():
+    extraction = FakeExtraction(fields={
+        "st_borr": FakeField("st_borr", Decimal("38416000000"), currency="HKD", unit="raw"),
+        "lt_borr": FakeField("lt_borr", Decimal("229699000000"), currency="HKD", unit="raw"),
+    })
+
+    facts = build_report_facts_from_extraction(
+        extraction=extraction,
+        allow_llm_models=(),
+        adapter_caveats=[],
+    )
+
+    assert "interest_bearing_debt" not in facts.fields
+    assert "interest_bearing_debt derivation skipped: missing bond_payable" in facts.caveats
+
+
+def test_report_adapter_is_silent_when_no_interest_bearing_debt_primitives():
+    extraction = FakeExtraction(fields={
+        "net_profit": FakeField("net_profit", Decimal("100"), currency="HKD", unit="million"),
+    })
+
+    facts = build_report_facts_from_extraction(
+        extraction=extraction,
+        allow_llm_models=(),
+        adapter_caveats=[],
+    )
+
+    assert "interest_bearing_debt" not in facts.fields
+    assert not any("interest_bearing_debt" in caveat for caveat in facts.caveats)
+
+
+def test_report_adapter_caveats_non_reliable_interest_bearing_debt_primitive():
+    extraction = FakeExtraction(fields={
+        "st_borr": FakeField("st_borr", Decimal("38416000000"), currency="HKD", unit="raw"),
+        "lt_borr": FakeField("lt_borr", Decimal("229699000000"), currency="HKD", unit="raw"),
+        "bond_payable": FakeField(
+            "bond_payable", Decimal("165366"), currency="HKD", unit="million",
+            is_reliable=False, raw_bucket="estimate",
+        ),
+    })
+
+    facts = build_report_facts_from_extraction(
+        extraction=extraction,
+        allow_llm_models=(),
+        adapter_caveats=[],
+    )
+
+    assert "interest_bearing_debt" not in facts.fields
+    assert "interest_bearing_debt derivation skipped: non-reliable bond_payable" in facts.caveats
 
 
 def test_report_adapter_skips_current_year_payout_when_profit_non_positive():
