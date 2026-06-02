@@ -667,6 +667,7 @@ async def get_task_result(
             "state": safe_dict(result_data.get("state")),
             # 🔥 关键修复：添加decision字段！
             "decision": safe_dict(result_data.get("decision")),
+            "model_usage": safe_dict(result_data.get("model_usage")),
             # Spec 4: canonical turtle payload (cross-source extraction + disk fallback)
             "value_turtle_payload": extract_turtle_payload(result_data, reports_dir=resolve_reports_dir(result_data.get("stock_symbol") or result_data.get("stock_code"), result_data.get("analysis_date"))),
         }

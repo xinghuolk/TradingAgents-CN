@@ -60,6 +60,9 @@ _current_task_id: ContextVar[str | None] = ContextVar(
 _current_node_name: ContextVar[str | None] = ContextVar(
     "model_usage_node_name", default=None
 )
+_current_instrumented_call_state: ContextVar[dict[str, bool] | None] = ContextVar(
+    "model_usage_instrumented_call_state", default=None
+)
 
 _usage_lock = RLock()
 # The graph runner is expected to snapshot task usage and clear it in a finally
@@ -320,12 +323,19 @@ def _instrument_call_method(
         async def async_wrapped(*args, **kwargs):
             start = time.perf_counter()
             context = _capture_usage_context()
+            call_state, call_token = _begin_instrumented_call()
             try:
                 result = await original(*args, **kwargs)
             except Exception:
-                _record_from_result(None, llm, time.perf_counter() - start, context)
+                _record_from_result_once(
+                    None, llm, time.perf_counter() - start, context, call_state
+                )
                 raise
-            _record_from_result(result, llm, time.perf_counter() - start, context)
+            finally:
+                _reset_instrumented_call(call_token)
+            _record_from_result_once(
+                result, llm, time.perf_counter() - start, context, call_state
+            )
             return result
 
         wrapped = async_wrapped
@@ -335,14 +345,19 @@ def _instrument_call_method(
         def wrapped(*args, **kwargs):
             start = time.perf_counter()
             context = _capture_usage_context()
+            call_state, call_token = _begin_instrumented_call()
             try:
                 result = original(*args, **kwargs)
             except Exception:
-                _record_from_result(
-                    None, llm, time.perf_counter() - start, context
+                _record_from_result_once(
+                    None, llm, time.perf_counter() - start, context, call_state
                 )
                 raise
-            _record_from_result(result, llm, time.perf_counter() - start, context)
+            finally:
+                _reset_instrumented_call(call_token)
+            _record_from_result_once(
+                result, llm, time.perf_counter() - start, context, call_state
+            )
             return result
 
     _set_private_attr(llm, original_attr, original)
@@ -368,14 +383,24 @@ def _instrument_stream_method(
         def async_stream_wrapped(*args, **kwargs):
             start = time.perf_counter()
             context = _capture_usage_context()
+            call_state, call_token = _begin_instrumented_call()
             try:
                 result = original(*args, **kwargs)
             except Exception:
-                _record_from_result(None, llm, time.perf_counter() - start, context)
+                _record_from_result_once(
+                    None, llm, time.perf_counter() - start, context, call_state
+                )
+                _reset_instrumented_call(call_token)
                 raise
             if hasattr(result, "__aiter__"):
-                return _recording_async_iterator(result, llm, start, context)
-            _record_from_result(result, llm, time.perf_counter() - start, context)
+                _reset_instrumented_call(call_token)
+                return _recording_async_iterator(
+                    result, llm, start, context, call_state
+                )
+            _record_from_result_once(
+                result, llm, time.perf_counter() - start, context, call_state
+            )
+            _reset_instrumented_call(call_token)
             return result
 
         wrapped = async_stream_wrapped
@@ -385,16 +410,24 @@ def _instrument_stream_method(
         def stream_wrapped(*args, **kwargs):
             start = time.perf_counter()
             context = _capture_usage_context()
+            call_state, call_token = _begin_instrumented_call()
             try:
                 result = original(*args, **kwargs)
             except Exception:
-                _record_from_result(None, llm, time.perf_counter() - start, context)
+                _record_from_result_once(
+                    None, llm, time.perf_counter() - start, context, call_state
+                )
+                _reset_instrumented_call(call_token)
                 raise
             if hasattr(result, "__iter__") and not isinstance(
                 result, (str, bytes, Mapping)
             ):
-                return _recording_iterator(result, llm, start, context)
-            _record_from_result(result, llm, time.perf_counter() - start, context)
+                _reset_instrumented_call(call_token)
+                return _recording_iterator(result, llm, start, context, call_state)
+            _record_from_result_once(
+                result, llm, time.perf_counter() - start, context, call_state
+            )
+            _reset_instrumented_call(call_token)
             return result
 
         wrapped = stream_wrapped
@@ -432,6 +465,7 @@ def _recording_iterator(
     llm: Any,
     start: float,
     context: tuple[str | None, str | None],
+    call_state: dict[str, bool],
 ):
     last_chunk = None
     try:
@@ -439,7 +473,9 @@ def _recording_iterator(
             last_chunk = chunk
             yield chunk
     finally:
-        _record_from_result(last_chunk, llm, time.perf_counter() - start, context)
+        _record_from_result_once(
+            last_chunk, llm, time.perf_counter() - start, context, call_state
+        )
 
 
 async def _recording_async_iterator(
@@ -447,6 +483,7 @@ async def _recording_async_iterator(
     llm: Any,
     start: float,
     context: tuple[str | None, str | None],
+    call_state: dict[str, bool],
 ):
     last_chunk = None
     try:
@@ -454,7 +491,9 @@ async def _recording_async_iterator(
             last_chunk = chunk
             yield chunk
     finally:
-        _record_from_result(last_chunk, llm, time.perf_counter() - start, context)
+        _record_from_result_once(
+            last_chunk, llm, time.perf_counter() - start, context, call_state
+        )
 
 
 def _record_from_result(
@@ -462,12 +501,12 @@ def _record_from_result(
     llm: Any,
     duration_seconds: float,
     context: tuple[str | None, str | None],
-) -> None:
+) -> bool:
     usage = _extract_usage_tokens(result)
     provider, model, currency = _get_instrumentation_metadata(llm)
     task_id, node_name = context
     if not task_id or not node_name:
-        return
+        return False
     with model_usage_context(task_id=task_id, node_name=node_name):
         record_llm_call(
             provider=provider,
@@ -477,10 +516,42 @@ def _record_from_result(
             output_tokens=usage.get("output_tokens"),
             currency=currency,
         )
+    return True
+
+
+def _record_from_result_once(
+    result: Any,
+    llm: Any,
+    duration_seconds: float,
+    context: tuple[str | None, str | None],
+    call_state: dict[str, bool],
+) -> None:
+    if call_state["recorded"]:
+        return
+    if _record_from_result(result, llm, duration_seconds, context):
+        call_state["recorded"] = True
 
 
 def _capture_usage_context() -> tuple[str | None, str | None]:
     return _current_task_id.get(), _current_node_name.get()
+
+
+def _begin_instrumented_call() -> tuple[
+    dict[str, bool], Token[dict[str, bool] | None] | None
+]:
+    call_state = _current_instrumented_call_state.get()
+    if call_state is not None:
+        return call_state, None
+
+    call_state = {"recorded": False}
+    return call_state, _current_instrumented_call_state.set(call_state)
+
+
+def _reset_instrumented_call(
+    token: Token[dict[str, bool] | None] | None,
+) -> None:
+    if token is not None:
+        _current_instrumented_call_state.reset(token)
 
 
 def _get_instrumentation_metadata(llm: Any) -> tuple[str | None, str | None, str | None]:

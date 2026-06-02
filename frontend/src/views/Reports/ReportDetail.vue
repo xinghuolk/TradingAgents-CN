@@ -856,9 +856,31 @@ const getModuleModelUsage = (moduleName: string): ModelUsageNode | undefined => 
   return usage?.nodes?.[nodeKey]
 }
 
+const formatUsageNumber = (value: number | null | undefined): string | null => {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    return null
+  }
+  return value.toLocaleString()
+}
+
+const formatUsageMoney = (value: number): string => {
+  return Number.isInteger(value)
+    ? String(value)
+    : value.toFixed(6).replace(/0+$/, '').replace(/\.$/, '')
+}
+
 const formatModelUsageTokens = (node?: ModelUsageNode): string => {
   if (!node) return ''
-  return `${node.input_tokens} in / ${node.output_tokens} out`
+  const input = formatUsageNumber(node.input_tokens)
+  const output = formatUsageNumber(node.output_tokens)
+  if (
+    input == null ||
+    output == null ||
+    (node.partial && node.input_tokens === 0 && node.output_tokens === 0)
+  ) {
+    return 'Token N/A'
+  }
+  return `${input} in / ${output} out`
 }
 
 const formatModelUsageCost = (node?: ModelUsageNode): string => {
@@ -866,18 +888,27 @@ const formatModelUsageCost = (node?: ModelUsageNode): string => {
   const symbolMap: Record<string, string> = { CNY: '¥', USD: '$' }
   if (node.cost != null && node.currency) {
     const sym = symbolMap[node.currency] || (node.currency + ' ')
-    return `${sym}${node.cost}`
+    return `${sym}${formatUsageMoney(node.cost)}`
   }
   const cbc = node.costs_by_currency
   if (cbc && Object.keys(cbc).length) {
-    return Object.entries(cbc).map(([cur, val]) => `${symbolMap[cur] || cur + ' '}${val}`).join(' + ')
+    return Object.entries(cbc)
+      .map(([cur, val]) => `${symbolMap[cur] || cur + ' '}${formatUsageMoney(val)}`)
+      .join(' + ')
   }
-  return ''
+  return '成本 N/A'
 }
 
 const formatModelUsageDuration = (node?: ModelUsageNode): string => {
   if (!node) return ''
-  return `${node.duration_seconds}s`
+  if (
+    typeof node.duration_seconds !== 'number' ||
+    !Number.isFinite(node.duration_seconds) ||
+    (node.partial && node.duration_seconds === 0)
+  ) {
+    return '耗时 N/A'
+  }
+  return `${node.duration_seconds.toFixed(2)}s`
 }
 
 const getModuleDisplayName = (moduleName: string) => {

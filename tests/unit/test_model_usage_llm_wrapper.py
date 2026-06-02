@@ -43,6 +43,19 @@ class FakeLLM:
         return FakeBoundRunnable()
 
 
+class DelegatingBoundRunnable:
+    def __init__(self, llm):
+        self.llm = llm
+
+    def invoke(self, value):
+        return self.llm.invoke(value)
+
+
+class DelegatingToolLLM(FakeLLM):
+    def bind_tools(self, tools):
+        return DelegatingBoundRunnable(self)
+
+
 class ModelOnlyLLM:
     model = "model-only"
 
@@ -115,6 +128,21 @@ def test_bind_tools_result_is_instrumented():
     assert node["calls"] == 1
     assert node["input_tokens"] == 7
     assert node["output_tokens"] == 3
+
+
+def test_delegating_bind_tools_result_records_usage_once():
+    llm = instrument_llm_for_model_usage(
+        DelegatingToolLLM(), provider="codex", model="gpt-5.5"
+    )
+    bound = llm.bind_tools([])
+
+    with model_usage_context(task_id="task-bound-delegating", node_name="Value Analyst"):
+        bound.invoke({"messages": []})
+
+    node = get_model_usage_snapshot("task-bound-delegating")["nodes"]["value_analyst"]
+    assert node["calls"] == 1
+    assert node["input_tokens"] == 11
+    assert node["output_tokens"] == 5
 
 
 def test_stream_records_under_context_captured_when_iterator_created():
