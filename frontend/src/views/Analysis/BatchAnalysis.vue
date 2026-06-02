@@ -204,7 +204,7 @@
               <ModelConfig
                 v-model:quick-analysis-model="modelSettings.quickAnalysisModel"
                 v-model:deep-analysis-model="modelSettings.deepAnalysisModel"
-                :available-models="availableModels"
+                :available-models="sortedModels"
                 :analysis-depth="batchForm.depth"
               />
 
@@ -290,7 +290,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted, watch } from 'vue'
+import { ref, reactive, onMounted, watch, computed } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Files, TrendCharts, Check, Close } from '@element-plus/icons-vue'
 import { ANALYSTS, DEFAULT_ANALYSTS, convertAnalystNamesToIds } from '@/constants/analysts'
@@ -332,8 +332,21 @@ const modelSettings = ref({
   deepAnalysisModel: '::qwen-max'
 })
 
-// 可用的模型列表（从配置中获取）
+// 可用的模型列表（从配置中获取，保持后端原始顺序供解析使用）
 const availableModels = ref<any[]>([])
+
+// 下拉展示用:按 provider 再按模型名排序,使同厂家模型聚在一起。
+// 仅用于模板渲染,不改变 availableModels 的解析顺序。
+const sortedModels = computed(() =>
+  availableModels.value
+    .slice()
+    .sort((a: any, b: any) => {
+      const pa = String(a.provider || '')
+      const pb = String(b.provider || '')
+      if (pa !== pb) return pa.localeCompare(pb)
+      return String(a.model_name || '').localeCompare(String(b.model_name || ''))
+    })
+)
 
 const batchForm = reactive({
   title: '',
@@ -388,16 +401,10 @@ const clearStocks = () => {
 const initializeModelSettings = async () => {
   try {
     // 先获取可用模型列表（resolve 需要用到）
+    // 注意:保持后端原始顺序,resolveModelKey 在缺 provider 提示时按此顺序取首个同名模型;
+    // 排序仅用于下拉展示(见 sortedModels),不能污染解析顺序,否则会静默改变所选 provider。
     const llmConfigs = await configApi.getLLMConfigs()
-    // 按 provider 再按模型名排序,使同厂家模型在下拉里聚在一起
-    availableModels.value = llmConfigs
-      .filter((config: any) => config.enabled)
-      .sort((a: any, b: any) => {
-        const pa = String(a.provider || '')
-        const pb = String(b.provider || '')
-        if (pa !== pb) return pa.localeCompare(pb)
-        return String(a.model_name || '').localeCompare(String(b.model_name || ''))
-      })
+    availableModels.value = llmConfigs.filter((config: any) => config.enabled)
 
     // 获取默认模型，回填复合键
     const defaultModels = await configApi.getDefaultModels()
