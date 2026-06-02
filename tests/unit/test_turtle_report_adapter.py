@@ -490,6 +490,57 @@ def test_report_adapter_skips_interest_bearing_debt_derivation_for_mixed_currenc
     assert "interest_bearing_debt derivation skipped: currency mismatch" in facts.caveats
 
 
+def test_report_adapter_caveats_partial_interest_bearing_debt_primitives():
+    extraction = FakeExtraction(fields={
+        "st_borr": FakeField("st_borr", Decimal("38416000000"), currency="HKD", unit="raw"),
+        "lt_borr": FakeField("lt_borr", Decimal("229699000000"), currency="HKD", unit="raw"),
+    })
+
+    facts = build_report_facts_from_extraction(
+        extraction=extraction,
+        allow_llm_models=(),
+        adapter_caveats=[],
+    )
+
+    assert "interest_bearing_debt" not in facts.fields
+    assert "interest_bearing_debt derivation skipped: missing bond_payable" in facts.caveats
+
+
+def test_report_adapter_is_silent_when_no_interest_bearing_debt_primitives():
+    extraction = FakeExtraction(fields={
+        "net_profit": FakeField("net_profit", Decimal("100"), currency="HKD", unit="million"),
+    })
+
+    facts = build_report_facts_from_extraction(
+        extraction=extraction,
+        allow_llm_models=(),
+        adapter_caveats=[],
+    )
+
+    assert "interest_bearing_debt" not in facts.fields
+    assert not any("interest_bearing_debt" in caveat for caveat in facts.caveats)
+
+
+def test_report_adapter_caveats_non_reliable_interest_bearing_debt_primitive():
+    extraction = FakeExtraction(fields={
+        "st_borr": FakeField("st_borr", Decimal("38416000000"), currency="HKD", unit="raw"),
+        "lt_borr": FakeField("lt_borr", Decimal("229699000000"), currency="HKD", unit="raw"),
+        "bond_payable": FakeField(
+            "bond_payable", Decimal("165366"), currency="HKD", unit="million",
+            is_reliable=False, raw_bucket="estimate",
+        ),
+    })
+
+    facts = build_report_facts_from_extraction(
+        extraction=extraction,
+        allow_llm_models=(),
+        adapter_caveats=[],
+    )
+
+    assert "interest_bearing_debt" not in facts.fields
+    assert "interest_bearing_debt derivation skipped: non-reliable bond_payable" in facts.caveats
+
+
 def test_report_adapter_skips_current_year_payout_when_profit_non_positive():
     extraction = FakeExtraction(fields={
         "net_profit": FakeField("net_profit", Decimal("0"), currency="HKD", unit="million"),

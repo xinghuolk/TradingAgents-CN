@@ -220,11 +220,27 @@ def _derive_interest_bearing_debt(
 
     component_names = ("st_borr", "lt_borr", "bond_payable")
     components = [fields.get(name) for name in component_names]
-    if any(component is None for component in components):
+    # 三项原语全无:多半是该数据源根本不提供这些字段,保持静默不污染 caveats。
+    if all(component is None for component in components):
+        return
+    # 仅部分缺失:说明抽取出现缺口,留痕提示派生被跳过,避免静默低估有息负债。
+    missing = [name for name, component in zip(component_names, components) if component is None]
+    if missing:
+        _append_caveat(
+            caveats,
+            "interest_bearing_debt derivation skipped: missing " + ", ".join(missing),
+        )
         return
 
     money_components = [_reliable_money_field(fields, name) for name in component_names]
-    if any(component is None for component in money_components):
+    unreliable = [
+        name for name, money in zip(component_names, money_components) if money is None
+    ]
+    if unreliable:
+        _append_caveat(
+            caveats,
+            "interest_bearing_debt derivation skipped: non-reliable " + ", ".join(unreliable),
+        )
         return
 
     first_money = money_components[0].value  # type: ignore[union-attr]
