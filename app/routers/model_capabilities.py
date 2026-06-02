@@ -47,7 +47,9 @@ class ModelRecommendationRequest(BaseModel):
 class ModelRecommendationResponse(BaseModel):
     """模型推荐响应"""
     quick_model: str
+    quick_provider: Optional[str] = None
     deep_model: str
+    deep_provider: Optional[str] = None
     quick_model_info: ModelCapabilityInfo
     deep_model_info: ModelCapabilityInfo
     reason: str
@@ -56,7 +58,9 @@ class ModelRecommendationResponse(BaseModel):
 class ModelValidationRequest(BaseModel):
     """模型验证请求"""
     quick_model: str
+    quick_provider: Optional[str] = None
     deep_model: str
+    deep_provider: Optional[str] = None
     research_depth: str
 
 
@@ -180,15 +184,14 @@ async def recommend_models(request: ModelRecommendationRequest):
         capability_service = get_model_capability_service()
 
         # 获取推荐模型
-        quick_model, deep_model = capability_service.recommend_models_for_depth(
-            request.research_depth
-        )
+        quick_model, quick_provider, deep_model, deep_provider = \
+            capability_service.recommend_models_with_providers(request.research_depth)
 
         logger.info(f"🔍 推荐模型: quick={quick_model}, deep={deep_model}")
 
         # 获取模型详细信息
-        quick_info = capability_service.get_model_config(quick_model)
-        deep_info = capability_service.get_model_config(deep_model)
+        quick_info = capability_service.get_model_config(quick_model, quick_provider)
+        deep_info = capability_service.get_model_config(deep_model, deep_provider)
 
         logger.info(f"🔍 模型详细信息: quick_info={quick_info}, deep_info={deep_info}")
 
@@ -217,7 +220,9 @@ async def recommend_models(request: ModelRecommendationRequest):
 
         response_data = {
             "quick_model": quick_model,
+            "quick_provider": quick_provider,
             "deep_model": deep_model,
+            "deep_provider": deep_provider,
             "quick_model_info": quick_info,
             "deep_model_info": deep_info,
             "reason": reason
@@ -245,7 +250,9 @@ async def validate_models(request: ModelValidationRequest):
         validation = capability_service.validate_model_pair(
             request.quick_model,
             request.deep_model,
-            request.research_depth
+            request.research_depth,
+            quick_provider=request.quick_provider,
+            deep_provider=request.deep_provider,
         )
 
         return ok(validation, "模型验证完成")
@@ -326,4 +333,3 @@ async def get_model_capability(model_name: str):
     except Exception as e:
         logger.error(f"获取模型能力信息失败: {e}")
         raise HTTPException(status_code=500, detail=str(e))
-

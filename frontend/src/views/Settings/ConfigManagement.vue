@@ -578,20 +578,20 @@
 
             <el-form-item label="快速分析模型">
               <el-select
-                v-model="systemSettings.quick_analysis_model"
+                v-model="quickModelKey"
                 :disabled="!isEditable('quick_analysis_model')"
                 placeholder="选择快速分析模型"
                 filterable
               >
                 <el-option
-                  v-for="model in availableModelsForProvider(systemSettings.default_provider)"
+                  v-for="model in enabledModels"
                   :key="`${model.provider}/${model.model_name}`"
                   :label="model.model_display_name || model.model_name"
-                  :value="model.model_name"
+                  :value="makeModelKey(model.provider, model.model_name)"
                 >
                   <div style="display: flex; flex-direction: column;">
                     <span>{{ model.model_display_name || model.model_name }}</span>
-                    <span style="font-size: 12px; color: #909399;">{{ model.model_name }}</span>
+                    <span style="font-size: 12px; color: #909399;">{{ model.provider }} / {{ model.model_name }}</span>
                   </div>
                 </el-option>
               </el-select>
@@ -600,20 +600,20 @@
 
             <el-form-item label="深度决策模型">
               <el-select
-                v-model="systemSettings.deep_analysis_model"
+                v-model="deepModelKey"
                 :disabled="!isEditable('deep_analysis_model')"
                 placeholder="选择深度决策模型"
                 filterable
               >
                 <el-option
-                  v-for="model in availableModelsForProvider(systemSettings.default_provider)"
+                  v-for="model in enabledModels"
                   :key="`${model.provider}/${model.model_name}`"
                   :label="model.model_display_name || model.model_name"
-                  :value="model.model_name"
+                  :value="makeModelKey(model.provider, model.model_name)"
                 >
                   <div style="display: flex; flex-direction: column;">
                     <span>{{ model.model_display_name || model.model_name }}</span>
-                    <span style="font-size: 12px; color: #909399;">{{ model.model_name }}</span>
+                    <span style="font-size: 12px; color: #909399;">{{ model.provider }} / {{ model.model_name }}</span>
                   </div>
                 </el-option>
               </el-select>
@@ -1283,20 +1283,35 @@ const enabledProviders = computed(() => {
 })
 
 // 函数：根据厂家获取可用的模型
-const availableModelsForProvider = (providerId: string) => {
-  console.log('🔍 获取厂家模型:', providerId)
-  console.log('📊 所有大模型配置:', llmConfigs.value)
-  if (!providerId) {
-    console.log('⚠️ 厂家ID为空')
-    return []
-  }
-  const models = llmConfigs.value.filter(config => {
-    console.log(`检查模型: ${config.model_name}, provider: ${config.provider}, enabled: ${config.enabled}`)
-    return config.provider === providerId && config.enabled
-  })
-  console.log(`✅ 找到 ${models.length} 个可用模型:`, models)
-  return models
+// 快速分析 / 深度决策模型是全局选择，允许跨厂家混用，
+// 因此下拉应展示所有”已启用”的模型，而不是被 default_provider 限制。
+// （此前按 default_provider 过滤导致只显示默认厂家的模型，如 qwen-turbo/qwen-max。）
+const enabledModels = computed(() =>
+  llmConfigs.value.filter(config => config.enabled)
+)
+
+// ===== 复合键工具函数：provider::model_name，用于解决跨厂家同名模型歧义 =====
+const PROVIDER_MODEL_SEP = '::'
+const makeModelKey = (provider: string, model: string) => `${provider}${PROVIDER_MODEL_SEP}${model}`
+const splitModelKey = (key: string): { provider: string; model: string } => {
+  const i = key.indexOf(PROVIDER_MODEL_SEP)
+  if (i < 0) return { provider: '', model: key } // 兼容裸值
+  return { provider: key.slice(0, i), model: key.slice(i + PROVIDER_MODEL_SEP.length) }
 }
+// 回填：把存量裸 model_name 解析为复合键（多命中优先 default_provider 再首个）
+const resolveModelKey = (model: string, provider: string | undefined, defaultProvider: string): string => {
+  if (!model) return ''
+  if (provider) return makeModelKey(provider, model)
+  const matches = enabledModels.value.filter((m: any) => m.model_name === model)
+  if (matches.length === 0) return makeModelKey('', model)
+  if (matches.length === 1) return makeModelKey(matches[0].provider, model)
+  const preferred = matches.find((m: any) => m.provider === defaultProvider) || matches[0]
+  return makeModelKey(preferred.provider, model)
+}
+
+// 本地复合键 ref（供下拉 v-model 绑定）
+const quickModelKey = ref('')
+const deepModelKey = ref('')
 
 // 加载厂家列表
 const loadProviders = async () => {
@@ -1545,6 +1560,18 @@ const loadSystemSettings = async () => {
 
       ...settings
     }
+    // 把存量裸 model_name 解析为带厂家的复合键（供下拉正确选中）
+    // 此时 loadLLMConfigs 已先于 loadSystemSettings 执行，enabledModels 已可用
+    quickModelKey.value = resolveModelKey(
+      systemSettings.value.quick_analysis_model,
+      (systemSettings.value as any).quick_analysis_provider,
+      systemSettings.value.default_provider
+    )
+    deepModelKey.value = resolveModelKey(
+      systemSettings.value.deep_analysis_model,
+      (systemSettings.value as any).deep_analysis_provider,
+      systemSettings.value.default_provider
+    )
     // 规整元数据为map
     const metaList = meta?.items || []
     systemSettingsMeta.value = Object.fromEntries(metaList.map((m: SettingMeta) => [m.key, m]))
@@ -2195,7 +2222,16 @@ const saveSystemSettings = async () => {
       }
     }
 
+    // 复合键拆回 model + provider 两个字段（随 systemSettings 一并提交）
+    const qk = splitModelKey(quickModelKey.value)
+    const dk = splitModelKey(deepModelKey.value)
+    systemSettings.value.quick_analysis_model = qk.model
+    ;(systemSettings.value as any).quick_analysis_provider = qk.provider || undefined
+    systemSettings.value.deep_analysis_model = dk.model
+    ;(systemSettings.value as any).deep_analysis_provider = dk.provider || undefined
+
     // 仅提交可编辑项
+    // isEditable 对不在 meta 的 key 返回 true，因此 quick/deep_analysis_provider 会被提交
     const entries = Object.entries(systemSettings.value).filter(([k]) => isEditable(k))
     const payload = Object.fromEntries(entries)
     await configApi.updateSystemSettings(payload)
@@ -2283,22 +2319,26 @@ const migrateLegacyConfig = async () => {
   }
 }
 
-// 监听供应商变化，自动清空不匹配的模型选择
+// 监听供应商变化，仅在所选模型已不再可用时清空。
+// 快速/深度模型为全局选择、允许跨厂家混用，因此判据是”是否仍在已启用模型列表中”，
+// 而非”是否属于新的 default_provider”——否则切换默认厂家会误清掉跨厂家的选择。
+// 下拉现绑定复合键 quickModelKey/deepModelKey，用 splitModelKey 取 model_name 后
+// 再按 provider+model 精确匹配，判断是否仍在可用列表中。
 watch(
   () => systemSettings.value.default_provider,
   (newProvider, oldProvider) => {
     if (newProvider !== oldProvider && newProvider) {
-      const availableModels = availableModelsForProvider(newProvider)
-      const quickModel = systemSettings.value.quick_analysis_model
-      const deepModel = systemSettings.value.deep_analysis_model
+      const models = enabledModels.value
 
-      // 如果当前选择的快速分析模型不属于新供应商，清空
-      if (quickModel && !availableModels.find(m => m.model_name === quickModel)) {
+      // 仅当所选复合键对应的模型已不在”已启用模型”列表中时才清空
+      const qParsed = splitModelKey(quickModelKey.value)
+      if (qParsed.model && !models.find(m => m.model_name === qParsed.model && (!qParsed.provider || m.provider === qParsed.provider))) {
+        quickModelKey.value = ''
         systemSettings.value.quick_analysis_model = ''
       }
-
-      // 如果当前选择的深度决策模型不属于新供应商，清空
-      if (deepModel && !availableModels.find(m => m.model_name === deepModel)) {
+      const dParsed = splitModelKey(deepModelKey.value)
+      if (dParsed.model && !models.find(m => m.model_name === dParsed.model && (!dParsed.provider || m.provider === dParsed.provider))) {
+        deepModelKey.value = ''
         systemSettings.value.deep_analysis_model = ''
       }
     }

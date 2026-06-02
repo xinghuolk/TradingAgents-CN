@@ -26,7 +26,9 @@ export interface ModelCapabilityInfo {
  */
 export interface ModelRecommendationResponse {
   quick_model: string
+  quick_provider?: string | null
   deep_model: string
+  deep_provider?: string | null
   quick_model_info: ModelCapabilityInfo
   deep_model_info: ModelCapabilityInfo
   reason: string
@@ -130,13 +132,21 @@ export function recommendModels(researchDepth: string) {
  * @param deepModel 深度模型
  * @param researchDepth 研究深度
  */
-export function validateModels(quickModel: string, deepModel: string, researchDepth: string) {
+export function validateModels(
+  quickModel: string,
+  deepModel: string,
+  researchDepth: string,
+  quickProvider?: string,
+  deepProvider?: string
+) {
   return request({
     url: '/api/model-capabilities/validate',
     method: 'post',
     data: {
       quick_model: quickModel,
+      quick_provider: quickProvider,
       deep_model: deepModel,
+      deep_provider: deepProvider,
       research_depth: researchDepth
     }
   })
@@ -166,4 +176,3 @@ export function getModelCapability(modelName: string) {
     method: 'get'
   })
 }
-

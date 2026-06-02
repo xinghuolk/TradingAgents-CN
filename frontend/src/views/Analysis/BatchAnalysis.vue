@@ -311,10 +311,25 @@ const stockCodes = ref<string[]>([])  // 保留用于表单绑定
 const symbols = ref<string[]>([])     // 标准化后的代码列表
 const invalidCodes = ref<string[]>([])
 
-// 模型设置
+// 复合键工具（provider::model_name）
+const PROVIDER_MODEL_SEP = '::'
+const splitModelKey = (key: string): { provider: string; model: string } => {
+  const i = key.indexOf(PROVIDER_MODEL_SEP)
+  if (i < 0) return { provider: '', model: key }
+  return { provider: key.slice(0, i), model: key.slice(i + PROVIDER_MODEL_SEP.length) }
+}
+const resolveModelKey = (model: string, provider: string | undefined, models: any[]): string => {
+  if (!model) return ''
+  if (provider) return `${provider}::${model}`
+  const matches = (models || []).filter((m: any) => m.model_name === model)
+  const prov = matches.length ? matches[0].provider : ''
+  return `${prov}::${model}`
+}
+
+// 模型设置（内部持有复合键 provider::model_name）
 const modelSettings = ref({
-  quickAnalysisModel: 'qwen-turbo',
-  deepAnalysisModel: 'qwen-max'
+  quickAnalysisModel: '::qwen-turbo',
+  deepAnalysisModel: '::qwen-max'
 })
 
 // 可用的模型列表（从配置中获取）
@@ -372,14 +387,22 @@ const clearStocks = () => {
 // 初始化模型设置
 const initializeModelSettings = async () => {
   try {
-    // 获取默认模型
-    const defaultModels = await configApi.getDefaultModels()
-    modelSettings.value.quickAnalysisModel = defaultModels.quick_analysis_model
-    modelSettings.value.deepAnalysisModel = defaultModels.deep_analysis_model
-
-    // 获取所有可用的模型列表
+    // 先获取可用模型列表（resolve 需要用到）
     const llmConfigs = await configApi.getLLMConfigs()
     availableModels.value = llmConfigs.filter((config: any) => config.enabled)
+
+    // 获取默认模型，回填复合键
+    const defaultModels = await configApi.getDefaultModels()
+    modelSettings.value.quickAnalysisModel = resolveModelKey(
+      defaultModels.quick_analysis_model,
+      (defaultModels as any).quick_analysis_provider,
+      availableModels.value
+    )
+    modelSettings.value.deepAnalysisModel = resolveModelKey(
+      defaultModels.deep_analysis_model,
+      (defaultModels as any).deep_analysis_provider,
+      availableModels.value
+    )
 
     console.log('✅ 加载模型配置成功:', {
       quick: modelSettings.value.quickAnalysisModel,
@@ -388,9 +411,9 @@ const initializeModelSettings = async () => {
     })
   } catch (error) {
     console.error('加载默认模型配置失败:', error)
-    // 使用硬编码的默认值
-    modelSettings.value.quickAnalysisModel = 'qwen-turbo'
-    modelSettings.value.deepAnalysisModel = 'qwen-max'
+    // 使用硬编码的默认值（provider 为空，下拉选中态退化但不崩溃）
+    modelSettings.value.quickAnalysisModel = '::qwen-turbo'
+    modelSettings.value.deepAnalysisModel = '::qwen-max'
   }
 }
 
@@ -510,8 +533,10 @@ const submitBatchAnalysis = async () => {
         include_sentiment: batchForm.includeSentiment,
         include_risk: batchForm.includeRisk,
         language: batchForm.language,
-        quick_analysis_model: modelSettings.value.quickAnalysisModel,
-        deep_analysis_model: modelSettings.value.deepAnalysisModel
+        quick_analysis_model: splitModelKey(modelSettings.value.quickAnalysisModel).model,
+        quick_analysis_provider: splitModelKey(modelSettings.value.quickAnalysisModel).provider || undefined,
+        deep_analysis_model: splitModelKey(modelSettings.value.deepAnalysisModel).model,
+        deep_analysis_provider: splitModelKey(modelSettings.value.deepAnalysisModel).provider || undefined
       }
     }
 

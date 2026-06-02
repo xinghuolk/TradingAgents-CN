@@ -367,12 +367,12 @@
                         <el-icon class="help-icon"><InfoFilled /></el-icon>
                       </el-tooltip>
                     </div>
-                    <el-select v-model="modelSettings.quickAnalysisModel" size="small" style="width: 100%" filterable>
+                    <el-select v-model="quickModelKey" size="small" style="width: 100%" filterable>
                       <el-option
                         v-for="model in availableModels"
                         :key="`quick-${model.provider}/${model.model_name}`"
                         :label="model.model_display_name || model.model_name"
-                        :value="model.model_name"
+                        :value="makeModelKey(model.provider, model.model_name)"
                       >
                         <div style="display: flex; justify-content: space-between; align-items: center; gap: 8px;">
                           <span style="flex: 1;">{{ model.model_display_name || model.model_name }}</span>
@@ -409,7 +409,7 @@
                         <el-icon class="help-icon"><InfoFilled /></el-icon>
                       </el-tooltip>
                     </div>
-                    <DeepModelSelector v-model="modelSettings.deepAnalysisModel" :available-models="availableModels" type="deep" size="small" width="100%" />
+                    <DeepModelSelector v-model="deepModelKey" :available-models="availableModels" type="deep" size="small" width="100%" />
                   </div>
                 </div>
 
@@ -802,6 +802,25 @@ const modelSettings = ref({
 // 可用的模型列表（从配置中获取）
 const availableModels = ref<any[]>([])
 
+// 复合键工具：用 provider::model_name 区分同名跨厂家模型
+const PROVIDER_MODEL_SEP = '::'
+const makeModelKey = (provider: string, model: string) => `${provider}${PROVIDER_MODEL_SEP}${model}`
+const splitModelKey = (key: string): { provider: string; model: string } => {
+  const i = key.indexOf(PROVIDER_MODEL_SEP)
+  if (i < 0) return { provider: '', model: key }
+  return { provider: key.slice(0, i), model: key.slice(i + PROVIDER_MODEL_SEP.length) }
+}
+const resolveModelKey = (model: string, provider: string | undefined): string => {
+  if (!model) return ''
+  if (provider) return makeModelKey(provider, model)
+  const matches = availableModels.value.filter((m: any) => m.model_name === model)
+  if (matches.length === 0) return makeModelKey('', model)
+  return makeModelKey(matches[0].provider, model)
+}
+// 下拉绑定的复合键 ref
+const quickModelKey = ref('')
+const deepModelKey = ref('')
+
 // 🆕 模型推荐提示
 const modelRecommendation = ref<{
   title: string
@@ -809,6 +828,8 @@ const modelRecommendation = ref<{
   type: 'success' | 'warning' | 'info' | 'error'
   quickModel?: string
   deepModel?: string
+  quickProvider?: string
+  deepProvider?: string
 } | null>(null)
 
 // 分析表单
@@ -959,8 +980,10 @@ const submitAnalysis = async () => {
         include_sentiment: analysisForm.includeSentiment,
         include_risk: analysisForm.includeRisk,
         language: analysisForm.language,
-        quick_analysis_model: modelSettings.value.quickAnalysisModel,
-        deep_analysis_model: modelSettings.value.deepAnalysisModel
+        quick_analysis_model: splitModelKey(quickModelKey.value).model,
+        quick_analysis_provider: splitModelKey(quickModelKey.value).provider || undefined,
+        deep_analysis_model: splitModelKey(deepModelKey.value).model,
+        deep_analysis_provider: splitModelKey(deepModelKey.value).provider || undefined,
       }
     }
 
@@ -1900,13 +1923,25 @@ const initializeModelSettings = async () => {
     modelSettings.value.quickAnalysisModel = defaultModels.quick_analysis_model
     modelSettings.value.deepAnalysisModel = defaultModels.deep_analysis_model
 
-    // 获取所有可用的模型列表
+    // 获取所有可用的模型列表（先于复合键回填，确保 resolveModelKey 能命中）
     const llmConfigs = await configApi.getLLMConfigs()
     availableModels.value = llmConfigs.filter((config: any) => config.enabled)
+
+    // 回填复合键 ref（availableModels 已加载，resolveModelKey 可精确匹配）
+    quickModelKey.value = resolveModelKey(
+      defaultModels.quick_analysis_model,
+      (defaultModels as any).quick_analysis_provider
+    )
+    deepModelKey.value = resolveModelKey(
+      defaultModels.deep_analysis_model,
+      (defaultModels as any).deep_analysis_provider
+    )
 
     console.log('✅ 加载模型配置成功:', {
       quick: modelSettings.value.quickAnalysisModel,
       deep: modelSettings.value.deepAnalysisModel,
+      quickKey: quickModelKey.value,
+      deepKey: deepModelKey.value,
       available: availableModels.value.length
     })
     console.log('🔍 可用模型详细信息:', availableModels.value.map(m => ({
@@ -2107,10 +2142,14 @@ const checkModelSuitability = async () => {
     if (responseData) {
       const quickModel = responseData.quick_model || '未知'
       const deepModel = responseData.deep_model || '未知'
+      const quickProvider: string | undefined = responseData.quick_provider || undefined
+      const deepProvider: string | undefined = responseData.deep_provider || undefined
 
       // 获取模型的显示名称
-      const quickModelInfo = availableModels.value.find(m => m.model_name === quickModel)
-      const deepModelInfo = availableModels.value.find(m => m.model_name === deepModel)
+      const quickModelInfo = availableModels.value.find(m => m.model_name === quickModel && (!quickProvider || m.provider === quickProvider))
+        || availableModels.value.find(m => m.model_name === quickModel)
+      const deepModelInfo = availableModels.value.find(m => m.model_name === deepModel && (!deepProvider || m.provider === deepProvider))
+        || availableModels.value.find(m => m.model_name === deepModel)
 
       const quickDisplayName = quickModelInfo?.model_display_name || quickModel
       const deepDisplayName = deepModelInfo?.model_display_name || deepModel
@@ -2134,7 +2173,9 @@ const checkModelSuitability = async () => {
         message,
         type: 'info',
         quickModel,
-        deepModel
+        deepModel,
+        quickProvider,
+        deepProvider
       }
     } else {
       // 如果没有推荐数据，显示通用说明
@@ -2173,9 +2214,16 @@ const checkModelSuitability = async () => {
 
 // 应用推荐的模型配置
 const applyRecommendedModels = () => {
-  if (modelRecommendation.value?.quickModel && modelRecommendation.value?.deepModel) {
-    modelSettings.value.quickAnalysisModel = modelRecommendation.value.quickModel
-    modelSettings.value.deepAnalysisModel = modelRecommendation.value.deepModel
+  const rec = modelRecommendation.value
+  if (rec?.quickModel && rec?.deepModel) {
+    const quickModel: string = rec.quickModel
+    const deepModel: string = rec.deepModel
+    // 用复合键 ref 驱动下拉（provider 有值时精确绑定，否则按名字找首个）
+    quickModelKey.value = resolveModelKey(quickModel, rec.quickProvider)
+    deepModelKey.value = resolveModelKey(deepModel, rec.deepProvider)
+    // 同步 modelSettings（保留兼容，提交以复合键 ref 为准）
+    modelSettings.value.quickAnalysisModel = quickModel
+    modelSettings.value.deepAnalysisModel = deepModel
 
     // 清除推荐提示
     modelRecommendation.value = null
@@ -2190,8 +2238,9 @@ watch(() => analysisForm.researchDepth, () => {
   checkModelSuitability()
 })
 
-// 监听模型选择变化
-watch([() => modelSettings.value.quickAnalysisModel, () => modelSettings.value.deepAnalysisModel], () => {
+// 监听模型选择变化:下拉已改绑复合键 ref(quickModelKey/deepModelKey),
+// 用户手选时 modelSettings 不再更新,故监听复合键以保证兼容性提示不 stale。
+watch([quickModelKey, deepModelKey], () => {
   checkModelSuitability()
 })
 
