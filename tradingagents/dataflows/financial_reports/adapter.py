@@ -87,26 +87,52 @@ def _annual_pdf_names(market: str, period_end: str) -> tuple[str, ...]:
     return (f"{year}_annual_en.pdf", f"{year}_annual_zh.pdf", f"{year}.pdf")
 
 
+def _pdf_company_candidates(market: str, company: str) -> tuple[str, ...]:
+    raw = str(company or "").strip()
+    candidates = [raw] if raw else []
+
+    normalized_market = str(market or "").strip().upper()
+    if normalized_market in {"HK", "HKG"} and raw:
+        without_suffix = raw[:-3] if raw.upper().endswith(".HK") else raw
+        if without_suffix and without_suffix != raw:
+            candidates.append(without_suffix)
+
+        digits = "".join(ch for ch in without_suffix if ch.isdigit())
+        if digits and len(digits) <= 5:
+            candidates.append(digits.zfill(5))
+            candidates.append(digits)
+
+    return tuple(dict.fromkeys(candidates))
+
+
 def _pdf_candidates(root: Path, query: Any) -> tuple[Path, ...]:
     market = str(query.market)
-    company = str(query.company)
+    company_candidates = _pdf_company_candidates(market, str(query.company))
     period_end = str(query.period_end)
-    candidates: list[Path] = [
-        root / market.lower() / company / f"{period_end}.pdf",
-        root / market.upper() / company / f"{period_end}.pdf",
-        root / company / f"{period_end}.pdf",
-    ]
+    candidates: list[Path] = []
+    for company in company_candidates:
+        candidates.extend(
+            (
+                root / market.lower() / company / f"{period_end}.pdf",
+                root / market.upper() / company / f"{period_end}.pdf",
+                root / company / f"{period_end}.pdf",
+            )
+        )
 
-    annual_dirs = (
-        root / _extractor_market_dir(market) / company / "annual",
-        root / company / "annual",
-        root / "annual",
-        root,
-    )
-    for annual_dir in annual_dirs:
+    annual_dirs: list[Path] = []
+    for company in company_candidates:
+        annual_dirs.extend(
+            (
+                root / _extractor_market_dir(market) / company / "annual",
+                root / company / "annual",
+            )
+        )
+    annual_dirs.extend((root / "annual", root))
+
+    for annual_dir in dict.fromkeys(annual_dirs):
         for filename in _annual_pdf_names(market, period_end):
             candidates.append(annual_dir / filename)
-    return tuple(candidates)
+    return tuple(dict.fromkeys(candidates))
 
 
 def resolve_injected_codex_token(deep_config: dict | None = None) -> str | None:
