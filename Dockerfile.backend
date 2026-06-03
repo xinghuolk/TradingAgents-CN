@@ -16,10 +16,14 @@ ARG GITHUB_PROXY=
 # （可在 .env 设 FINANCIAL_REPORT_EXTRACTOR_REV 覆盖）；此处默认仅作 docker build 直接
 # 构建（不经 compose）时的回退值。
 ARG FINANCIAL_REPORT_EXTRACTOR_REV=e7c7d2d34e9253f33ac4a398bf56e9298dd47938
+# 本地调试默认跳过 GitHub tarball，运行时通过挂载 checkout + PYTHONPATH 使用源码。
+# 构建独立镜像时设置 --build-arg INSTALL_FINANCIAL_REPORT_EXTRACTOR=true。
+ARG INSTALL_FINANCIAL_REPORT_EXTRACTOR=false
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
+    PYTHONPATH=/app/external/financial-report-llm-extractor/src \
     TZ=Asia/Shanghai
 
 WORKDIR /app
@@ -63,11 +67,19 @@ COPY pyproject.toml README.md ./
 # 1. 使用清华镜像加速下载
 # 2. 优先使用预编译的二进制wheel包（--prefer-binary）
 # 3. 避免从源码编译，大幅提升ARM架构构建速度
-# 4. 显式安装 GitHub pin 的 financial-report-llm-extractor；pip 不读取 [tool.uv.sources]，默认走 GitHub 代理
-# 5. 安装 PDF 导出工具: pdfkit
+# 4. 调试构建默认跳过 GitHub pin 的 financial-report-llm-extractor，避免远端 tarball 卡住
+# 5. 跳过 extractor 时，从 pyproject 生成临时 requirements，并排除该依赖，避免 pip install . 再解析安装它
+# 6. 安装 PDF 导出工具: pdfkit
 RUN pip install --upgrade pip -i "${PYPI_INDEX_URL}" && \
-    pip install --prefer-binary "${GITHUB_PROXY}https://github.com/xinghuolk/financial-report-llm-extractor/archive/${FINANCIAL_REPORT_EXTRACTOR_REV}.tar.gz" -i "${PYPI_INDEX_URL}" && \
-    pip install --prefer-binary . -i "${PYPI_INDEX_URL}" && \
+    if [ "${INSTALL_FINANCIAL_REPORT_EXTRACTOR}" = "true" ]; then \
+        pip install --prefer-binary "${GITHUB_PROXY}https://github.com/xinghuolk/financial-report-llm-extractor/archive/${FINANCIAL_REPORT_EXTRACTOR_REV}.tar.gz" -i "${PYPI_INDEX_URL}" && \
+        pip install --prefer-binary . -i "${PYPI_INDEX_URL}"; \
+    else \
+        echo "Skipping financial-report-llm-extractor GitHub install; using mounted checkout via PYTHONPATH at runtime" && \
+        python -c "import tomllib; from pathlib import Path; data=tomllib.loads(Path('pyproject.toml').read_text(encoding='utf-8')); deps=[d for d in data['project']['dependencies'] if not d.strip().lower().startswith('financial-report-llm-extractor')]; Path('/tmp/tradingagents-requirements.txt').write_text('\n'.join(deps) + '\n', encoding='utf-8')" && \
+        pip install --prefer-binary -r /tmp/tradingagents-requirements.txt -i "${PYPI_INDEX_URL}" && \
+        pip install --no-deps . -i "${PYPI_INDEX_URL}"; \
+    fi && \
     pip install --prefer-binary pdfkit -i "${PYPI_INDEX_URL}"
 
 # 复制后端代码和必需模块

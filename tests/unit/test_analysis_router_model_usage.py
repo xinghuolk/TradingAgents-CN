@@ -50,6 +50,7 @@ def _make_mongo_doc() -> dict:
         "decision": {},
         "reports": {"value_report": "# 价值分析\n\n内容内容内容。"},
         "state": {},
+        "model_info": "gpt-5.5",
         "model_usage": MODEL_USAGE_SAMPLE,
     }
 
@@ -78,3 +79,29 @@ async def test_result_endpoint_returns_model_usage_from_analysis_reports_branch(
 
     assert result["success"] is True
     assert result["data"]["model_usage"] == MODEL_USAGE_SAMPLE
+
+
+@pytest.mark.asyncio
+async def test_result_endpoint_preserves_model_info_from_analysis_reports_branch():
+    from app.routers import analysis as analysis_module
+
+    fake_service = MagicMock()
+    fake_service.get_task_status = AsyncMock(
+        return_value={"status": "completed", "result_data": None}
+    )
+
+    fake_db = MagicMock()
+    fake_db.analysis_reports.find_one = AsyncMock(return_value=_make_mongo_doc())
+    fake_db.analysis_tasks.find_one = AsyncMock(return_value=None)
+
+    with patch(
+        "app.routers.analysis.get_simple_analysis_service",
+        return_value=fake_service,
+    ), patch("app.core.database.get_mongo_db", return_value=fake_db):
+        result = await analysis_module.get_task_result(
+            "task-model-usage",
+            user={"username": "test", "id": "test-id"},
+        )
+
+    assert result["success"] is True
+    assert result["data"]["model_info"] == "gpt-5.5"

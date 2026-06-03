@@ -621,6 +621,15 @@
 
                         <!-- 报告内容 -->
                         <div class="report-content-wrapper">
+                          <div v-if="getReportModelLabel(report.key)" class="module-model-usage">
+                            <el-tag size="small" type="info">{{ getReportModelLabel(report.key) }}</el-tag>
+                            <template v-if="getReportModelUsage(report.key)">
+                              <span>{{ formatModelUsageTokens(getReportModelUsage(report.key)) }}</span>
+                              <span>{{ formatModelUsageCost(getReportModelUsage(report.key)) }}</span>
+                              <span>{{ formatModelUsageDuration(getReportModelUsage(report.key)) }}</span>
+                            </template>
+                          </div>
+
                           <!-- value_report: use TurtlePayloadPanel (Spec 4 §6.2) -->
                           <template v-if="report.key === 'value_report'">
                             <TurtlePayloadPanel
@@ -727,6 +736,7 @@ import { marked } from 'marked'
 import { recommendModels, validateModels, type ModelRecommendationResponse } from '@/api/modelCapabilities'
 import { validateStockCode, getStockCodeFormatHelp, getStockCodeExamples } from '@/utils/stockValidator'
 import { normalizeMarketForAnalysis, getMarketByStockCode } from '@/utils/market'
+import type { ModelUsageNode } from '@/types/analysis'
 
 // 配置marked选项
 marked.setOptions({
@@ -1399,6 +1409,96 @@ const getReportDescription = (title: string) => {
     '🎯 最终交易决策': '综合所有团队分析后的最终投资决策'
   }
   return descMap[title] || '详细分析报告'
+}
+
+// 模块名 -> 节点键映射（用于展示节点级模型标识和用量）
+const reportModelUsageMap: Record<string, string> = {
+  market_report: 'market_analyst',
+  fundamentals_report: 'fundamentals_analyst',
+  news_report: 'news_analyst',
+  sentiment_report: 'social_analyst',
+  value_report: 'value_analyst',
+  bull_researcher: 'bull_researcher',
+  bear_researcher: 'bear_researcher',
+  research_team_decision: 'research_manager',
+  trader_investment_plan: 'trader',
+  investment_plan: 'trader',
+  risky_analyst: 'risky_analyst',
+  safe_analyst: 'safe_analyst',
+  neutral_analyst: 'neutral_analyst',
+  risk_management_decision: 'risk_judge',
+  final_trade_decision: 'risk_judge'
+}
+
+const getReportModelUsage = (reportKey: string): ModelUsageNode | undefined => {
+  const nodeKey = reportModelUsageMap[reportKey]
+  if (!nodeKey) return undefined
+  return analysisResults.value?.model_usage?.nodes?.[nodeKey]
+}
+
+const getReportModelLabel = (reportKey: string): string => {
+  const usage = getReportModelUsage(reportKey)
+  if (usage?.provider || usage?.model) {
+    return [usage.provider, usage.model].filter(Boolean).join(' / ')
+  }
+
+  const modelInfo = analysisResults.value?.model_info
+  return modelInfo && modelInfo !== 'Unknown' ? modelInfo : ''
+}
+
+const formatUsageNumber = (value: number | null | undefined): string | null => {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    return null
+  }
+  return value.toLocaleString()
+}
+
+const formatUsageMoney = (value: number): string => {
+  return Number.isInteger(value)
+    ? String(value)
+    : value.toFixed(6).replace(/0+$/, '').replace(/\.$/, '')
+}
+
+const formatModelUsageTokens = (node?: ModelUsageNode): string => {
+  if (!node) return ''
+  const input = formatUsageNumber(node.input_tokens)
+  const output = formatUsageNumber(node.output_tokens)
+  if (
+    input == null ||
+    output == null ||
+    (node.partial && node.input_tokens === 0 && node.output_tokens === 0)
+  ) {
+    return 'Token N/A'
+  }
+  return `${input} in / ${output} out`
+}
+
+const formatModelUsageCost = (node?: ModelUsageNode): string => {
+  if (!node) return ''
+  const symbolMap: Record<string, string> = { CNY: '¥', USD: '$' }
+  if (node.cost != null && node.currency) {
+    const sym = symbolMap[node.currency] || `${node.currency} `
+    return `${sym}${formatUsageMoney(node.cost)}`
+  }
+  const costsByCurrency = node.costs_by_currency
+  if (costsByCurrency && Object.keys(costsByCurrency).length) {
+    return Object.entries(costsByCurrency)
+      .map(([currency, value]) => `${symbolMap[currency] || `${currency} `}${formatUsageMoney(value)}`)
+      .join(' + ')
+  }
+  return '成本 N/A'
+}
+
+const formatModelUsageDuration = (node?: ModelUsageNode): string => {
+  if (!node) return ''
+  if (
+    typeof node.duration_seconds !== 'number' ||
+    !Number.isFinite(node.duration_seconds) ||
+    (node.partial && node.duration_seconds === 0)
+  ) {
+    return '耗时 N/A'
+  }
+  return `${node.duration_seconds.toFixed(2)}s`
 }
 
 // 格式化报告内容
@@ -3390,6 +3490,16 @@ onMounted(async () => {
   border-radius: 12px;
   border: 1px solid var(--el-border-color);
   box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+}
+
+.module-model-usage {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  align-items: center;
+  margin-bottom: 12px;
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
 }
 
 /* 报告内容样式增强 */

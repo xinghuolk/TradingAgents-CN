@@ -13,6 +13,9 @@ services:
         # financial-report-llm-extractor 的 git rev（构建时拉取）。
         # 在 .env 里设 FINANCIAL_REPORT_EXTRACTOR_REV=<sha> 覆盖；不设则用此默认。
         FINANCIAL_REPORT_EXTRACTOR_REV: ${FINANCIAL_REPORT_EXTRACTOR_REV:-e7c7d2d34e9253f33ac4a398bf56e9298dd47938}
+        # 本地调试默认跳过 GitHub tarball，运行时使用挂载 checkout + PYTHONPATH。
+        # 需要构建独立镜像时设 INSTALL_FINANCIAL_REPORT_EXTRACTOR=true。
+        INSTALL_FINANCIAL_REPORT_EXTRACTOR: ${INSTALL_FINANCIAL_REPORT_EXTRACTOR:-false}
     image: tradingagents-backend:v1.0.0-preview
     container_name: tradingagents-backend
     ports:
@@ -33,6 +36,9 @@ services:
     environment:
       PYTHONUNBUFFERED: 1
       PYTHONDONTWRITEBYTECODE: 1
+      # Prefer the mounted local financial-report-llm-extractor checkout in
+      # development; fall back to the image's GitHub-pinned package if absent.
+      PYTHONPATH: "/app/external/financial-report-llm-extractor/src"
       TZ: "Asia/Shanghai"
       # 日志配置
       TRADINGAGENTS_LOG_LEVEL: "INFO"
