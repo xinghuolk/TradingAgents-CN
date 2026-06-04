@@ -52,6 +52,11 @@ def test_purge_rejects_filesystem_root():
         _purge_directory_contents("/")
 
 
+def test_purge_rejects_relative_path():
+    with pytest.raises(ValueError):
+        _purge_directory_contents("relative/dir")
+
+
 def test_purge_rejects_home(monkeypatch, tmp_path):
     fake_home = tmp_path / "home"
     fake_home.mkdir()
@@ -60,24 +65,23 @@ def test_purge_rejects_home(monkeypatch, tmp_path):
         _purge_directory_contents(str(fake_home))
 
 
-def test_purge_extractor_cache_reads_config(monkeypatch, tmp_path):
-    cache_dir = tmp_path / "cache"
-    cache_dir.mkdir()
+def test_purge_extractor_cache_uses_container_path(monkeypatch, tmp_path):
+    container_root = tmp_path / "extractor"
+    cache_dir = container_root / "tmp" / ".cache"
+    cache_dir.mkdir(parents=True)
     (cache_dir / "x.json").write_text("x", encoding="utf-8")
-    monkeypatch.delenv("DOCKER_CONTAINER", raising=False)
-    monkeypatch.setenv("FINANCIAL_REPORT_EXTRACTOR_CACHE_ROOT", str(cache_dir))
+    monkeypatch.setenv("FINANCIAL_REPORT_EXTRACTOR_CONTAINER_ROOT", str(container_root))
     result = purge_extractor_cache()
     assert result["deleted_files"] == 1
     assert result["root"] == str(cache_dir)
     assert list(cache_dir.iterdir()) == []
 
 
-def test_purge_downloaded_pdfs_reads_config(monkeypatch, tmp_path):
+def test_purge_downloaded_pdfs_uses_container_path(monkeypatch, tmp_path):
     pdf_dir = tmp_path / "pdfs"
     pdf_dir.mkdir()
     (pdf_dir / "y.pdf").write_bytes(b"abc")
-    monkeypatch.delenv("DOCKER_CONTAINER", raising=False)
-    monkeypatch.setenv("FINANCIAL_REPORT_PDF_ROOT", str(pdf_dir))
+    monkeypatch.setenv("FINANCIAL_REPORT_PDF_CONTAINER_ROOT", str(pdf_dir))
     result = purge_downloaded_pdfs()
     assert result["deleted_files"] == 1
     assert result["root"] == str(pdf_dir)

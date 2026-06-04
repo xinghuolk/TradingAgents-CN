@@ -118,6 +118,8 @@ export interface FinancialReportPurgeResult {
 export interface FinancialReportPaths {
   pdf_root: string
   extractor_cache_root: string
+  pdf_container_root: string
+  extractor_cache_container_root: string
 }
 
 /**

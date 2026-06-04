@@ -645,9 +645,11 @@ async def financial_report_status(
     try:
         from tradingagents.dataflows.financial_reports.config import (
             get_financial_report_client_config,
+            get_financial_report_container_paths,
         )
 
         frc = get_financial_report_client_config()
+        extractor_cache_container_root, pdf_container_root = get_financial_report_container_paths()
         return {
             "enabled": frc.enabled,
             "include_llm_supplement": frc.include_llm_supplement,
@@ -655,6 +657,8 @@ async def financial_report_status(
             "force_refresh": frc.force_refresh,
             "pdf_root": frc.pdf_root,
             "extractor_cache_root": frc.extractor_cache_root,
+            "pdf_container_root": pdf_container_root,
+            "extractor_cache_container_root": extractor_cache_container_root,
             "llm_config_path": frc.llm_config_path,
             "allow_llm_models": list(frc.allow_llm_models),
         }

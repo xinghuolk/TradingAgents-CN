@@ -11,7 +11,7 @@ import shutil
 from pathlib import Path
 
 from tradingagents.dataflows.financial_reports.config import (
-    get_financial_report_client_config,
+    get_financial_report_container_paths,
 )
 
 logger = logging.getLogger("webapi")
@@ -40,6 +40,8 @@ def _purge_directory_contents(root: str) -> dict:
         return result
 
     path = Path(root)
+    if not path.is_absolute():
+        raise ValueError(f"拒绝清理非绝对路径: {path}")
     if not path.exists() or not path.is_dir():
         return result
     if _is_dangerous_path(path):
@@ -80,18 +82,18 @@ def _purge_directory_contents(root: str) -> dict:
 
 
 def purge_extractor_cache() -> dict:
-    """清空财报 LLM extractor 抽取缓存目录内容。"""
-    cfg = get_financial_report_client_config()
-    logger.info("开始清理财报 extractor 缓存: %s", cfg.extractor_cache_root)
-    result = _purge_directory_contents(cfg.extractor_cache_root)
+    """清空财报 LLM extractor 抽取缓存目录内容（容器内部固定路径）。"""
+    extractor_cache_root, _ = get_financial_report_container_paths()
+    logger.info("开始清理财报 extractor 缓存: %s", extractor_cache_root)
+    result = _purge_directory_contents(extractor_cache_root)
     logger.info("财报 extractor 缓存清理完成: %s", result)
     return result
 
 
 def purge_downloaded_pdfs() -> dict:
-    """清空已下载的财报 PDF 目录内容。"""
-    cfg = get_financial_report_client_config()
-    logger.info("开始清理已下载 PDF: %s", cfg.pdf_root)
-    result = _purge_directory_contents(cfg.pdf_root)
+    """清空已下载的财报 PDF 目录内容（容器内部固定路径）。"""
+    _, pdf_root = get_financial_report_container_paths()
+    logger.info("开始清理已下载 PDF: %s", pdf_root)
+    result = _purge_directory_contents(pdf_root)
     logger.info("已下载 PDF 清理完成: %s", result)
     return result

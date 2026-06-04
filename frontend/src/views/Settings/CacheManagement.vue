@@ -244,7 +244,7 @@ const cleanupLoading = ref(false)
 const clearAllLoading = ref(false)
 const extractorLoading = ref(false)
 const pdfsLoading = ref(false)
-const financialReportPaths = ref({ pdf_root: '', extractor_cache_root: '' })
+const financialReportPaths = ref({ pdf_root: '', extractor_cache_root: '', pdf_container_root: '', extractor_cache_container_root: '' })
 const detailsLoading = ref(false)
 
 const cleanupDays = ref(7)
@@ -384,7 +384,9 @@ const loadFinancialReportPaths = async () => {
     const data: any = response.data || response
     financialReportPaths.value = {
       pdf_root: data.pdf_root || '',
-      extractor_cache_root: data.extractor_cache_root || ''
+      extractor_cache_root: data.extractor_cache_root || '',
+      pdf_container_root: data.pdf_container_root || '',
+      extractor_cache_container_root: data.extractor_cache_container_root || ''
     }
   } catch (error) {
     // 路径读取失败不阻塞页面，确认弹窗回退为通用文案
@@ -394,7 +396,7 @@ const loadFinancialReportPaths = async () => {
 
 const clearExtractorCache = async () => {
   try {
-    const dir = financialReportPaths.value.extractor_cache_root || '（服务端配置的抽取缓存目录）'
+    const dir = financialReportPaths.value.extractor_cache_container_root || '（服务端配置的抽取缓存目录）'
     await ElMessageBox.confirm(
       `确定要清空财报抽取缓存目录吗？\n目录：${dir}\n此操作无法恢复！`,
       '确认清理',
@@ -419,7 +421,7 @@ const clearExtractorCache = async () => {
 
 const clearPdfs = async () => {
   try {
-    const dir = financialReportPaths.value.pdf_root || '（服务端配置的 PDF 目录）'
+    const dir = financialReportPaths.value.pdf_container_root || '（服务端配置的 PDF 目录）'
     await ElMessageBox.confirm(
       `确定要清空已下载 PDF 目录吗？\n目录：${dir}\n注意：若该目录与 report-collector 共享，将删除其源文件。此操作无法恢复！`,
       '确认清理',
