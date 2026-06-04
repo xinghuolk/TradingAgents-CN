@@ -103,3 +103,50 @@ export function getCacheBackendInfo() {
   })
 }
 
+/**
+ * 财报缓存清理结果
+ */
+export interface FinancialReportPurgeResult {
+  deleted_files: number
+  freed_bytes: number
+  root: string
+}
+
+/**
+ * 财报提取器路径状态（仅取展示用的两个目录）
+ */
+export interface FinancialReportPaths {
+  pdf_root: string
+  extractor_cache_root: string
+}
+
+/**
+ * 读取财报提取器配置状态（用于在确认弹窗中展示真实目录路径）
+ */
+export function getFinancialReportPaths() {
+  return request<FinancialReportPaths>({
+    url: '/api/config/financial-report/status',
+    method: 'get'
+  })
+}
+
+/**
+ * 清理财报 LLM extractor 抽取缓存
+ */
+export function clearFinancialReportExtractorCache() {
+  return request<FinancialReportPurgeResult>({
+    url: '/api/cache/financial-report/extractor',
+    method: 'delete'
+  })
+}
+
+/**
+ * 清理已下载的财报 PDF
+ */
+export function clearFinancialReportPdfs() {
+  return request<FinancialReportPurgeResult>({
+    url: '/api/cache/financial-report/pdfs',
+    method: 'delete'
+  })
+}
+
