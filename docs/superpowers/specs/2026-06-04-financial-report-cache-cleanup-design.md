@@ -42,8 +42,19 @@
 
 职责：解析目标目录 → 统计 → 删除内容 → 返回统计。
 
-- 路径来源：复用 `tradingagents/dataflows/financial_reports/config.py` 中已有的解析（读取
-  `extractor_cache_root` / `pdf_root`），不在 service 内重复硬编码默认值。
+- 路径来源：复用 `tradingagents/dataflows/financial_reports/config.py`。**没有单路径
+  getter**，需调用完整配置对象（与 `app/routers/config.py:650-657` 状态端点同一来源）：
+
+  ```python
+  from tradingagents.dataflows.financial_reports.config import get_financial_report_client_config
+  cfg = get_financial_report_client_config()
+  cfg.extractor_cache_root  # str
+  cfg.pdf_root              # str
+  ```
+
+  不在 service 内重复硬编码默认值。该函数已处理 Docker host↔container remap（`DOCKER_CONTAINER=true`
+  时返回容器内路径），service **不要再次 remap**，直接对返回路径操作。
+  路径解析与 `FINANCIAL_REPORT_CLIENT_ENABLED` 无关——功能关闭/未安装时也能解析并清理。
 - 提供两个函数（或一个带参数的 purge 函数 + 两个薄封装）：
   - `purge_extractor_cache() -> {deleted_files, freed_bytes, root}`
   - `purge_downloaded_pdfs() -> {deleted_files, freed_bytes, root}`
@@ -53,11 +64,25 @@
   3. 递归遍历，累加文件数和字节数，再删除目录 **内容**（保留 root 目录本身）。
   4. 单个文件删除失败时捕获异常、记录 warning 日志、计入未删除项，不中断整体。
 - 安全护栏：解析出的路径若等于 `/`、空、或用户家目录根等危险路径，**拒绝执行** 并抛出明确错误，由路由转成 400/500。
+- **PDF 目录共享风险（重要）**：`.env.example` 明确允许把 `FINANCIAL_REPORT_PDF_ROOT` /
+  `FINANCIAL_REPORT_PDF_HOST_ROOT` 直接指向 report-collector 的 `downloads` 目录。此时「清理 PDF」会
+  删除另一系统的 **源文件**，而非私有缓存。护栏无法识别这种合法但共享的目录，因此：
+  - 端点返回里始终带上解析出的 `root`；
+  - 前端确认弹窗必须显示该真实路径，让用户确认要删的是哪个目录；
+  - 在 service/端点文档注释里写明此别名风险。
+  （extractor 缓存 `{root}/tmp/.cache` 是私有目录，无此风险。）
 - 日志：使用 `logging.getLogger("webapi")`（或 `app.<name>`）记录开始/结果。
 
 **新增端点：`app/routers/cache.py`（专有）**
 
-沿用现有 `/api/cache/*` 端点的鉴权与 `ApiResponse` 返回风格：
+沿用现有 `/api/cache/*` 端点（`app/routers/cache.py`，`prefix="/api/cache"`）的鉴权与返回风格。
+鉴权用 `Depends(get_current_user)`（来自 `app.routers.auth_db`）；返回 **不是** `ApiResponse` 类，而是
+`app.core.response.ok` 辅助函数；错误用 `HTTPException`：
+
+```python
+from app.core.response import ok
+return ok(data={"deleted_files": n, "freed_bytes": b, "root": root}, message="...")
+```
 
 - `DELETE /api/cache/financial-report/extractor` → 调 `purge_extractor_cache()`
 - `DELETE /api/cache/financial-report/pdfs` → 调 `purge_downloaded_pdfs()`
@@ -80,6 +105,12 @@
 每个按钮：`ElMessageBox.confirm` 二次确认 → 调 API → 成功后
 `ElMessage.success('已清理 N 个文件，释放 X')`（X 复用现有 `formatSize`）→ `refreshStats()`。
 失败走现有 `error.message` 提示模式。新增两个 `ref` loading 变量。
+
+**PDF 按钮的确认弹窗须显示将被删除的真实目录路径**（应对上文共享目录风险）。由于 `confirm`
+在调用前需要知道 root，前端可：先调一个轻量信息接口（复用现有
+`GET /config/financial-report/status` 拿 `pdf_root` / `extractor_cache_root`）取路径填进确认文案，
+再执行删除；或在 confirm 文案里提示「将清空服务端配置的 PDF 目录，请确认配置无误」并在成功提示里回显
+返回的 `root`。优先前者（明确显示路径）。
 
 ## 数据流
 
