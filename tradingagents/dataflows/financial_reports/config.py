@@ -108,6 +108,25 @@ class FinancialReportClientConfig:
     pdf_root: str
 
 
+def get_financial_report_container_paths() -> tuple[str, str]:
+    """返回容器内部固定的 (extractor_cache_root, pdf_root)。
+
+    清理操作只针对容器内部的挂载点，与 host 端 env 路径配置（FINANCIAL_REPORT_*_ROOT /
+    *_HOST_ROOT）无关，避免误删宿主机上任意配置目录或相对路径。可被
+    FINANCIAL_REPORT_EXTRACTOR_CONTAINER_ROOT / FINANCIAL_REPORT_PDF_CONTAINER_ROOT 覆盖。
+    """
+    extractor_root = _container_root(
+        "FINANCIAL_REPORT_EXTRACTOR_CONTAINER_ROOT",
+        _DEFAULT_EXTRACTOR_CONTAINER_ROOT,
+    )
+    extractor_cache_root = f"{extractor_root}/tmp/.cache"
+    pdf_root = _container_root(
+        "FINANCIAL_REPORT_PDF_CONTAINER_ROOT",
+        _DEFAULT_PDF_CONTAINER_ROOT,
+    )
+    return extractor_cache_root, pdf_root
+
+
 def get_financial_report_client_config() -> FinancialReportClientConfig:
     return FinancialReportClientConfig(
         enabled=_env_bool("FINANCIAL_REPORT_CLIENT_ENABLED", False),

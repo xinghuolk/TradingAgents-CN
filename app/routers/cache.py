@@ -122,6 +122,68 @@ async def clear_all_cache(current_user: dict = Depends(get_current_user)):
         )
 
 
+@router.delete("/financial-report/extractor")
+async def clear_financial_report_extractor_cache(
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    清空财报 LLM extractor 抽取缓存目录内容
+
+    Returns:
+        dict: {deleted_files, freed_bytes, root}
+    """
+    try:
+        from app.services.financial_report_cache_service import purge_extractor_cache
+
+        result = purge_extractor_cache()
+        logger.warning(
+            f"用户 {current_user['username']} 清理了财报抽取缓存: {result}"
+        )
+        return ok(
+            data=result,
+            message=f"已清理 {result['deleted_files']} 个文件"
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"清理财报抽取缓存失败: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"清理财报抽取缓存失败: {str(e)}"
+        )
+
+
+@router.delete("/financial-report/pdfs")
+async def clear_financial_report_pdfs(
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    清空已下载的财报 PDF 目录内容
+
+    Returns:
+        dict: {deleted_files, freed_bytes, root}
+    """
+    try:
+        from app.services.financial_report_cache_service import purge_downloaded_pdfs
+
+        result = purge_downloaded_pdfs()
+        logger.warning(
+            f"用户 {current_user['username']} 清理了已下载 PDF: {result}"
+        )
+        return ok(
+            data=result,
+            message=f"已清理 {result['deleted_files']} 个文件"
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"清理已下载 PDF 失败: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"清理已下载 PDF 失败: {str(e)}"
+        )
+
+
 @router.get("/details")
 async def get_cache_details(
     page: int = Query(1, ge=1, description="页码"),
