@@ -120,14 +120,41 @@
             <div class="operation-item">
               <h4>🗑️ 清空所有缓存</h4>
               <p class="warning-text">⚠️ 此操作将删除所有缓存文件，无法恢复</p>
-              
-              <el-button 
-                type="danger" 
-                @click="clearAllCache" 
+
+              <el-button
+                type="danger"
+                @click="clearAllCache"
                 :loading="clearAllLoading"
               >
                 <el-icon><Delete /></el-icon>
                 清空所有缓存
+              </el-button>
+            </div>
+
+            <el-divider />
+
+            <!-- 财报数据缓存 -->
+            <div class="operation-item">
+              <h4>📄 财报数据缓存</h4>
+              <p class="warning-text">⚠️ 清理操作不可恢复，请确认服务端配置的目录无误</p>
+
+              <el-button
+                type="warning"
+                @click="clearExtractorCache"
+                :loading="extractorLoading"
+                style="margin-bottom: 12px"
+              >
+                <el-icon><Delete /></el-icon>
+                清理财报抽取缓存
+              </el-button>
+              <br />
+              <el-button
+                type="warning"
+                @click="clearPdfs"
+                :loading="pdfsLoading"
+              >
+                <el-icon><Delete /></el-icon>
+                清理已下载 PDF
               </el-button>
             </div>
           </div>
@@ -215,6 +242,9 @@ import * as cacheApi from '@/api/cache'
 const statsLoading = ref(false)
 const cleanupLoading = ref(false)
 const clearAllLoading = ref(false)
+const extractorLoading = ref(false)
+const pdfsLoading = ref(false)
+const financialReportPaths = ref({ pdf_root: '', extractor_cache_root: '' })
 const detailsLoading = ref(false)
 
 const cleanupDays = ref(7)
@@ -348,6 +378,70 @@ const clearAllCache = async () => {
   }
 }
 
+const loadFinancialReportPaths = async () => {
+  try {
+    const response = await cacheApi.getFinancialReportPaths()
+    const data: any = response.data || response
+    financialReportPaths.value = {
+      pdf_root: data.pdf_root || '',
+      extractor_cache_root: data.extractor_cache_root || ''
+    }
+  } catch (error) {
+    // 路径读取失败不阻塞页面，确认弹窗回退为通用文案
+    console.warn('读取财报缓存路径失败:', error)
+  }
+}
+
+const clearExtractorCache = async () => {
+  try {
+    const dir = financialReportPaths.value.extractor_cache_root || '（服务端配置的抽取缓存目录）'
+    await ElMessageBox.confirm(
+      `确定要清空财报抽取缓存目录吗？\n目录：${dir}\n此操作无法恢复！`,
+      '确认清理',
+      { type: 'warning', confirmButtonText: '确定清理', cancelButtonText: '取消' }
+    )
+
+    extractorLoading.value = true
+    const response = await cacheApi.clearFinancialReportExtractorCache()
+    const data: any = response.data || response
+    ElMessage.success(`已清理 ${data.deleted_files} 个文件，释放 ${formatSize(data.freed_bytes)}`)
+    await refreshStats()
+    await loadCacheDetails()
+  } catch (error: any) {
+    if (error !== 'cancel') {
+      console.error('清理财报抽取缓存失败:', error)
+      ElMessage.error(error.message || '清理财报抽取缓存失败')
+    }
+  } finally {
+    extractorLoading.value = false
+  }
+}
+
+const clearPdfs = async () => {
+  try {
+    const dir = financialReportPaths.value.pdf_root || '（服务端配置的 PDF 目录）'
+    await ElMessageBox.confirm(
+      `确定要清空已下载 PDF 目录吗？\n目录：${dir}\n注意：若该目录与 report-collector 共享，将删除其源文件。此操作无法恢复！`,
+      '确认清理',
+      { type: 'warning', confirmButtonText: '确定清理', cancelButtonText: '取消' }
+    )
+
+    pdfsLoading.value = true
+    const response = await cacheApi.clearFinancialReportPdfs()
+    const data: any = response.data || response
+    ElMessage.success(`已清理 ${data.deleted_files} 个文件，释放 ${formatSize(data.freed_bytes)}`)
+    await refreshStats()
+    await loadCacheDetails()
+  } catch (error: any) {
+    if (error !== 'cancel') {
+      console.error('清理已下载 PDF 失败:', error)
+      ElMessage.error(error.message || '清理已下载 PDF 失败')
+    }
+  } finally {
+    pdfsLoading.value = false
+  }
+}
+
 const loadCacheDetails = async () => {
   detailsLoading.value = true
   try {
@@ -390,6 +484,7 @@ const deleteCacheItem = async (item: any) => {
 onMounted(() => {
   refreshStats()
   loadCacheDetails()
+  loadFinancialReportPaths()
 })
 </script>
 
