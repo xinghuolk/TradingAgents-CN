@@ -18,13 +18,11 @@ def create_risk_manager(llm, memory):
         news_report = state["news_report"]
         fundamentals_report = state["news_report"]
         sentiment_report = state["sentiment_report"]
-        value_report = state.get("value_report", "")
-        value_report_section = f"\n价值投资分析：{value_report}" if value_report else ""
         trader_plan = state["investment_plan"]
 
         curr_situation = (
             f"{market_research_report}\n\n{sentiment_report}\n\n{news_report}"
-            f"\n\n{fundamentals_report}{value_report_section}"
+            f"\n\n{fundamentals_report}"
         )
 
         # 安全检查：确保memory不为None
