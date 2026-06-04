@@ -11,7 +11,7 @@ class CapturingLLM:
         return "bull response"
 
 
-def test_bull_researcher_prompt_includes_value_report(monkeypatch):
+def test_bull_researcher_prompt_omits_value_report(monkeypatch):
     _patch_stock_lookup(monkeypatch)
 
     llm = CapturingLLM()
@@ -19,8 +19,9 @@ def test_bull_researcher_prompt_includes_value_report(monkeypatch):
 
     node(_base_researcher_state(value_report="penetrating yield and cash health report"))
 
-    assert "价值投资分析" in llm.prompt
-    assert "penetrating yield and cash health report" in llm.prompt
+    # 价值投资分析已隔离：不应出现在多头研究员的 prompt 中
+    assert "价值投资分析" not in llm.prompt
+    assert "penetrating yield and cash health report" not in llm.prompt
 
 
 def test_bull_researcher_prompt_omits_empty_value_report_label(monkeypatch):
@@ -37,14 +38,15 @@ def test_bull_researcher_prompt_omits_empty_value_report_label(monkeypatch):
         assert "价值投资分析：" not in llm.prompt
 
 
-def test_research_manager_prompt_includes_value_report():
+def test_research_manager_prompt_omits_value_report():
     llm = CapturingLLM()
     node = create_research_manager(llm, memory=None)
 
     node(_base_researcher_state(value_report="discounted cash flow margin of safety"))
 
-    assert "价值投资分析" in llm.prompt
-    assert "discounted cash flow margin of safety" in llm.prompt
+    # 价值投资分析已隔离：不应出现在研究经理的 prompt 中
+    assert "价值投资分析" not in llm.prompt
+    assert "discounted cash flow margin of safety" not in llm.prompt
 
 
 def _patch_stock_lookup(monkeypatch):
