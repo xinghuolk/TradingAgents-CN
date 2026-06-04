@@ -14,14 +14,12 @@ def create_research_manager(llm, memory):
         sentiment_report = state["sentiment_report"]
         news_report = state["news_report"]
         fundamentals_report = state["fundamentals_report"]
-        value_report = state.get("value_report", "")
-        value_report_section = f"\n价值投资分析：{value_report}" if value_report else ""
 
         investment_debate_state = state["investment_debate_state"]
 
         curr_situation = (
             f"{market_research_report}\n\n{sentiment_report}\n\n{news_report}"
-            f"\n\n{fundamentals_report}{value_report_section}"
+            f"\n\n{fundamentals_report}"
         )
 
         # 安全检查：确保memory不为None
@@ -66,8 +64,6 @@ def create_research_manager(llm, memory):
 新闻分析：{news_report}
 
 基本面分析：{fundamentals_report}
-
-{value_report_section}
 
 以下是辩论：
 辩论历史：
