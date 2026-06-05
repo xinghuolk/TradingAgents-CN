@@ -42,9 +42,13 @@ payout_M = max( min(payout_3y_avg, commitment_ratio), latest_signal )
   周期集合与 `payout_3y_avg` 相同：`[facts.report, *facts.report.historical.values()]`，
   仅纳入 `reliability == "reliable"` 且为有限数值的年份。
 - 阈值：**要求 ≥ 2 个可靠年份**（与 3y_avg 同阈值）。<2 → `commitment_ratio = None`（回退，见下）。
-- 周期不足提示：若可靠年份 <3，追加 context-only caveat
-  `commitment_ratio computed from N/3 periods`（与 3y_avg 的同类 caveat 一致）。
-- provenance：复用这些年份派息率的 `source_reference` 作为 sources。
+- 周期不足提示：`_number_report_min` **不**自行发"commitment computed from N/3 periods" caveat。
+  周期覆盖度已由现有 `payout_3y_avg` 的 `..._3y_avg computed from N/3 periods` caveat 体现（沿用不改）。
+  （注：该 3y_avg 周期 caveat 是**动态字符串、不在 `CONTEXT_ONLY_CAVEATS`、按 material 处理**，
+  因此 2/3 周期时 `payout_M` 今天就已 `degraded`；这点不变——见下方"状态"说明。）
+- `missing_inputs`：commitment **从不阻断决策**。`_number_report_min` 在 <2 可靠年份时返回
+  `(None, sources, [])`——**空 missing_inputs**，不得返回任何会进入 payout 状态判定的缺失标签。
+- provenance：复用这些年份派息率的 `source_reference` 作为 sources（与 avg_sources 同源，合并去重）。
 
 ### 应用承诺上限
 - **可派生且 payout_3y_avg 存在**：
@@ -68,9 +72,19 @@ payout_M = max( min(payout_3y_avg, commitment_ratio), latest_signal )
   **关键**：`CONTEXT_ONLY_CAVEATS` 是精确匹配集合（`_is_context_only_caveat` = `caveat in 集合`），
   因此该 caveat **必须是不含动态数值的固定字符串**，否则会被判为 material 而降级。
   commitment_ratio 的具体数值与周期数放进 **substitution 字符串**（见下），不放 caveat。
-- 不另发"commitment computed from N/3 periods" caveat：周期覆盖度已由现有 `payout_3y_avg` 的
-  `..._3y_avg computed from N/3 periods` caveat 体现（该 caveat 为现状行为，沿用不改）。
+- **应用上限不能"反降级"**：2/3 周期时，`payout_3y_avg` 的动态周期 caveat 已使 `payout_M`
+  `degraded`；应用承诺上限不会、也不应把它改回 `complete`。"永不降级"指的是"不因应用上限而**新增**降级"。
+  仅当 3/3 周期（无周期 caveat）且 avg/latest 齐全时，应用上限的 `payout_M.status == complete`。
 - 未应用（回退）时：`COMMITMENT_CONTEXT_CAVEAT` 原样保留。
+
+### caveats 列表的双写（实现要点）
+`_resolve_payout_inputs` 既会 mutate 外层共享的 `caveats` 列表（最终进入
+`TurtleComputedSignals.caveats`），又会返回自己的 `PayoutInputs.caveats`。两者都要按分支一致处理：
+- **必须在 `_append_caveat(caveats, COMMITMENT_CONTEXT_CAVEAT)` 之前分支**：
+  - 应用分支：**不要**把 `COMMITMENT_CONTEXT_CAVEAT` 写入外层 `caveats`；改为写入
+    `COMMITMENT_APPLIED_CONTEXT_CAVEAT`；`PayoutInputs.caveats` 的 `_merge_sources(...)` 末项
+    也相应换成 `COMMITMENT_APPLIED_CONTEXT_CAVEAT`。
+  - 回退分支：维持现状，两处都用 `COMMITMENT_CONTEXT_CAVEAT`。
 
 ### formula / substitution 字符串
 - `formula` 改为完整形态：`payout_M = max(min(payout_3y_avg, commitment_ratio), latest_signal)`。
@@ -111,10 +125,12 @@ payout_M = max( min(payout_3y_avg, commitment_ratio), latest_signal )
 
 ## 测试（扩展现有 turtle 测试套件）
 
-1. **应用上限**：构造 ≥2 个可靠年份且 latest < 最低年份的场景，断言
+1. **应用上限（3/3 周期）**：构造 **3 个**可靠年份且 latest < 最低年份的场景，断言
    `payout_M == max(min_year, latest)`，substitution 含 `commitment_constraint_applied=true`，
-   `COMMITMENT_CONTEXT_CAVEAT` 不再出现，`COMMITMENT_APPLIED_CONTEXT_CAVEAT` 出现且
-   `payout_M.status == complete`（验证固定字面量 caveat 未被判为 material）。
+   `COMMITMENT_CONTEXT_CAVEAT` 不再出现，`COMMITMENT_APPLIED_CONTEXT_CAVEAT` 出现，且
+   `payout_M.status == complete`（验证固定字面量 caveat 未被判为 material，未引入新降级）。
+   附加：2/3 周期场景断言应用上限生效但 `payout_M.status == degraded`（降级来自既有周期 caveat，
+   非来自承诺）。
 2. **latest 更高**：latest_signal > 最低年份时，`payout_M == latest_signal`。
 3. **回退**：仅 1 个可靠年份 → `commitment_ratio=None`，`payout_M == max(payout_3y_avg, latest)`
    （现状），`COMMITMENT_CONTEXT_CAVEAT` 保留，状态不变。
@@ -122,7 +138,19 @@ payout_M = max( min(payout_3y_avg, commitment_ratio), latest_signal )
    true/false 与数值）。
 5. **下游传导**：应用上限使 `payout` 下降 → `R`/`GG` 数值相应下降（与未应用对照）。
 6. **全相等年份**：各年派息率相等时 min==avg，`payout_M` 数值与回退一致（但走的是应用分支）。
-7. **不降级**：应用上限的场景 `payout_M.status` 仍为 `complete`（输入齐全时）。
+7. **不降级**：3/3 周期、输入齐全时，应用上限的 `payout_M.status` 仍为 `complete`。
+
+### 需更新的既有测试（实现时同步改）
+substitution / formula / caveat 是字符串契约，下列断言会随本改动失效，需更新为新分支预期：
+- `tests/unit/test_turtle_calculations.py`：约 :121-122、:141-143（`commitment_ratio=null`、
+  `) = 0.5;`、`) = 0.8;` 等 substitution 断言——按 3/3 周期会走应用分支，需改为 applied 预期）。
+- `tests/unit/test_turtle_decision.py`：约 :66（fixture 里写死的
+  `commitment_ratio=null, commitment_constraint_applied=false`）、:81（断言 `COMMITMENT_CONTEXT_CAVEAT`
+  文案——若 fixture ≥2 可靠年份则应改为 `COMMITMENT_APPLIED_CONTEXT_CAVEAT`）。
+- `tests/unit/test_turtle_value_analyst_integration.py`：约 :620-621（写死的 `formula`/substitution）、
+  :635（`startswith("payout_M = max")` 仍成立，确认即可）。
+
+实现计划必须先判定这些 fixture 用了几个可靠年份，再决定它们落在应用分支还是回退分支，并相应更新断言。
 
 ## 风险
 
