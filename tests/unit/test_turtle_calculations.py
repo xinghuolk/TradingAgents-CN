@@ -936,3 +936,56 @@ def test_payout_m_applies_commitment_cap_from_historical_min():
     assert "commitment payout ratio not extracted" not in " ".join(signals.caveats)
     # 下游：payout 由 0.6 被压到 0.5 → R 相应下降（未应用时 R 会是 5.8）
     assert signals.results["R"].value == pytest.approx(5.0)
+
+
+def test_payout_m_commitment_cap_not_binding_when_latest_is_highest():
+    # latest=0.8, historical=[0.4,0.6]: avg=0.6, commitment=0.4
+    # payout_M = max(min(0.6,0.4), 0.8) = max(0.4,0.8) = 0.8 (latest 占优)
+    facts = base_facts(report_fields={
+        "dividend_payout_ratio_current_year": ratio(
+            "dividend_payout_ratio_current_year", 0.8, "report.payout.latest"
+        ),
+    })
+    signals = compute_turtle_signals(facts)
+    pm = signals.results["payout_M"]
+    assert pm.value == pytest.approx(0.8)
+    assert "commitment_constraint_applied=true" in pm.substitution
+
+
+def test_payout_m_commitment_cap_noop_when_all_years_equal():
+    facts = base_facts(report_fields={
+        "dividend_payout_ratio_current_year": ratio(
+            "dividend_payout_ratio_current_year", 0.5, "report.payout.latest"
+        ),
+    })
+    report = TurtleReportFacts(
+        fields=facts.report.fields,
+        metadata=facts.report.metadata,
+        historical=report_history(0.5, 0.5),
+    )
+    facts = TurtleFacts(context=facts.context, report=report, market=facts.market, status="complete")
+    signals = compute_turtle_signals(facts)
+    pm = signals.results["payout_M"]
+    assert pm.value == pytest.approx(0.5)
+    assert "commitment_constraint_applied=true" in pm.substitution
+    assert "commitment_ratio=0.5" in pm.substitution
+
+
+def test_payout_m_falls_back_when_fewer_than_two_historical_years():
+    # 只有 1 个历史年(2024=0.4, 2023 无 payout) → commitment 不可派生 → 回退到 max(avg, latest)
+    facts = base_facts()
+    report = TurtleReportFacts(
+        fields=facts.report.fields,
+        metadata=facts.report.metadata,
+        historical=report_history(0.4, None),
+    )
+    facts = TurtleFacts(context=facts.context, report=report, market=facts.market, status="complete")
+    signals = compute_turtle_signals(facts)
+    pm = signals.results["payout_M"]
+    assert pm.value == pytest.approx(0.5)  # max(payout_3y_avg=0.45, latest=0.5)
+    assert pm.status == "degraded"
+    assert "commitment_ratio=null, commitment_constraint_applied=false" in pm.substitution
+    assert (
+        "commitment payout ratio not extracted; payout_M uses max(payout_3y_avg, latest_signal) "
+        "without commitment cap"
+    ) in signals.caveats
