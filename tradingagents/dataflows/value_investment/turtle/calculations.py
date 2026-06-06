@@ -500,6 +500,8 @@ def _resolve_payout_inputs(facts: TurtleFacts, caveats: list[str]) -> PayoutInpu
     # Apply the canonical cap: payout_M = max(min(payout_3y_avg, commitment_ratio), latest_signal).
     commitment_ratio, commitment_sources = _number_report_min(facts, CURRENT_YEAR_PAYOUT_FIELD)
     if commitment_ratio is not None and payout_3y_avg is not None:
+        # When latest_signal is absent, payout_3y_avg and commitment_ratio derive from the same
+        # historical years, so the cap reduces payout_M to the historical floor (most conservative).
         capped_avg = min(payout_3y_avg, commitment_ratio)
         commitment_caveat = COMMITMENT_APPLIED_CONTEXT_CAVEAT
     else:
