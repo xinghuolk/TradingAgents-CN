@@ -70,11 +70,11 @@ def build_turtle_decision_prompt(
                 "R/GG 中 buyback_amount_3y_avg 不扣税。\n"
                 "- repurchase_of_stock 被用作报告侧 buyback_amount 输入，但当前 payload 未验证股份注销进度；"
                 "若回购未注销，O 可能高估股东回报。\n"
-                "- commitment_ratio 本版本未抽取；payout_M 使用 max(payout_3y_avg, latest_signal)，"
-                "未应用承诺上限。\n"
+                "- commitment_ratio 现由分析层派生为历史年（不含最新年）可靠派息率的最小值，并作为"
+                "承诺上限应用：payout_M = max(min(payout_3y_avg, commitment_ratio), latest_signal)；"
+                "历史可靠年不足 2 个时无法派生，回退为 max(payout_3y_avg, latest_signal)，未应用承诺上限。\n"
                 "- latest_signal 使用回看的最新年 dividends_paid/net_profit 代理前瞻 DPS 调整值，"
-                "且它同时是 payout_3y_avg 的成员；在支付率上行、亏损年被排除或承诺上限缺失时，"
-                "payout_M 与 R/GG 可能偏高。"
+                "且它同时是 payout_3y_avg 的成员；在承诺上限缺失（回退）时，payout_M 与 R/GG 可能偏高。"
             ),
             (
                 "## 输出结构\n"
