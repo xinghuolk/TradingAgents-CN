@@ -32,6 +32,9 @@ MARKET_BUYBACK_EXCLUDED_CAVEAT = (
     "market buyback_amount present but excluded from R/GG; report-side buyback_amount_3y_avg is required"
 )
 PAYOUT_PROXY_CONTEXT_CAVEAT = "single-year report payout proxy; not a 3-year average"
+COMMITMENT_APPLIED_CONTEXT_CAVEAT = (
+    "commitment cap applied; commitment_ratio = min of historical payout ratios"
+)
 CONTEXT_ONLY_CAVEATS = {
     "dividend data missing",
     "avg_payout_ratio_3y missing",
@@ -43,6 +46,7 @@ CONTEXT_ONLY_CAVEATS = {
     BUYBACK_CANCELLATION_CONTEXT_CAVEAT,
     MARKET_BUYBACK_EXCLUDED_CAVEAT,
     PAYOUT_PROXY_CONTEXT_CAVEAT,
+    COMMITMENT_APPLIED_CONTEXT_CAVEAT,
 }
 CORE_RESULT_KEYS = {"payout_M", "R", "GG", "HH", "net_cash_ratio", "ev_switch", "cash_protection", "owner_earnings"}
 DECISION_BLOCKING_KEYS = {"payout_M", "R", "GG"}
@@ -318,6 +322,37 @@ def _number_report_3y_avg(
     return sum(available_values) / len(available_values), sources, []
 
 
+def _number_report_min(facts: TurtleFacts, name: str) -> tuple[float | None, list[str]]:
+    """Minimum of a report-side numeric field across HISTORICAL periods only.
+
+    Excludes the latest/current period (facts.report) on purpose: latest_signal IS
+    that latest value, so including it would force commitment_ratio <= latest_signal
+    and collapse payout_M to latest_signal. Used to derive commitment_ratio (the
+    payout cap). Requires >=2 reliable historical years; otherwise returns None.
+    Emits no caveat and contributes no missing-input label (commitment is non-blocking).
+    """
+    available_values: list[float] = []
+    sources: list[str] = []
+    # Rejected values are not tracked as failed sources: commitment_ratio is non-blocking,
+    # so a rejected-value audit trail is unnecessary here (unlike _number_report_3y_avg).
+    for period in facts.report.historical.values():
+        fact = period.fields.get(name)
+        if fact is None:
+            continue
+        if isinstance(fact.value, bool) or not isinstance(fact.value, (int, float)):
+            continue
+        if fact.reliability != "reliable":
+            continue
+        value = float(fact.value)
+        if not math.isfinite(value):
+            continue
+        available_values.append(value)
+        sources.append(fact.source_reference)
+    if len(available_values) < 2:
+        return None, sources
+    return min(available_values), sources
+
+
 def _number(facts: TurtleFacts, name: str, caveats: list[str]) -> tuple[float | None, list[str], list[str]]:
     failed_sources: list[str] = []
     for fact in _field_candidates(facts, name):
@@ -461,9 +496,22 @@ def _resolve_payout_inputs(facts: TurtleFacts, caveats: list[str]) -> PayoutInpu
     latest_signal, latest_sources, missing_latest = _number_report_latest(facts, CURRENT_YEAR_PAYOUT_FIELD, caveats)
     latest_caveats = _new_caveats(before_latest, caveats)
 
-    _append_caveat(caveats, COMMITMENT_CONTEXT_CAVEAT)
+    # commitment_ratio = min over HISTORICAL years only (excludes latest); needs >=2 historical years.
+    # Apply the canonical cap: payout_M = max(min(payout_3y_avg, commitment_ratio), latest_signal).
+    commitment_ratio, commitment_sources = _number_report_min(facts, CURRENT_YEAR_PAYOUT_FIELD)
+    if commitment_ratio is not None and payout_3y_avg is not None:
+        # When latest_signal is absent, payout_3y_avg and commitment_ratio derive from the same
+        # historical years, so the cap reduces payout_M to the historical floor (most conservative).
+        capped_avg = min(payout_3y_avg, commitment_ratio)
+        commitment_caveat = COMMITMENT_APPLIED_CONTEXT_CAVEAT
+    else:
+        capped_avg = payout_3y_avg
+        commitment_ratio = None
+        commitment_sources = []
+        commitment_caveat = COMMITMENT_CONTEXT_CAVEAT
+    _append_caveat(caveats, commitment_caveat)
 
-    values = [value for value in (payout_3y_avg, latest_signal) if value is not None and math.isfinite(value)]
+    values = [value for value in (capped_avg, latest_signal) if value is not None and math.isfinite(value)]
     applied_value = max(values) if values else None
     missing_inputs = _merge_missing(missing_avg, missing_latest)
     material_avg_caveats = _material_caveats(avg_caveats)
@@ -477,11 +525,11 @@ def _resolve_payout_inputs(facts: TurtleFacts, caveats: list[str]) -> PayoutInpu
     return PayoutInputs(
         payout_3y_avg=payout_3y_avg,
         latest_signal=latest_signal,
-        commitment_ratio=None,
+        commitment_ratio=commitment_ratio,
         applied_value=applied_value,
-        sources=_merge_sources(avg_sources, latest_sources),
+        sources=_merge_sources(avg_sources, latest_sources, commitment_sources),
         missing_inputs=missing_inputs,
-        caveats=_merge_sources(avg_caveats, latest_caveats, [COMMITMENT_CONTEXT_CAVEAT]),
+        caveats=_merge_sources(avg_caveats, latest_caveats, [commitment_caveat]),
         status=status,
     )
 
@@ -568,19 +616,34 @@ def compute_turtle_signals(facts: TurtleFacts) -> TurtleComputedSignals:
     payout_degraded = payout_inputs.status == "degraded"
     tax_rate, tax_sources, missing_tax = _number(facts, "tax_rate", caveats)
 
-    payout_substitution = (
-        "payout_M = max(payout_3y_avg, latest_signal); "
-        "commitment_ratio=null, commitment_constraint_applied=false"
-    )
-    if payout is not None:
+    if payout_inputs.commitment_ratio is not None:
+        payout_formula = "payout_M = max(min(payout_3y_avg, commitment_ratio), latest_signal)"
         payout_substitution = (
-            f"payout_M = max(payout_3y_avg={_fmt_nullable(payout_inputs.payout_3y_avg)}, "
-            f"latest_signal={_fmt_nullable(payout_inputs.latest_signal)}) = {_fmt(payout)}; "
+            "payout_M = max(min(payout_3y_avg, commitment_ratio), latest_signal); "
+            "commitment_constraint_applied=true"
+        )
+        if payout is not None:
+            payout_substitution = (
+                f"payout_M = max(min(payout_3y_avg={_fmt_nullable(payout_inputs.payout_3y_avg)}, "
+                f"commitment_ratio={_fmt_nullable(payout_inputs.commitment_ratio)}), "
+                f"latest_signal={_fmt_nullable(payout_inputs.latest_signal)}) = {_fmt(payout)}; "
+                "commitment_constraint_applied=true"
+            )
+    else:
+        payout_formula = "payout_M = max(payout_3y_avg, latest_signal); commitment cap not applied"
+        payout_substitution = (
+            "payout_M = max(payout_3y_avg, latest_signal); "
             "commitment_ratio=null, commitment_constraint_applied=false"
         )
+        if payout is not None:
+            payout_substitution = (
+                f"payout_M = max(payout_3y_avg={_fmt_nullable(payout_inputs.payout_3y_avg)}, "
+                f"latest_signal={_fmt_nullable(payout_inputs.latest_signal)}) = {_fmt(payout)}; "
+                "commitment_ratio=null, commitment_constraint_applied=false"
+            )
     results["payout_M"] = _result(
         name="payout_M",
-        formula="payout_M = max(payout_3y_avg, latest_signal); commitment cap not applied",
+        formula=payout_formula,
         substitution=payout_substitution,
         value=payout,
         unit="ratio",
