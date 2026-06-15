@@ -549,20 +549,34 @@ def _fetch_financial_data_structured(ticker: str, market: str = "A") -> Dict[str
     return data
 
 
+def _yfinance_snapshot(yf_symbol: str) -> Dict[str, Any]:
+    """yfinance 单股市值快照（marketCap 已是元）: {market_cap, close_price}。"""
+    import yfinance as yf
+    info = yf.Ticker(yf_symbol).info
+    return {
+        'market_cap': info.get('marketCap'),
+        'close_price': info.get('currentPrice') or info.get('previousClose') or info.get('regularMarketPrice'),
+    }
+
+
 def _fetch_market_data_structured(ticker: str, market: str = "A") -> Dict[str, Any]:
     """
-    使用 AKShare 直接获取结构化行情数据（修复 C1）
+    使用 yfinance 获取结构化行情数据（市值/股价），支持 A 股（沪/深）与港股。
+
+    A 股：沪市代码以 6/9 开头 → .SS 后缀；其余 → .SZ 后缀。
+    港股：代码补零至 4 位 + .HK 后缀。
+    marketCap 已是「元」单位（A=CNY、HK=HKD），无需缩放。
 
     Args:
-        ticker: 股票代码
-        market: 市场类型
+        ticker: 股票代码（纯数字或带后缀均可）
+        market: 市场类型（"A" 或 "HK"）
 
     Returns:
-        结构化的行情数据字典
+        结构化的行情数据字典，含 market_cap / close_price / total_shares / _currency
     """
-    import akshare as ak
+    from tradingagents.dataflows.value_investment.unit_normalizer import tag_currency
 
-    data = {
+    data: Dict[str, Any] = {
         'market_cap': None,
         'close_price': None,
         'total_shares': None,
@@ -570,47 +584,24 @@ def _fetch_market_data_structured(ticker: str, market: str = "A") -> Dict[str, A
 
     pure_code = ticker.split('.')[0]
 
-    if market != "A":
-        logger.warning(f"目前仅支持 A 股行情数据，收到市场类型: {market}")
-        return data
-
     try:
-        # 获取实时行情
-        logger.info(f"📊 获取 {pure_code} 实时行情...")
-        df = ak.stock_individual_info_em(symbol=pure_code)
-
-        if df is not None and not df.empty:
-            # 转换为字典方便查找
-            info_dict = dict(zip(df['item'], df['value']))
-
-            # 总市值
-            market_cap = info_dict.get('总市值')
-            if market_cap:
-                try:
-                    data['market_cap'] = float(market_cap)
-                except (ValueError, TypeError):
-                    pass
-
-            # 最新价
-            close_price = info_dict.get('最新价') or info_dict.get('收盘价')
-            if close_price:
-                try:
-                    data['close_price'] = float(close_price)
-                except (ValueError, TypeError):
-                    pass
-
-            # 总股本
-            total_shares = info_dict.get('总股本')
-            if total_shares:
-                try:
-                    data['total_shares'] = float(total_shares)
-                except (ValueError, TypeError):
-                    pass
-
-            logger.info(f"✅ 行情数据获取成功: 市值={data['market_cap']}, 股价={data['close_price']}")
-
+        if market == "A":
+            suffix = 'SS' if pure_code.startswith(('6', '9')) else 'SZ'  # 沪 .SS / 深 .SZ
+            snap = _yfinance_snapshot(f"{pure_code}.{suffix}")
+            data['market_cap'] = snap['market_cap']      # 元，直通
+            data['close_price'] = snap['close_price']
+            data = tag_currency(data, source_currency='CNY', market='A')
+        elif market == "HK":
+            snap = _yfinance_snapshot(f"{pure_code.lstrip('0').zfill(4)}.HK")
+            data['market_cap'] = snap['market_cap']      # 元，直通
+            data['close_price'] = snap['close_price']
+            data = tag_currency(data, source_currency='HKD', market='HK')
+        else:
+            logger.warning(f"不支持的市场类型: {market}")
+            return data
+        logger.info(f"✅ 市值={data['market_cap']} 币种={data.get('_currency')}")
     except Exception as e:
-        logger.warning(f"获取行情数据失败: {e}")
+        logger.warning(f"获取市值失败({market}): {e}")
 
     return data
 
