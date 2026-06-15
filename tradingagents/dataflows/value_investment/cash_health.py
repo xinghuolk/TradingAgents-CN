@@ -190,7 +190,7 @@ class CashHealthCalculator:
             debt_fields = [
                 'short_term_debt',
                 'long_term_debt',
-                'bonds_payable',
+                'bond_payable',
                 'current_portion_of_long_term_debt'
             ]
             for field in debt_fields:
