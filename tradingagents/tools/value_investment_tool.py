@@ -845,6 +845,24 @@ def get_value_investment_analysis(
                 'has_active_buyback': False
             }
 
+        # HK 回购：上游 repurchase_of_stock 覆盖 buyback（None 不覆盖，保持子包 0）
+        if market == "HK":
+            rep = financial_data.get('repurchase_of_stock')
+            if rep is not None:
+                buyback_data['total_cancelled_amount'] = rep
+
+        # buyback_data 无 _currency 时，从 financial_data 继承（主闸前补全标记）
+        if not buyback_data.get('_currency') and financial_data.get('_currency'):
+            buyback_data['_currency'] = financial_data['_currency']
+
+        # 币种主闸：进入 calculator 前校验含金额 dict 同币种
+        from tradingagents.dataflows.value_investment.unit_normalizer import assert_consistent_currency
+        try:
+            assert_consistent_currency(financial_data, market_data, buyback_data)
+        except ValueError as e:
+            logger.error(f"❌ 币种不一致: {e}")
+            return f"❌ 数据币种不一致，已中止分析以避免污染: {e}"
+
         # 4. W1: 动态获取行业信息
         industry = _get_industry_dynamic(ticker, market)
 
