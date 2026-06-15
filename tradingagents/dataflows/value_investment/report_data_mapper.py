@@ -178,17 +178,19 @@ def map_extracted_reports_to_financial_data(extracted_reports: List[Dict[str, An
 
     # 收入增长（需要3年数据）
     if len(revenues) >= 3 and revenues[-1] and revenues[-1] > 0:
-        data['revenue_growth_3y'] = (revenues[0] / revenues[-1] - 1) * 100
+        data['revenue_growth_3y'] = (revenues[0] / revenues[-1] - 1)
 
     # 利润增长
     if len(net_profits) >= 3 and net_profits[-1] and net_profits[-1] > 0:
-        data['profit_growth_3y'] = (net_profits[0] / net_profits[-1] - 1) * 100
+        data['profit_growth_3y'] = (net_profits[0] / net_profits[-1] - 1)
 
     logger.info(
         f"[report-collector] 映射完成: {len(net_profits)}期净利润, "
         f"ROE={data['roe_avg_3y']}, 负债率={data['debt_ratio']}"
     )
 
+    from .unit_normalizer import tag_currency
+    data = tag_currency(data, source_currency='HKD', market='HK')
     return data
 
 
@@ -205,6 +207,8 @@ def merge_financial_data(akshare_data: Dict[str, Any], rc_data: Dict[str, Any]) 
     Returns:
         合并后的财务数据，附加 _data_source 字段记录每个值的来源
     """
+    from .unit_normalizer import assert_same_currency
+    assert_same_currency(akshare_data, rc_data)
     merged = dict(akshare_data)
     data_source: Dict[str, str] = {}
 
