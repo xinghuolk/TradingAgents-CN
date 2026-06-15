@@ -672,6 +672,18 @@ def _get_industry_dynamic(ticker: str, market: str = "A") -> str:
 
 # ==================== C2: 同步调用分红/回购数据 ====================
 
+def _run_async_sync(coro):
+    """在同步 @tool 上下文安全跑 async（避免事件循环冲突）。"""
+    import asyncio
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coro)
+    import concurrent.futures
+    with concurrent.futures.ThreadPoolExecutor() as ex:
+        return ex.submit(asyncio.run, coro).result()
+
+
 def _fetch_dividend_data_sync(ticker: str, market: str = "A") -> Optional[Dict]:
     """
     同步获取分红数据（修复 C2 - 避免事件循环冲突）
@@ -683,111 +695,15 @@ def _fetch_dividend_data_sync(ticker: str, market: str = "A") -> Optional[Dict]:
     Returns:
         分红数据字典
     """
-    import akshare as ak
-
-    records = []
-    payout_ratios = []
+    from tradingagents.dataflows.value_investment import DividendFetcher as _DividendFetcher
     pure_code = ticker.split('.')[0]
-
-    if market != "A":
-        return {
-            'records': [],
-            'consecutive_years': 0,
-            'avg_payout_ratio_3y': 0,
-            'total_dividend_years': 0
-        }
-
+    empty = {'records': [], 'consecutive_years': 0, 'avg_payout_ratio_3y': 0, 'total_dividend_years': 0}
     try:
-        # 使用同花顺分红明细
-        logger.info(f"📊 获取 {pure_code} 分红数据...")
-        df = ak.stock_fhps_detail_ths(symbol=pure_code)
-
-        if df is not None and len(df) > 0:
-            # 筛选年报数据
-            annual_df = df[df['报告期'].str.contains('年报', na=False)].copy()
-
-            for _, row in annual_df.iterrows():
-                try:
-                    # 提取年份
-                    report_period = str(row.get('报告期', ''))
-                    year_match = None
-                    if '年报' in report_period:
-                        import re
-                        match = re.search(r'(\d{4})', report_period)
-                        if match:
-                            year_match = int(match.group(1))
-
-                    if not year_match:
-                        continue
-
-                    # 提取每股分红
-                    cash_dividend = row.get('派息', 0)
-                    if cash_dividend and cash_dividend != '--':
-                        try:
-                            if isinstance(cash_dividend, str) and '派' in cash_dividend:
-                                parts = cash_dividend.split('派')
-                                cash_dividend = float(parts[-1]) / 10
-                            else:
-                                cash_dividend = float(cash_dividend)
-                        except:
-                            cash_dividend = 0
-
-                    # 提取支付率
-                    payout_ratio = row.get('股利支付率', None)
-                    if payout_ratio and payout_ratio != '--':
-                        try:
-                            if isinstance(payout_ratio, str):
-                                payout_ratio = float(payout_ratio.replace('%', '')) / 100
-                            else:
-                                payout_ratio = float(payout_ratio)
-                                if payout_ratio > 1:
-                                    payout_ratio = payout_ratio / 100
-                            payout_ratios.append(payout_ratio)
-                        except:
-                            payout_ratio = None
-
-                    records.append({
-                        'year': year_match,
-                        'cash_dividend': cash_dividend,
-                        'payout_ratio': payout_ratio,
-                        'source': '同花顺'
-                    })
-
-                except Exception as e:
-                    logger.debug(f"解析分红记录失败: {e}")
-                    continue
-
-            logger.info(f"✅ 获取到 {len(records)} 条分红记录")
-
+        result = _run_async_sync(_DividendFetcher().fetch_dividend_data(pure_code, market))
+        return result or empty
     except Exception as e:
-        logger.warning(f"获取分红数据失败: {e}")
-
-    if not records:
-        return {
-            'records': [],
-            'consecutive_years': 0,
-            'avg_payout_ratio_3y': 0,
-            'total_dividend_years': 0
-        }
-
-    # 按年份排序（降序）
-    records.sort(key=lambda x: x['year'], reverse=True)
-
-    # 计算连续分红年数
-    consecutive_years = _calculate_consecutive_years(records)
-
-    # 计算近3年平均支付率
-    avg_payout_ratio_3y = 0
-    if payout_ratios:
-        recent_ratios = payout_ratios[:3]
-        avg_payout_ratio_3y = sum(recent_ratios) / len(recent_ratios)
-
-    return {
-        'records': records,
-        'consecutive_years': consecutive_years,
-        'avg_payout_ratio_3y': avg_payout_ratio_3y,
-        'total_dividend_years': len([r for r in records if r.get('cash_dividend', 0) > 0])
-    }
+        logger.warning(f"分红获取失败({market}): {e}")
+        return empty
 
 
 def _fetch_buyback_data_sync(ticker: str, market: str = "A") -> Optional[Dict]:
@@ -801,87 +717,15 @@ def _fetch_buyback_data_sync(ticker: str, market: str = "A") -> Optional[Dict]:
     Returns:
         回购数据字典
     """
-    import akshare as ak
-    from datetime import datetime
-
-    records = []
-    total_cancelled_amount = 0
-    latest_year_amount = 0
-
+    from tradingagents.dataflows.value_investment import BuybackFetcher as _BuybackFetcher
     pure_code = ticker.split('.')[0]
-    current_year = datetime.now().year
-
-    if market != "A":
-        return {
-            'records': [],
-            'total_cancelled_amount': 0,
-            'latest_year_amount': 0,
-            'has_active_buyback': False
-        }
-
+    empty = {'records': [], 'total_cancelled_amount': 0, 'latest_year_amount': 0, 'has_active_buyback': False}
     try:
-        # 获取回购实施情况
-        logger.info(f"📊 获取 {pure_code} 回购数据...")
-        df = ak.stock_repurchase_em()
-
-        if df is not None and len(df) > 0:
-            # 筛选当前股票的回购记录
-            stock_df = df[df['代码'].str.contains(pure_code, na=False)]
-
-            for _, row in stock_df.iterrows():
-                try:
-                    # 解析回购金额
-                    amount_str = str(row.get('已回购金额', '0'))
-                    amount = _parse_amount(amount_str)
-
-                    # 解析回购进度/状态
-                    status = str(row.get('实施进度', ''))
-                    is_cancelled = '注销' in status or '已完成' in status
-
-                    # 解析公告日期
-                    announce_date = row.get('首次公告日', '')
-                    year = None
-                    if announce_date:
-                        try:
-                            if isinstance(announce_date, str):
-                                year = int(announce_date[:4])
-                            else:
-                                year = announce_date.year
-                        except:
-                            year = current_year
-
-                    record = {
-                        'year': year,
-                        'amount': amount,
-                        'status': status,
-                        'is_cancelled': is_cancelled,
-                        'source': '东方财富'
-                    }
-                    records.append(record)
-
-                    # 统计已注销金额
-                    if is_cancelled and amount:
-                        total_cancelled_amount += amount
-
-                    # 统计最近一年金额
-                    if year and year >= current_year - 1 and amount:
-                        latest_year_amount += amount
-
-                except Exception as e:
-                    logger.debug(f"解析回购记录失败: {e}")
-                    continue
-
-            logger.info(f"✅ 获取到 {len(records)} 条回购记录，已注销金额: {total_cancelled_amount/1e8:.2f}亿")
-
+        result = _run_async_sync(_BuybackFetcher().fetch_buyback_data(pure_code, market))
+        return result or empty
     except Exception as e:
-        logger.warning(f"获取回购数据失败: {e}")
-
-    return {
-        'records': records,
-        'total_cancelled_amount': total_cancelled_amount,
-        'latest_year_amount': latest_year_amount,
-        'has_active_buyback': any(not r.get('is_cancelled', True) for r in records)
-    }
+        logger.warning(f"回购获取失败({market}): {e}")
+        return empty
 
 
 def _calculate_consecutive_years(records: list) -> int:
