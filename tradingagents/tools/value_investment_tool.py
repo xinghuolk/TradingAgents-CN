@@ -289,7 +289,8 @@ def _fetch_financial_data_structured(ticker: str, market: str = "A") -> Dict[str
     pure_code = ticker.split('.')[0]
 
     if market != "A":
-        logger.warning(f"目前仅支持 A 股财务数据，收到市场类型: {market}")
+        logger.info(f"市场 {market} 财务走上游补缺，akshare 返回空骨架")
+        data['_currency'] = 'HKD' if market == 'HK' else 'USD'
         return data
 
     try:
@@ -382,25 +383,26 @@ def _fetch_financial_data_structured(ticker: str, market: str = "A") -> Dict[str
 
                 # ========== 问题1修复: 添加缺失的有息负债和流动比率数据 ==========
 
-                # 短期借款（可能为空，如茅台）
-                data['short_term_debt'] = safe_float(latest_row.get('短期借款'), 0)
+                # 短期借款（可能为空，如茅台）→ 缺失为 None
+                data['short_term_debt'] = safe_float(latest_row.get('短期借款'), None)
 
-                # 长期借款（可能为空）
-                data['long_term_debt'] = safe_float(latest_row.get('长期借款'), 0)
+                # 长期借款（可能为空）→ 缺失为 None
+                data['long_term_debt'] = safe_float(latest_row.get('长期借款'), None)
 
-                # 应付债券
-                bonds_payable = safe_float(latest_row.get('应付债券'), 0)
+                # 应付债券 → 缺失为 None
+                bonds_payable = safe_float(latest_row.get('应付债券'), None)
 
-                # 一年内到期的非流动负债
-                one_year_debt = safe_float(latest_row.get('一年内到期的非流动负债'), 0)
+                # 一年内到期的非流动负债 → 缺失为 None
+                one_year_debt = safe_float(latest_row.get('一年内到期的非流动负债'), None)
 
-                # 计算有息负债合计
-                data['interest_bearing_debt'] = (
-                    data['short_term_debt'] +
-                    data['long_term_debt'] +
-                    bonds_payable +
-                    one_year_debt
-                )
+                # 计算有息负债合计：过滤 None 再求和，全部缺失则为 None
+                debt_parts = [data['short_term_debt'], data['long_term_debt'], bonds_payable, one_year_debt]
+                present = [v for v in debt_parts if v is not None]
+                data['interest_bearing_debt'] = sum(present) if present else None
+                if 0 < len(present) < 4:
+                    data.setdefault('_caveats', []).append(
+                        'interest_bearing_debt: 部分债务分项缺失，合计仅含已披露项'
+                    )
 
                 # 流动资产和流动负债
                 data['current_assets'] = safe_float(latest_row.get('流动资产合计'))
@@ -410,7 +412,11 @@ def _fetch_financial_data_structured(ticker: str, market: str = "A") -> Dict[str
                 if data['current_assets'] and data['current_liabilities'] and data['current_liabilities'] > 0:
                     data['current_ratio'] = data['current_assets'] / data['current_liabilities']
 
-                logger.info(f"✅ 资产负债表获取成功: 有息负债={data.get('interest_bearing_debt', 0)/1e8:.2f}亿, 流动比率={data.get('current_ratio', 'N/A'):.2f}")
+                ibd = data.get('interest_bearing_debt')
+                cr = data.get('current_ratio')
+                ibd_str = f"{ibd/1e8:.2f}亿" if ibd is not None else "N/A"
+                cr_str = f"{cr:.2f}" if cr is not None else "N/A"
+                logger.info(f"✅ 资产负债表获取成功: 有息负债={ibd_str}, 流动比率={cr_str}")
 
     except Exception as e:
         logger.warning(f"获取资产负债表失败: {e}")
@@ -451,7 +457,7 @@ def _fetch_financial_data_structured(ticker: str, market: str = "A") -> Dict[str
 
     except Exception as e:
         logger.warning(f"获取利润表失败: {e}")
-        data['interest_expense'] = 0
+        data['interest_expense'] = None
 
     try:
         # 4. 获取现金流量表数据（使用新浪接口）
@@ -481,7 +487,7 @@ def _fetch_financial_data_structured(ticker: str, market: str = "A") -> Dict[str
                 if capex:
                     data['capex'] = abs(capex)
                 else:
-                    data['capex'] = 0
+                    data['capex'] = None
 
                 # 计算自由现金流 = 经营现金流 - 资本支出
                 if ocf and data['capex']:
@@ -534,6 +540,8 @@ def _fetch_financial_data_structured(ticker: str, market: str = "A") -> Dict[str
     except Exception as e:
         logger.debug(f"获取同花顺补充数据失败: {e}")
 
+    from tradingagents.dataflows.value_investment.unit_normalizer import tag_currency
+    data = tag_currency(data, source_currency=None, market='A')
     return data
 
 
