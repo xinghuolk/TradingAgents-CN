@@ -189,7 +189,7 @@ def map_extracted_reports_to_financial_data(extracted_reports: List[Dict[str, An
         f"ROE={data['roe_avg_3y']}, 负债率={data['debt_ratio']}"
     )
 
-    from .unit_normalizer import tag_currency
+    from tradingagents.dataflows.value_investment.unit_normalizer import tag_currency
     data = tag_currency(data, source_currency='HKD', market='HK')
     return data
 
@@ -207,7 +207,7 @@ def merge_financial_data(akshare_data: Dict[str, Any], rc_data: Dict[str, Any]) 
     Returns:
         合并后的财务数据，附加 _data_source 字段记录每个值的来源
     """
-    from .unit_normalizer import assert_same_currency
+    from tradingagents.dataflows.value_investment.unit_normalizer import assert_same_currency
     assert_same_currency(akshare_data, rc_data)
     merged = dict(akshare_data)
     data_source: Dict[str, str] = {}
