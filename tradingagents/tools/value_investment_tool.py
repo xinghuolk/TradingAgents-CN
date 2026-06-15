@@ -493,7 +493,11 @@ def _fetch_financial_data_structured(ticker: str, market: str = "A") -> Dict[str
                 if ocf and data['capex']:
                     data['free_cash_flow'] = ocf - data['capex']
 
-            logger.info(f"✅ 现金流量表获取成功: CFO={data.get('operating_cash_flow', 0)/1e8:.2f}亿, CapEx={data.get('capex', 0)/1e8:.2f}亿")
+            _cfo = data.get('operating_cash_flow')
+            _cap = data.get('capex')
+            _cfo_str = f"{_cfo/1e8:.2f}亿" if _cfo is not None else "N/A"
+            _cap_str = f"{_cap/1e8:.2f}亿" if _cap is not None else "N/A"
+            logger.info(f"✅ 现金流量表获取成功: CFO={_cfo_str}, CapEx={_cap_str}")
 
     except Exception as e:
         logger.warning(f"获取现金流量表失败: {e}")
