@@ -623,6 +623,14 @@ def _get_industry_dynamic(ticker: str, market: str = "A") -> str:
 
     pure_code = ticker.split('.')[0]
 
+    if market == "HK":
+        try:
+            from tradingagents.dataflows.providers.hk.hk_stock import get_hk_stock_info
+            info = get_hk_stock_info(f"{pure_code.lstrip('0').zfill(4)}.HK") or {}
+            return info.get('industry') or 'default'
+        except Exception as e:
+            logger.debug(f"HK 行业获取失败: {e}")
+            return 'default'
     if market != "A":
         return "default"
 
