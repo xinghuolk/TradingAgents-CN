@@ -319,19 +319,21 @@ async def lifespan(app: FastAPI):
             if settings.SYNC_STOCK_BASICS_CRON:
                 # 如果提供了cron表达式
                 scheduler.add_job(
-                    lambda: multi_source_service.run_full_sync(force=False, preferred_sources=preferred_sources),
+                    multi_source_service.run_full_sync,  # bound async method，AsyncIOScheduler 会 await
                     CronTrigger.from_crontab(settings.SYNC_STOCK_BASICS_CRON, timezone=settings.TIMEZONE),
                     id="basics_sync_service",
-                    name="股票基础信息同步（多数据源）"
+                    name="股票基础信息同步（多数据源）",
+                    kwargs={"force": False, "preferred_sources": preferred_sources},
                 )
                 logger.info(f"📅 Stock basics sync scheduled by CRON: {settings.SYNC_STOCK_BASICS_CRON} ({settings.TIMEZONE})")
             else:
                 hh, mm = (settings.SYNC_STOCK_BASICS_TIME or "06:30").split(":")
                 scheduler.add_job(
-                    lambda: multi_source_service.run_full_sync(force=False, preferred_sources=preferred_sources),
+                    multi_source_service.run_full_sync,  # bound async method，AsyncIOScheduler 会 await
                     CronTrigger(hour=int(hh), minute=int(mm), timezone=settings.TIMEZONE),
                     id="basics_sync_service",
-                    name="股票基础信息同步（多数据源）"
+                    name="股票基础信息同步（多数据源）",
+                    kwargs={"force": False, "preferred_sources": preferred_sources},
                 )
                 logger.info(f"📅 Stock basics sync scheduled daily at {settings.SYNC_STOCK_BASICS_TIME} ({settings.TIMEZONE})")
 
