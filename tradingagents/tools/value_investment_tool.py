@@ -193,8 +193,8 @@ def _fetch_from_report_collector(ticker: str, market: str) -> Optional[Dict[str,
     if not extracted_reports:
         return None
 
-    # 映射为 financial_data 格式
-    rc_data = map_extracted_reports_to_financial_data(extracted_reports)
+    # 映射为 financial_data 格式（透传原始 market='A'/'HK'，非 rc_market）
+    rc_data = map_extracted_reports_to_financial_data(extracted_reports, market)
 
     # 附加原始提取数据供报告生成使用
     rc_data['_extracted_reports'] = extracted_reports
@@ -289,7 +289,8 @@ def _fetch_financial_data_structured(ticker: str, market: str = "A") -> Dict[str
     pure_code = ticker.split('.')[0]
 
     if market != "A":
-        logger.warning(f"目前仅支持 A 股财务数据，收到市场类型: {market}")
+        logger.info(f"市场 {market} 财务走上游补缺，akshare 返回空骨架")
+        data['_currency'] = 'HKD' if market == 'HK' else 'USD'
         return data
 
     try:
@@ -382,25 +383,26 @@ def _fetch_financial_data_structured(ticker: str, market: str = "A") -> Dict[str
 
                 # ========== 问题1修复: 添加缺失的有息负债和流动比率数据 ==========
 
-                # 短期借款（可能为空，如茅台）
-                data['short_term_debt'] = safe_float(latest_row.get('短期借款'), 0)
+                # 短期借款（可能为空，如茅台）→ 缺失为 None
+                data['short_term_debt'] = safe_float(latest_row.get('短期借款'), None)
 
-                # 长期借款（可能为空）
-                data['long_term_debt'] = safe_float(latest_row.get('长期借款'), 0)
+                # 长期借款（可能为空）→ 缺失为 None
+                data['long_term_debt'] = safe_float(latest_row.get('长期借款'), None)
 
-                # 应付债券
-                bonds_payable = safe_float(latest_row.get('应付债券'), 0)
+                # 应付债券 → 缺失为 None
+                bonds_payable = safe_float(latest_row.get('应付债券'), None)
 
-                # 一年内到期的非流动负债
-                one_year_debt = safe_float(latest_row.get('一年内到期的非流动负债'), 0)
+                # 一年内到期的非流动负债 → 缺失为 None
+                one_year_debt = safe_float(latest_row.get('一年内到期的非流动负债'), None)
 
-                # 计算有息负债合计
-                data['interest_bearing_debt'] = (
-                    data['short_term_debt'] +
-                    data['long_term_debt'] +
-                    bonds_payable +
-                    one_year_debt
-                )
+                # 计算有息负债合计：过滤 None 再求和，全部缺失则为 None
+                debt_parts = [data['short_term_debt'], data['long_term_debt'], bonds_payable, one_year_debt]
+                present = [v for v in debt_parts if v is not None]
+                data['interest_bearing_debt'] = sum(present) if present else None
+                if 0 < len(present) < 4:
+                    data.setdefault('_caveats', []).append(
+                        'interest_bearing_debt: 部分债务分项缺失，合计仅含已披露项'
+                    )
 
                 # 流动资产和流动负债
                 data['current_assets'] = safe_float(latest_row.get('流动资产合计'))
@@ -410,7 +412,11 @@ def _fetch_financial_data_structured(ticker: str, market: str = "A") -> Dict[str
                 if data['current_assets'] and data['current_liabilities'] and data['current_liabilities'] > 0:
                     data['current_ratio'] = data['current_assets'] / data['current_liabilities']
 
-                logger.info(f"✅ 资产负债表获取成功: 有息负债={data.get('interest_bearing_debt', 0)/1e8:.2f}亿, 流动比率={data.get('current_ratio', 'N/A'):.2f}")
+                ibd = data.get('interest_bearing_debt')
+                cr = data.get('current_ratio')
+                ibd_str = f"{ibd/1e8:.2f}亿" if ibd is not None else "N/A"
+                cr_str = f"{cr:.2f}" if cr is not None else "N/A"
+                logger.info(f"✅ 资产负债表获取成功: 有息负债={ibd_str}, 流动比率={cr_str}")
 
     except Exception as e:
         logger.warning(f"获取资产负债表失败: {e}")
@@ -434,9 +440,12 @@ def _fetch_financial_data_structured(ticker: str, market: str = "A") -> Dict[str
 
             if latest_row is not None:
                 # 财务费用（利息支出等，负数表示利息收入大于支出）
-                interest_expense = safe_float(latest_row.get('财务费用'), 0)
+                interest_expense = safe_float(latest_row.get('财务费用'), None)
                 data['interest_expense'] = interest_expense
-                logger.info(f"✅ 财务费用获取成功: {interest_expense/1e8:.2f}亿")
+                if interest_expense is not None:
+                    logger.info(f"✅ 财务费用获取成功: {interest_expense/1e8:.2f}亿")
+                else:
+                    logger.info("✅ 财务费用: N/A")
 
             # 从利润表提取净利润列表（比财务摘要更可靠）
             if not data['net_profits']:
@@ -451,7 +460,7 @@ def _fetch_financial_data_structured(ticker: str, market: str = "A") -> Dict[str
 
     except Exception as e:
         logger.warning(f"获取利润表失败: {e}")
-        data['interest_expense'] = 0
+        data['interest_expense'] = None
 
     try:
         # 4. 获取现金流量表数据（使用新浪接口）
@@ -481,13 +490,17 @@ def _fetch_financial_data_structured(ticker: str, market: str = "A") -> Dict[str
                 if capex:
                     data['capex'] = abs(capex)
                 else:
-                    data['capex'] = 0
+                    data['capex'] = None
 
                 # 计算自由现金流 = 经营现金流 - 资本支出
                 if ocf and data['capex']:
                     data['free_cash_flow'] = ocf - data['capex']
 
-            logger.info(f"✅ 现金流量表获取成功: CFO={data.get('operating_cash_flow', 0)/1e8:.2f}亿, CapEx={data.get('capex', 0)/1e8:.2f}亿")
+            _cfo = data.get('operating_cash_flow')
+            _cap = data.get('capex')
+            _cfo_str = f"{_cfo/1e8:.2f}亿" if _cfo is not None else "N/A"
+            _cap_str = f"{_cap/1e8:.2f}亿" if _cap is not None else "N/A"
+            logger.info(f"✅ 现金流量表获取成功: CFO={_cfo_str}, CapEx={_cap_str}")
 
     except Exception as e:
         logger.warning(f"获取现金流量表失败: {e}")
@@ -534,23 +547,39 @@ def _fetch_financial_data_structured(ticker: str, market: str = "A") -> Dict[str
     except Exception as e:
         logger.debug(f"获取同花顺补充数据失败: {e}")
 
+    from tradingagents.dataflows.value_investment.unit_normalizer import tag_currency
+    data = tag_currency(data, source_currency=None, market='A')
     return data
+
+
+def _yfinance_snapshot(yf_symbol: str) -> Dict[str, Any]:
+    """yfinance 单股市值快照（marketCap 已是元）: {market_cap, close_price}。"""
+    import yfinance as yf
+    info = yf.Ticker(yf_symbol).info
+    return {
+        'market_cap': info.get('marketCap'),
+        'close_price': info.get('currentPrice') or info.get('previousClose') or info.get('regularMarketPrice'),
+    }
 
 
 def _fetch_market_data_structured(ticker: str, market: str = "A") -> Dict[str, Any]:
     """
-    使用 AKShare 直接获取结构化行情数据（修复 C1）
+    使用 yfinance 获取结构化行情数据（市值/股价），支持 A 股（沪/深）与港股。
+
+    A 股：沪市代码以 6/9 开头 → .SS 后缀；其余 → .SZ 后缀。
+    港股：代码补零至 4 位 + .HK 后缀。
+    marketCap 已是「元」单位（A=CNY、HK=HKD），无需缩放。
 
     Args:
-        ticker: 股票代码
-        market: 市场类型
+        ticker: 股票代码（纯数字或带后缀均可）
+        market: 市场类型（"A" 或 "HK"）
 
     Returns:
-        结构化的行情数据字典
+        结构化的行情数据字典，含 market_cap / close_price / total_shares / _currency
     """
-    import akshare as ak
+    from tradingagents.dataflows.value_investment.unit_normalizer import tag_currency
 
-    data = {
+    data: Dict[str, Any] = {
         'market_cap': None,
         'close_price': None,
         'total_shares': None,
@@ -558,47 +587,24 @@ def _fetch_market_data_structured(ticker: str, market: str = "A") -> Dict[str, A
 
     pure_code = ticker.split('.')[0]
 
-    if market != "A":
-        logger.warning(f"目前仅支持 A 股行情数据，收到市场类型: {market}")
-        return data
-
     try:
-        # 获取实时行情
-        logger.info(f"📊 获取 {pure_code} 实时行情...")
-        df = ak.stock_individual_info_em(symbol=pure_code)
-
-        if df is not None and not df.empty:
-            # 转换为字典方便查找
-            info_dict = dict(zip(df['item'], df['value']))
-
-            # 总市值
-            market_cap = info_dict.get('总市值')
-            if market_cap:
-                try:
-                    data['market_cap'] = float(market_cap)
-                except (ValueError, TypeError):
-                    pass
-
-            # 最新价
-            close_price = info_dict.get('最新价') or info_dict.get('收盘价')
-            if close_price:
-                try:
-                    data['close_price'] = float(close_price)
-                except (ValueError, TypeError):
-                    pass
-
-            # 总股本
-            total_shares = info_dict.get('总股本')
-            if total_shares:
-                try:
-                    data['total_shares'] = float(total_shares)
-                except (ValueError, TypeError):
-                    pass
-
-            logger.info(f"✅ 行情数据获取成功: 市值={data['market_cap']}, 股价={data['close_price']}")
-
+        if market == "A":
+            suffix = 'SS' if pure_code.startswith(('6', '9')) else 'SZ'  # 沪 .SS / 深 .SZ
+            snap = _yfinance_snapshot(f"{pure_code}.{suffix}")
+            data['market_cap'] = snap['market_cap']      # 元，直通
+            data['close_price'] = snap['close_price']
+            data = tag_currency(data, source_currency='CNY', market='A')
+        elif market == "HK":
+            snap = _yfinance_snapshot(f"{pure_code.lstrip('0').zfill(4)}.HK")
+            data['market_cap'] = snap['market_cap']      # 元，直通
+            data['close_price'] = snap['close_price']
+            data = tag_currency(data, source_currency='HKD', market='HK')
+        else:
+            logger.warning(f"不支持的市场类型: {market}")
+            return data
+        logger.info(f"✅ 市值={data['market_cap']} 币种={data.get('_currency')}")
     except Exception as e:
-        logger.warning(f"获取行情数据失败: {e}")
+        logger.warning(f"获取市值失败({market}): {e}")
 
     return data
 
@@ -620,6 +626,14 @@ def _get_industry_dynamic(ticker: str, market: str = "A") -> str:
 
     pure_code = ticker.split('.')[0]
 
+    if market == "HK":
+        try:
+            from tradingagents.dataflows.providers.hk.hk_stock import get_hk_stock_info
+            info = get_hk_stock_info(f"{pure_code.lstrip('0').zfill(4)}.HK") or {}
+            return info.get('industry') or 'default'
+        except Exception as e:
+            logger.debug(f"HK 行业获取失败: {e}")
+            return 'default'
     if market != "A":
         return "default"
 
@@ -661,6 +675,18 @@ def _get_industry_dynamic(ticker: str, market: str = "A") -> str:
 
 # ==================== C2: 同步调用分红/回购数据 ====================
 
+def _run_async_sync(coro):
+    """在同步 @tool 上下文安全跑 async（避免事件循环冲突）。"""
+    import asyncio
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coro)
+    import concurrent.futures
+    with concurrent.futures.ThreadPoolExecutor() as ex:
+        return ex.submit(asyncio.run, coro).result()
+
+
 def _fetch_dividend_data_sync(ticker: str, market: str = "A") -> Optional[Dict]:
     """
     同步获取分红数据（修复 C2 - 避免事件循环冲突）
@@ -672,111 +698,15 @@ def _fetch_dividend_data_sync(ticker: str, market: str = "A") -> Optional[Dict]:
     Returns:
         分红数据字典
     """
-    import akshare as ak
-
-    records = []
-    payout_ratios = []
+    from tradingagents.dataflows.value_investment import DividendFetcher as _DividendFetcher
     pure_code = ticker.split('.')[0]
-
-    if market != "A":
-        return {
-            'records': [],
-            'consecutive_years': 0,
-            'avg_payout_ratio_3y': 0,
-            'total_dividend_years': 0
-        }
-
+    empty = {'records': [], 'consecutive_years': 0, 'avg_payout_ratio_3y': 0, 'total_dividend_years': 0}
     try:
-        # 使用同花顺分红明细
-        logger.info(f"📊 获取 {pure_code} 分红数据...")
-        df = ak.stock_fhps_detail_ths(symbol=pure_code)
-
-        if df is not None and len(df) > 0:
-            # 筛选年报数据
-            annual_df = df[df['报告期'].str.contains('年报', na=False)].copy()
-
-            for _, row in annual_df.iterrows():
-                try:
-                    # 提取年份
-                    report_period = str(row.get('报告期', ''))
-                    year_match = None
-                    if '年报' in report_period:
-                        import re
-                        match = re.search(r'(\d{4})', report_period)
-                        if match:
-                            year_match = int(match.group(1))
-
-                    if not year_match:
-                        continue
-
-                    # 提取每股分红
-                    cash_dividend = row.get('派息', 0)
-                    if cash_dividend and cash_dividend != '--':
-                        try:
-                            if isinstance(cash_dividend, str) and '派' in cash_dividend:
-                                parts = cash_dividend.split('派')
-                                cash_dividend = float(parts[-1]) / 10
-                            else:
-                                cash_dividend = float(cash_dividend)
-                        except:
-                            cash_dividend = 0
-
-                    # 提取支付率
-                    payout_ratio = row.get('股利支付率', None)
-                    if payout_ratio and payout_ratio != '--':
-                        try:
-                            if isinstance(payout_ratio, str):
-                                payout_ratio = float(payout_ratio.replace('%', '')) / 100
-                            else:
-                                payout_ratio = float(payout_ratio)
-                                if payout_ratio > 1:
-                                    payout_ratio = payout_ratio / 100
-                            payout_ratios.append(payout_ratio)
-                        except:
-                            payout_ratio = None
-
-                    records.append({
-                        'year': year_match,
-                        'cash_dividend': cash_dividend,
-                        'payout_ratio': payout_ratio,
-                        'source': '同花顺'
-                    })
-
-                except Exception as e:
-                    logger.debug(f"解析分红记录失败: {e}")
-                    continue
-
-            logger.info(f"✅ 获取到 {len(records)} 条分红记录")
-
+        result = _run_async_sync(_DividendFetcher().fetch_dividend_data(pure_code, market))
+        return result or empty
     except Exception as e:
-        logger.warning(f"获取分红数据失败: {e}")
-
-    if not records:
-        return {
-            'records': [],
-            'consecutive_years': 0,
-            'avg_payout_ratio_3y': 0,
-            'total_dividend_years': 0
-        }
-
-    # 按年份排序（降序）
-    records.sort(key=lambda x: x['year'], reverse=True)
-
-    # 计算连续分红年数
-    consecutive_years = _calculate_consecutive_years(records)
-
-    # 计算近3年平均支付率
-    avg_payout_ratio_3y = 0
-    if payout_ratios:
-        recent_ratios = payout_ratios[:3]
-        avg_payout_ratio_3y = sum(recent_ratios) / len(recent_ratios)
-
-    return {
-        'records': records,
-        'consecutive_years': consecutive_years,
-        'avg_payout_ratio_3y': avg_payout_ratio_3y,
-        'total_dividend_years': len([r for r in records if r.get('cash_dividend', 0) > 0])
-    }
+        logger.warning(f"分红获取失败({market}): {e}")
+        return empty
 
 
 def _fetch_buyback_data_sync(ticker: str, market: str = "A") -> Optional[Dict]:
@@ -790,127 +720,15 @@ def _fetch_buyback_data_sync(ticker: str, market: str = "A") -> Optional[Dict]:
     Returns:
         回购数据字典
     """
-    import akshare as ak
-    from datetime import datetime
-
-    records = []
-    total_cancelled_amount = 0
-    latest_year_amount = 0
-
+    from tradingagents.dataflows.value_investment import BuybackFetcher as _BuybackFetcher
     pure_code = ticker.split('.')[0]
-    current_year = datetime.now().year
-
-    if market != "A":
-        return {
-            'records': [],
-            'total_cancelled_amount': 0,
-            'latest_year_amount': 0,
-            'has_active_buyback': False
-        }
-
+    empty = {'records': [], 'total_cancelled_amount': 0, 'latest_year_amount': 0, 'has_active_buyback': False}
     try:
-        # 获取回购实施情况
-        logger.info(f"📊 获取 {pure_code} 回购数据...")
-        df = ak.stock_repurchase_em()
-
-        if df is not None and len(df) > 0:
-            # 筛选当前股票的回购记录
-            stock_df = df[df['代码'].str.contains(pure_code, na=False)]
-
-            for _, row in stock_df.iterrows():
-                try:
-                    # 解析回购金额
-                    amount_str = str(row.get('已回购金额', '0'))
-                    amount = _parse_amount(amount_str)
-
-                    # 解析回购进度/状态
-                    status = str(row.get('实施进度', ''))
-                    is_cancelled = '注销' in status or '已完成' in status
-
-                    # 解析公告日期
-                    announce_date = row.get('首次公告日', '')
-                    year = None
-                    if announce_date:
-                        try:
-                            if isinstance(announce_date, str):
-                                year = int(announce_date[:4])
-                            else:
-                                year = announce_date.year
-                        except:
-                            year = current_year
-
-                    record = {
-                        'year': year,
-                        'amount': amount,
-                        'status': status,
-                        'is_cancelled': is_cancelled,
-                        'source': '东方财富'
-                    }
-                    records.append(record)
-
-                    # 统计已注销金额
-                    if is_cancelled and amount:
-                        total_cancelled_amount += amount
-
-                    # 统计最近一年金额
-                    if year and year >= current_year - 1 and amount:
-                        latest_year_amount += amount
-
-                except Exception as e:
-                    logger.debug(f"解析回购记录失败: {e}")
-                    continue
-
-            logger.info(f"✅ 获取到 {len(records)} 条回购记录，已注销金额: {total_cancelled_amount/1e8:.2f}亿")
-
+        result = _run_async_sync(_BuybackFetcher().fetch_buyback_data(pure_code, market))
+        return result or empty
     except Exception as e:
-        logger.warning(f"获取回购数据失败: {e}")
-
-    return {
-        'records': records,
-        'total_cancelled_amount': total_cancelled_amount,
-        'latest_year_amount': latest_year_amount,
-        'has_active_buyback': any(not r.get('is_cancelled', True) for r in records)
-    }
-
-
-def _calculate_consecutive_years(records: list) -> int:
-    """计算连续分红年数"""
-    if not records:
-        return 0
-
-    dividend_years = sorted(
-        [r['year'] for r in records if r.get('cash_dividend', 0) > 0],
-        reverse=True
-    )
-
-    if not dividend_years:
-        return 0
-
-    consecutive = 1
-    for i in range(1, len(dividend_years)):
-        if dividend_years[i-1] - dividend_years[i] == 1:
-            consecutive += 1
-        else:
-            break
-
-    return consecutive
-
-
-def _parse_amount(amount_str: str) -> float:
-    """解析金额字符串"""
-    if not amount_str or amount_str == '--':
-        return 0
-
-    try:
-        amount_str = str(amount_str).strip()
-        if '亿' in amount_str:
-            return float(amount_str.replace('亿', '').strip()) * 1e8
-        elif '万' in amount_str:
-            return float(amount_str.replace('万', '').strip()) * 1e4
-        else:
-            return float(amount_str)
-    except:
-        return 0
+        logger.warning(f"回购获取失败({market}): {e}")
+        return empty
 
 
 # ==================== 主工具函数 ====================
@@ -989,6 +807,27 @@ def get_value_investment_analysis(
                 'latest_year_amount': 0,
                 'has_active_buyback': False
             }
+
+        # HK 回购：上游 repurchase_of_stock 覆盖 buyback（None 不覆盖，保持子包 0）
+        if market == "HK":
+            rep = financial_data.get('repurchase_of_stock')
+            if rep is not None:
+                buyback_data['total_cancelled_amount'] = rep
+
+        # 同源继承：HK 回购金额来自上游 financial（repurchase_of_stock，同 HKD），
+        # A 股回购来自子包同市场 CNY；与 financial 必同币种，故安全继承其 _currency。
+        # 注意：若将来 buyback 金额改走异币种源，此继承会掩盖跨币种，需改为按来源标币种。
+        # buyback_data 无 _currency 时，从 financial_data 继承（主闸前补全标记）
+        if not buyback_data.get('_currency') and financial_data.get('_currency'):
+            buyback_data['_currency'] = financial_data['_currency']
+
+        # 币种主闸：进入 calculator 前校验含金额 dict 同币种
+        from tradingagents.dataflows.value_investment.unit_normalizer import assert_consistent_currency
+        try:
+            assert_consistent_currency(financial_data, market_data, buyback_data)
+        except ValueError as e:
+            logger.error(f"❌ 币种不一致: {e}")
+            return f"❌ 数据币种不一致，已中止分析以避免污染: {e}"
 
         # 4. W1: 动态获取行业信息
         industry = _get_industry_dynamic(ticker, market)
@@ -1114,8 +953,8 @@ def _generate_report(
   健康度状态: {cash_health.health_flag}
   真实可支配现金流(RCF): {cash_health.rcf/1e8:.2f}亿元 (如有数据)
   现金储备: {cash_health.cash_reserve/1e8:.2f}亿元 (如有数据)
-  分红覆盖率: {cash_health.cov_div:.2f}x (如有数据)
-  现金缓冲: {cash_health.buffer_months:.1f}个月 (如有数据)
+  分红覆盖率: {f"{cash_health.cov_div:.2f}x" if cash_health.cov_div is not None else "N/A"} (如有数据)
+  现金缓冲: {f"{cash_health.buffer_months:.1f}个月" if cash_health.buffer_months is not None else "N/A"} (如有数据)
 
 ▶ 三、5维健康评分 (满分100)
 ───────────────────────────────────────────────────────────────
