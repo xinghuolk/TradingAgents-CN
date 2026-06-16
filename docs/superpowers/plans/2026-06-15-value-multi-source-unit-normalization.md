@@ -56,7 +56,11 @@ Expected: `total_mv` 非空（~2.x万亿万元）；`marketCap` 非空（~2.x千
 
 - [ ] **Step 2: 记录结论 / 阻塞判断**
 
-若 `total_mv` 为空 → A 股市值改用 yfinance(`600519.SS`)，调整 Task 6。若 `repurchase_of_stock in fields: False` → HK 回购落点为死代码，Task 8/10 的回购组装标记为 no-op 并在 PR 说明。**任一关键源不可用须先记录再继续。**
+**✅ 已执行（2026-06-15）结论**：
+- HK yfinance：`marketCap=268,294,619,136` HKD、`industry=Conglomerates`、`currency=HKD` ✓
+- 上游：`repurchase_of_stock in fields=True`、`net_profit currency=HKD` ✓
+- **Tushare `daily_basic` 限频 1次/小时 ❌** → **A 股市值改用 yfinance(`.SS`/`.SZ`)**（实测 `600519.SS` `marketCap=1,588,978,778,112` CNY，元直通）。
+- **连带简化**：yfinance marketCap 已是「元」→ 不需要 `scale_a_share_market_cap`（×1e4）；Task 6 统一走 yfinance，**不改 `tushare.py`**。Task 2 移除 scale 函数。
 
 ---
 
@@ -72,8 +76,7 @@ Expected: `total_mv` 非空（~2.x万亿万元）；`marketCap` 非空（~2.x千
 # tests/unit/test_value_unit_normalizer.py
 import pytest
 from tradingagents.dataflows.value_investment.unit_normalizer import (
-    tag_currency, assert_same_currency, assert_consistent_currency,
-    scale_a_share_market_cap, AMOUNT_FIELDS,
+    tag_currency, assert_same_currency, assert_consistent_currency, AMOUNT_FIELDS,
 )
 
 def test_tag_currency_prefers_explicit():
@@ -88,12 +91,6 @@ def test_tag_currency_falls_back_to_market():
 def test_tag_currency_skips_underscore_keys():
     out = tag_currency({'_data_source': {'x': 1}}, source_currency='CNY', market='A')
     assert out['_data_source'] == {'x': 1}
-
-def test_scale_a_share_market_cap_wan_to_yuan():
-    assert scale_a_share_market_cap(2300.0) == 2300.0 * 1e4  # 万元→元
-
-def test_scale_none_is_none():
-    assert scale_a_share_market_cap(None) is None
 
 def test_assert_same_currency_rejects_mismatch():
     with pytest.raises(ValueError):
@@ -154,13 +151,6 @@ def tag_currency(data: Dict[str, Any], source_currency: Optional[str], market: s
     return out
 
 
-def scale_a_share_market_cap(total_mv_wan: Optional[float]) -> Optional[float]:
-    """A 股 Tushare total_mv 万元 → 元。None 保持 None。"""
-    if total_mv_wan is None:
-        return None
-    return float(total_mv_wan) * 1e4
-
-
 def _has_amount(data: Dict[str, Any]) -> bool:
     return any(
         k in AMOUNT_FIELDS and v is not None and not (isinstance(v, list) and len(v) == 0)
@@ -193,7 +183,7 @@ def assert_consistent_currency(*dicts: Dict[str, Any]) -> None:
 - [ ] **Step 4: 运行确认通过**
 
 Run: `docker exec tradingagents-backend pytest tests/unit/test_value_unit_normalizer.py -v`
-Expected: PASS（10 passed）
+Expected: PASS（8 passed）
 
 - [ ] **Step 5: 提交**
 
@@ -469,33 +459,34 @@ git commit -m "fix(value): missing->None semantics + None-safe ibd sum/log + cur
 
 ---
 
-## Task 6: TushareProvider 同步单股市值 + `_fetch_market_data_structured` 重写
+## Task 6: `_fetch_market_data_structured` 重写（yfinance 统一）
+
+> **Task 1 探针结论**：Tushare `daily_basic` 限频 1次/小时，**否决**；A 股与 HK **统一走 yfinance `info['marketCap']`**（元直通，**无 ×1e4 缩放**）。不改 `tushare.py`。
 
 **Files:**
-- Modify: `tradingagents/dataflows/providers/china/tushare.py`（新增同步方法）、`value_investment_tool.py:540-605`
+- Modify: `tradingagents/tools/value_investment_tool.py:540-605`（含新增 `_yfinance_snapshot` helper）
 - Test: `tests/unit/test_value_market_fetch.py`
 
-- [ ] **Step 1: 写失败测试**（mock provider/yfinance，验证 ×1e4 + 币种 + 不走 akshare HK）
+- [ ] **Step 1: 写失败测试**（mock `_yfinance_snapshot`，验证元直通 + 币种 A=CNY/HK=HKD）
 
 ```python
 # tests/unit/test_value_market_fetch.py
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 from tradingagents.tools import value_investment_tool as vt
 
-def test_a_share_total_mv_scaled_to_yuan():
-    snap = {'close': 1600.0, 'total_mv': 2300.0, 'total_share': 12.56}  # total_mv 万元
-    with patch.object(vt, '_tushare_market_snapshot_sync', return_value=snap):
+def test_a_share_market_cap_yuan_cny():
+    with patch.object(vt, '_yfinance_snapshot', return_value={'market_cap': 1.588e12, 'close_price': 1600.0}) as m:
         out = vt._fetch_market_data_structured('600519', 'A')
-    assert out['market_cap'] == 2300.0 * 1e4
+    assert out['market_cap'] == 1.588e12   # 元直通，无 ×1e4
     assert out['_currency'] == 'CNY'
+    assert m.call_args[0][0] == '600519.SS'  # 沪市后缀
 
-def test_hk_uses_yfinance_hkd_not_akshare():
-    with patch('tradingagents.dataflows.providers.hk.hk_stock.get_hk_stock_info',
-               return_value={'market_cap': 2.5e11, 'close_price': 67.55}) as m:
+def test_hk_market_cap_yuan_hkd():
+    with patch.object(vt, '_yfinance_snapshot', return_value={'market_cap': 2.68e11, 'close_price': 67.55}) as m:
         out = vt._fetch_market_data_structured('00001', 'HK')
-    assert out['market_cap'] == 2.5e11
+    assert out['market_cap'] == 2.68e11
     assert out['_currency'] == 'HKD'
-    assert m.called  # 走 yfinance provider，不走 AKShare HK 折算
+    assert m.call_args[0][0] == '0001.HK'    # 港股 4 位补零 + .HK
 ```
 
 - [ ] **Step 2: 运行确认失败**
@@ -505,50 +496,32 @@ Expected: FAIL（死分支返回空 / 调失效 akshare）
 
 - [ ] **Step 3: 实现**
 
-`providers/china/tushare.py` 新增同步单股方法（复用 `connect_sync`/`self.api`）：
+`value_investment_tool.py` 加 yfinance helper + 重写 `_fetch_market_data_structured`（统一走 yfinance，元直通）：
 ```python
-    def get_market_snapshot_sync(self, ts_code: str):
-        """同步单股最新市值快照: {close, total_mv(万元), total_share}。"""
-        if not self.is_available():
-            self.connect_sync()
-        if self.api is None:
-            return None
-        try:
-            df = self.api.daily_basic(ts_code=ts_code, fields='close,total_mv,total_share')
-            if df is None or df.empty:
-                return None
-            row = df.iloc[0]
-            return {'close': float(row['close']), 'total_mv': float(row['total_mv']),
-                    'total_share': float(row['total_share'])}
-        except Exception as e:
-            self.logger.warning(f"daily_basic 单股失败 {ts_code}: {e}")
-            return None
-```
-
-`value_investment_tool.py` 加 helper + 重写 `_fetch_market_data_structured`：
-```python
-def _tushare_market_snapshot_sync(ts_code: str):
-    from tradingagents.dataflows.providers.china.tushare import TushareProvider
-    return TushareProvider().get_market_snapshot_sync(ts_code)
+def _yfinance_snapshot(yf_symbol: str) -> Dict[str, Any]:
+    """yfinance 单股市值快照（marketCap 已是元）: {market_cap, close_price}。"""
+    import yfinance as yf
+    info = yf.Ticker(yf_symbol).info
+    return {
+        'market_cap': info.get('marketCap'),
+        'close_price': info.get('currentPrice') or info.get('previousClose') or info.get('regularMarketPrice'),
+    }
 
 def _fetch_market_data_structured(ticker: str, market: str = "A") -> Dict[str, Any]:
-    from tradingagents.dataflows.value_investment.unit_normalizer import tag_currency, scale_a_share_market_cap
+    from tradingagents.dataflows.value_investment.unit_normalizer import tag_currency
     data = {'market_cap': None, 'close_price': None, 'total_shares': None}
     pure_code = ticker.split('.')[0]
     try:
         if market == "A":
-            suffix = 'SH' if pure_code.startswith(('6', '9')) else 'SZ'
-            snap = _tushare_market_snapshot_sync(f"{pure_code}.{suffix}")
-            if snap:
-                data['market_cap'] = scale_a_share_market_cap(snap['total_mv'])
-                data['close_price'] = snap['close']
-                data['total_shares'] = snap['total_share']
-            data = tag_currency(data, source_currency=None, market='A')
+            suffix = 'SS' if pure_code.startswith(('6', '9')) else 'SZ'  # yfinance: 沪 .SS / 深 .SZ
+            snap = _yfinance_snapshot(f"{pure_code}.{suffix}")
+            data['market_cap'] = snap['market_cap']      # 元，直通
+            data['close_price'] = snap['close_price']
+            data = tag_currency(data, source_currency='CNY', market='A')
         elif market == "HK":
-            from tradingagents.dataflows.providers.hk.hk_stock import get_hk_stock_info
-            info = get_hk_stock_info(f"{pure_code.zfill(4)}.HK") or {}
-            data['market_cap'] = info.get('market_cap')
-            data['close_price'] = info.get('close_price')
+            snap = _yfinance_snapshot(f"{pure_code.zfill(4)}.HK")
+            data['market_cap'] = snap['market_cap']      # 元，直通
+            data['close_price'] = snap['close_price']
             data = tag_currency(data, source_currency='HKD', market='HK')
         logger.info(f"✅ 市值={data['market_cap']} 币种={data.get('_currency')}")
     except Exception as e:
@@ -556,7 +529,7 @@ def _fetch_market_data_structured(ticker: str, market: str = "A") -> Dict[str, A
     return data
 ```
 
-> 若 Task 1 Step 1 显示 `get_hk_stock_info` 返回字段名不同（非 `market_cap`/`close_price`），按实际键调整。
+> 注：A 股 yfinance（`.SS`/`.SZ`）走 yahoo，受出网影响；Task 1 实测容器内 `600519.SS` 可达。若生产不稳定，fallback 为 MongoDB `stock_basic_info.total_mv`（亿元 ×1e8），留作后续。
 
 - [ ] **Step 4: 运行确认通过**
 
@@ -566,8 +539,8 @@ Expected: PASS（2 passed）
 - [ ] **Step 5: 提交**
 
 ```bash
-git add tradingagents/dataflows/providers/china/tushare.py tradingagents/tools/value_investment_tool.py tests/unit/test_value_market_fetch.py
-git commit -m "feat(value): structured market cap via tushare sync(A)/yfinance(HK) + currency"
+git add tradingagents/tools/value_investment_tool.py tests/unit/test_value_market_fetch.py
+git commit -m "feat(value): structured market cap via yfinance (A/.SS/.SZ + HK) with currency tag"
 ```
 
 ---
