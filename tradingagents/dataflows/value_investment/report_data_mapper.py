@@ -55,13 +55,14 @@ def _get_pdf_info(report: Dict[str, Any], report_payload: Dict[str, Any]) -> Dic
     return top_level_pdf_info if isinstance(top_level_pdf_info, dict) else {}
 
 
-def map_extracted_reports_to_financial_data(extracted_reports: List[Dict[str, Any]]) -> Dict[str, Any]:
+def map_extracted_reports_to_financial_data(extracted_reports: List[Dict[str, Any]], market: str = 'HK') -> Dict[str, Any]:
     """
     将 report-collector 提取的多份年报映射为 financial_data 字典格式
 
     Args:
         extracted_reports: report-collector 提取的年报数据列表（按年份降序）
             每项包含: income_statement, balance_sheet, cash_flow_statement, financial_metrics, _pdf_info
+        market: 市场代码，'HK' 或 'A'，决定标注的币种（默认 'HK' 保持向后兼容）
 
     Returns:
         与 _fetch_financial_data_structured() 返回格式兼容的字典
@@ -190,7 +191,8 @@ def map_extracted_reports_to_financial_data(extracted_reports: List[Dict[str, An
     )
 
     from tradingagents.dataflows.value_investment.unit_normalizer import tag_currency
-    data = tag_currency(data, source_currency='HKD', market='HK')
+    _cur = {'A': 'CNY', 'HK': 'HKD'}.get(market, 'HKD')
+    data = tag_currency(data, source_currency=_cur, market=market)
     return data
 
 

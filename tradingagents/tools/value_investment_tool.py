@@ -193,8 +193,8 @@ def _fetch_from_report_collector(ticker: str, market: str) -> Optional[Dict[str,
     if not extracted_reports:
         return None
 
-    # 映射为 financial_data 格式
-    rc_data = map_extracted_reports_to_financial_data(extracted_reports)
+    # 映射为 financial_data 格式（透传原始 market='A'/'HK'，非 rc_market）
+    rc_data = map_extracted_reports_to_financial_data(extracted_reports, market)
 
     # 附加原始提取数据供报告生成使用
     rc_data['_extracted_reports'] = extracted_reports
@@ -440,9 +440,12 @@ def _fetch_financial_data_structured(ticker: str, market: str = "A") -> Dict[str
 
             if latest_row is not None:
                 # 财务费用（利息支出等，负数表示利息收入大于支出）
-                interest_expense = safe_float(latest_row.get('财务费用'), 0)
+                interest_expense = safe_float(latest_row.get('财务费用'), None)
                 data['interest_expense'] = interest_expense
-                logger.info(f"✅ 财务费用获取成功: {interest_expense/1e8:.2f}亿")
+                if interest_expense is not None:
+                    logger.info(f"✅ 财务费用获取成功: {interest_expense/1e8:.2f}亿")
+                else:
+                    logger.info("✅ 财务费用: N/A")
 
             # 从利润表提取净利润列表（比财务摘要更可靠）
             if not data['net_profits']:
@@ -728,46 +731,6 @@ def _fetch_buyback_data_sync(ticker: str, market: str = "A") -> Optional[Dict]:
         return empty
 
 
-def _calculate_consecutive_years(records: list) -> int:
-    """计算连续分红年数"""
-    if not records:
-        return 0
-
-    dividend_years = sorted(
-        [r['year'] for r in records if r.get('cash_dividend', 0) > 0],
-        reverse=True
-    )
-
-    if not dividend_years:
-        return 0
-
-    consecutive = 1
-    for i in range(1, len(dividend_years)):
-        if dividend_years[i-1] - dividend_years[i] == 1:
-            consecutive += 1
-        else:
-            break
-
-    return consecutive
-
-
-def _parse_amount(amount_str: str) -> float:
-    """解析金额字符串"""
-    if not amount_str or amount_str == '--':
-        return 0
-
-    try:
-        amount_str = str(amount_str).strip()
-        if '亿' in amount_str:
-            return float(amount_str.replace('亿', '').strip()) * 1e8
-        elif '万' in amount_str:
-            return float(amount_str.replace('万', '').strip()) * 1e4
-        else:
-            return float(amount_str)
-    except:
-        return 0
-
-
 # ==================== 主工具函数 ====================
 
 @tool
@@ -851,6 +814,9 @@ def get_value_investment_analysis(
             if rep is not None:
                 buyback_data['total_cancelled_amount'] = rep
 
+        # 同源继承：HK 回购金额来自上游 financial（repurchase_of_stock，同 HKD），
+        # A 股回购来自子包同市场 CNY；与 financial 必同币种，故安全继承其 _currency。
+        # 注意：若将来 buyback 金额改走异币种源，此继承会掩盖跨币种，需改为按来源标币种。
         # buyback_data 无 _currency 时，从 financial_data 继承（主闸前补全标记）
         if not buyback_data.get('_currency') and financial_data.get('_currency'):
             buyback_data['_currency'] = financial_data['_currency']

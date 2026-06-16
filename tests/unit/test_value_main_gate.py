@@ -49,3 +49,35 @@ def test_hk_repurchase_injected_into_buyback():
     # 若未实现注入，captured 里 total_cancelled_amount 仍为 0（子包默认值）
     assert captured.get('buyback_data', {}).get('total_cancelled_amount') == 5e8, \
         f"期望 total_cancelled_amount=5e8，实际: {captured.get('buyback_data')}"
+
+
+def test_hk_repurchase_none_does_not_override():
+    """repurchase=None 时不覆盖，buyback_data['total_cancelled_amount'] 保持子包 0"""
+    fin = {'_currency': 'HKD', 'net_profits': [1e10], 'operating_cash_flow': 1e10, 'free_cash_flow': 8e9}
+    mkt = {'_currency': 'HKD', 'market_cap': 1e12}
+    captured = {}
+
+    def fake_full(**kw):
+        captured.update(kw)
+        return None
+
+    with _patches(fin, mkt, repurchase=None), \
+         patch.object(vt.PenetratingYieldCalculator, 'calculate_full_analysis', side_effect=fake_full):
+        vt.get_value_investment_analysis.invoke({'ticker': '00001', 'market': 'HK'})
+    assert captured['buyback_data']['total_cancelled_amount'] == 0  # None 不覆盖，保持子包 0
+
+
+def test_hk_repurchase_zero_overrides():
+    """repurchase=0.0 时覆盖为 0（明确上报 0 回购，区别于无数据）"""
+    fin = {'_currency': 'HKD', 'net_profits': [1e10], 'operating_cash_flow': 1e10, 'free_cash_flow': 8e9}
+    mkt = {'_currency': 'HKD', 'market_cap': 1e12}
+    captured = {}
+
+    def fake_full(**kw):
+        captured.update(kw)
+        return None
+
+    with _patches(fin, mkt, repurchase=0.0), \
+         patch.object(vt.PenetratingYieldCalculator, 'calculate_full_analysis', side_effect=fake_full):
+        vt.get_value_investment_analysis.invoke({'ticker': '00001', 'market': 'HK'})
+    assert captured['buyback_data']['total_cancelled_amount'] == 0.0  # 0 覆盖为 0

@@ -42,3 +42,8 @@ def test_merge_same_currency_supplements():
     merged = merge_financial_data(a, rc)
     assert merged['operating_cash_flow'] == 6.25e10
     assert merged['_data_source']['operating_cash_flow'] == 'report-collector'
+
+
+def test_a_share_market_tagged_cny():
+    out = map_extracted_reports_to_financial_data([_report(2025, 120, 1200)], market='A')
+    assert out['_currency'] == 'CNY'
