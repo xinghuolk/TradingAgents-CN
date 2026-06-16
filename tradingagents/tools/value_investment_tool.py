@@ -987,8 +987,8 @@ def _generate_report(
   健康度状态: {cash_health.health_flag}
   真实可支配现金流(RCF): {cash_health.rcf/1e8:.2f}亿元 (如有数据)
   现金储备: {cash_health.cash_reserve/1e8:.2f}亿元 (如有数据)
-  分红覆盖率: {cash_health.cov_div:.2f}x (如有数据)
-  现金缓冲: {cash_health.buffer_months:.1f}个月 (如有数据)
+  分红覆盖率: {f"{cash_health.cov_div:.2f}x" if cash_health.cov_div is not None else "N/A"} (如有数据)
+  现金缓冲: {f"{cash_health.buffer_months:.1f}个月" if cash_health.buffer_months is not None else "N/A"} (如有数据)
 
 ▶ 三、5维健康评分 (满分100)
 ───────────────────────────────────────────────────────────────
