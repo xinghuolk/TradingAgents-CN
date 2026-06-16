@@ -27,7 +27,8 @@ services:
       - ./config:/app/config
       # 数据目录映射
       - ./data:/app/data
-      # 开发模式：挂载 app/ 与 tests/，宿主改动实时生效（oauth 刷新任务开发期间）
+      # 开发模式：挂载核心包 / app / 测试，宿主改动实时生效
+      - ./tradingagents:/app/tradingagents
       - ./app:/app/app
       - ./tests:/app/tests
       # 复用本机 financial-report-llm-extractor checkout；缓存默认落在该目录的 tmp/.cache

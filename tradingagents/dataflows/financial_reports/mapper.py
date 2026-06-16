@@ -197,6 +197,11 @@ def merge_financial_report_data(
     extraction: Any,
     policy: FinancialReportPolicy,
 ) -> FinancialReportMergeResult:
+    from tradingagents.dataflows.value_investment.unit_normalizer import assert_same_currency
+    extraction_currency = getattr(extraction, "currency", None)
+    if extraction_currency:
+        assert_same_currency(financial_data, {"_currency": extraction_currency})
+
     merged = dict(financial_data)
     merged["_data_source"] = dict(financial_data.get("_data_source") or {})
     merged["_supplemented_details"] = dict(financial_data.get("_supplemented_details") or {})
@@ -237,6 +242,14 @@ def merge_financial_report_data(
 
     _derive_aggregate_metrics(merged, details, used_keys)
     _derive_metrics(merged, details, used_keys)
+
+    repurchase = _to_float(getattr(_fields(extraction).get("repurchase_of_stock"), "value", None))
+    if repurchase is not None:
+        merged["repurchase_of_stock"] = repurchase
+
+    if extraction_currency:
+        merged["_currency"] = extraction_currency
+
     merged["_supplemented_details"].update(details)
     merged["_financial_report_client"] = {
         "company": getattr(extraction, "company", None),
