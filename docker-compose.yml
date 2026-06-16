@@ -27,6 +27,9 @@ services:
       - ./config:/app/config
       # 数据目录映射
       - ./data:/app/data
+      # 开发模式：挂载 app/ 与 tests/，宿主改动实时生效（oauth 刷新任务开发期间）
+      - ./app:/app/app
+      - ./tests:/app/tests
       # 复用本机 financial-report-llm-extractor checkout；缓存默认落在该目录的 tmp/.cache
       - ${FINANCIAL_REPORT_EXTRACTOR_HOST_ROOT:-./external/financial-report-llm-extractor}:/app/external/financial-report-llm-extractor
       # 年报 PDF 独立挂载，可直接指向 report-collector 的 downloads 目录

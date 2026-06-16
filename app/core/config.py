@@ -158,6 +158,13 @@ class Settings(BaseSettings):
     # 时区
     TIMEZONE: str = Field(default="Asia/Shanghai")
 
+    # OAuth 订阅令牌定时刷新保活任务
+    # 一次性轮换的 refresh_token 若长期闲置会自然过期，需定时主动刷新续命
+    OAUTH_REFRESH_ENABLED: bool = Field(default=True)
+    OAUTH_REFRESH_CRON: str = Field(default="17 3 * * *")  # 每天 03:17（避开整点）
+    # 只刷新距上次刷新超过该天数的凭证（refresh_token 寿命约两周，7 天轮换一次安全）
+    OAUTH_REFRESH_THRESHOLD_DAYS: int = Field(default=7)
+
     # 实时行情入库任务
     QUOTES_INGEST_ENABLED: bool = Field(default=True)
     QUOTES_INGEST_INTERVAL_SECONDS: int = Field(

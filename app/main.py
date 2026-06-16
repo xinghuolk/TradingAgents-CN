@@ -335,6 +335,17 @@ async def lifespan(app: FastAPI):
                 )
                 logger.info(f"📅 Stock basics sync scheduled daily at {settings.SYNC_STOCK_BASICS_TIME} ({settings.TIMEZONE})")
 
+        # OAuth 订阅令牌定时刷新保活任务（防一次性轮换的 refresh_token 闲置过期）
+        if settings.OAUTH_REFRESH_ENABLED:
+            from app.services.oauth_refresh_service import refresh_due_oauth_credentials
+            scheduler.add_job(
+                lambda: refresh_due_oauth_credentials(settings.OAUTH_REFRESH_THRESHOLD_DAYS),
+                CronTrigger.from_crontab(settings.OAUTH_REFRESH_CRON, timezone=settings.TIMEZONE),
+                id="oauth_token_refresh",
+                name="OAuth 订阅令牌定时刷新保活",
+            )
+            logger.info(f"🔑 OAuth 令牌定时刷新已配置: {settings.OAUTH_REFRESH_CRON} ({settings.TIMEZONE})")
+
         # 实时行情入库任务（每N秒），内部自判交易时段
         if settings.QUOTES_INGEST_ENABLED:
             quotes_ingestion = QuotesIngestionService()
