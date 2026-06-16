@@ -27,8 +27,9 @@ services:
       - ./config:/app/config
       # 数据目录映射
       - ./data:/app/data
-      # 开发模式：挂载核心包与测试，宿主改动实时生效（value 多源币种归一改造期间）
+      # 开发模式：挂载核心包 / app / 测试，宿主改动实时生效
       - ./tradingagents:/app/tradingagents
+      - ./app:/app/app
       - ./tests:/app/tests
       # 复用本机 financial-report-llm-extractor checkout；缓存默认落在该目录的 tmp/.cache
       - ${FINANCIAL_REPORT_EXTRACTOR_HOST_ROOT:-./external/financial-report-llm-extractor}:/app/external/financial-report-llm-extractor

@@ -319,21 +319,38 @@ async def lifespan(app: FastAPI):
             if settings.SYNC_STOCK_BASICS_CRON:
                 # 如果提供了cron表达式
                 scheduler.add_job(
-                    lambda: multi_source_service.run_full_sync(force=False, preferred_sources=preferred_sources),
+                    multi_source_service.run_full_sync,  # bound async method，AsyncIOScheduler 会 await
                     CronTrigger.from_crontab(settings.SYNC_STOCK_BASICS_CRON, timezone=settings.TIMEZONE),
                     id="basics_sync_service",
-                    name="股票基础信息同步（多数据源）"
+                    name="股票基础信息同步（多数据源）",
+                    kwargs={"force": False, "preferred_sources": preferred_sources},
                 )
                 logger.info(f"📅 Stock basics sync scheduled by CRON: {settings.SYNC_STOCK_BASICS_CRON} ({settings.TIMEZONE})")
             else:
                 hh, mm = (settings.SYNC_STOCK_BASICS_TIME or "06:30").split(":")
                 scheduler.add_job(
-                    lambda: multi_source_service.run_full_sync(force=False, preferred_sources=preferred_sources),
+                    multi_source_service.run_full_sync,  # bound async method，AsyncIOScheduler 会 await
                     CronTrigger(hour=int(hh), minute=int(mm), timezone=settings.TIMEZONE),
                     id="basics_sync_service",
-                    name="股票基础信息同步（多数据源）"
+                    name="股票基础信息同步（多数据源）",
+                    kwargs={"force": False, "preferred_sources": preferred_sources},
                 )
                 logger.info(f"📅 Stock basics sync scheduled daily at {settings.SYNC_STOCK_BASICS_TIME} ({settings.TIMEZONE})")
+
+        # OAuth 订阅令牌定时刷新保活任务（防一次性轮换的 refresh_token 闲置过期）
+        if settings.OAUTH_REFRESH_ENABLED:
+            from app.services.oauth_refresh_service import refresh_due_oauth_credentials
+            # 直接传 coroutine function（非 lambda）：AsyncIOScheduler 仅 await
+            # iscoroutinefunction(job.func) 为真的任务；lambda 是同步 callable，
+            # 只返回未被 await 的 coroutine → job 静默不执行。
+            scheduler.add_job(
+                refresh_due_oauth_credentials,
+                CronTrigger.from_crontab(settings.OAUTH_REFRESH_CRON, timezone=settings.TIMEZONE),
+                id="oauth_token_refresh",
+                name="OAuth 订阅令牌定时刷新保活",
+                kwargs={"threshold_days": settings.OAUTH_REFRESH_THRESHOLD_DAYS},
+            )
+            logger.info(f"🔑 OAuth 令牌定时刷新已配置: {settings.OAUTH_REFRESH_CRON} ({settings.TIMEZONE})")
 
         # 实时行情入库任务（每N秒），内部自判交易时段
         if settings.QUOTES_INGEST_ENABLED:
