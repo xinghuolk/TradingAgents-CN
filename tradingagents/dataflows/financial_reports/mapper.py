@@ -43,6 +43,29 @@ def _to_float(value: Any) -> float | None:
         return None
 
 
+def _norm_currency(currency: Any) -> str | None:
+    """货币码归一为大写字符串；空值返回 None。"""
+    return str(currency).upper() if currency else None
+
+
+def _field_value(field: Any) -> float | None:
+    """优先 normalized_value（上游已归一的同币种绝对值，单位=元/raw），
+    上游未提供时回退 raw value。对接 money-unit-normalization-funnel。"""
+    if field is None:
+        return None
+    normalized = getattr(field, "normalized_value", None)
+    if normalized is not None:
+        return _to_float(normalized)
+    return _to_float(getattr(field, "value", None))
+
+
+def _field_currency(field: Any) -> str | None:
+    """field 级币种：优先 canonical_unit（货币码 CNY/HKD/USD），回退 currency。"""
+    if field is None:
+        return None
+    return _norm_currency(getattr(field, "canonical_unit", None) or getattr(field, "currency", None))
+
+
 def _fields(extraction: Any) -> dict[str, Any]:
     fields = getattr(extraction, "fields", None)
     return fields if isinstance(fields, dict) else {}
@@ -198,9 +221,9 @@ def merge_financial_report_data(
     policy: FinancialReportPolicy,
 ) -> FinancialReportMergeResult:
     from tradingagents.dataflows.value_investment.unit_normalizer import assert_same_currency
-    extraction_currency = getattr(extraction, "currency", None)
-    if extraction_currency:
-        assert_same_currency(financial_data, {"_currency": extraction_currency})
+
+    # 币种：优先 extraction 顶层 currency（通常 None），否则循环中从 field 级 canonical_unit 检测
+    detected_currency = _norm_currency(getattr(extraction, "currency", None))
 
     merged = dict(financial_data)
     merged["_data_source"] = dict(financial_data.get("_data_source") or {})
@@ -215,7 +238,9 @@ def merge_financial_report_data(
             continue
 
         decision = policy.decide(field=field, result=extraction)
-        value = _to_float(getattr(field, "value", None))
+        value = _field_value(field)
+        if detected_currency is None:
+            detected_currency = _field_currency(field)
 
         if decision.caveat:
             caveats.append(decision.caveat)
@@ -243,12 +268,13 @@ def merge_financial_report_data(
     _derive_aggregate_metrics(merged, details, used_keys)
     _derive_metrics(merged, details, used_keys)
 
-    repurchase = _to_float(getattr(_fields(extraction).get("repurchase_of_stock"), "value", None))
+    repurchase = _field_value(_fields(extraction).get("repurchase_of_stock"))
     if repurchase is not None:
         merged["repurchase_of_stock"] = repurchase
 
-    if extraction_currency:
-        merged["_currency"] = extraction_currency
+    if detected_currency:
+        assert_same_currency(financial_data, {"_currency": detected_currency})
+        merged["_currency"] = detected_currency
 
     merged["_supplemented_details"].update(details)
     merged["_financial_report_client"] = {
