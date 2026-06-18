@@ -75,6 +75,22 @@ def _field_currency(field: Any) -> str | None:
     return raw if raw in {"CNY", "HKD", "USD"} else None
 
 
+def _accumulate_currency(field: Any, detected: str | None) -> str | None:
+    """校验单个 field 的币种与已检测币种一致并累积。
+
+    每个 money field（含 FIELD_TO_KEY 之外的 repurchase_of_stock）都须经此校验，
+    避免同一份 extraction 内混入异币种字段（如 net_profit=CNY 但 operating_cash_flow
+    =HKD）被静默当作首个检测到的币种。检测到不一致即拒绝合并（与 assert_same_currency
+    同口径，跨币种是拒绝而非换算）。
+    """
+    field_currency = _field_currency(field)
+    if field_currency is None:
+        return detected
+    if detected is not None and field_currency != detected:
+        raise ValueError(f"上游字段币种不一致，拒绝合并: {detected} vs {field_currency}")
+    return field_currency if detected is None else detected
+
+
 def _fields(extraction: Any) -> dict[str, Any]:
     fields = getattr(extraction, "fields", None)
     return fields if isinstance(fields, dict) else {}
@@ -248,8 +264,7 @@ def merge_financial_report_data(
 
         decision = policy.decide(field=field, result=extraction)
         value = _field_value(field)
-        if detected_currency is None:
-            detected_currency = _field_currency(field)
+        detected_currency = _accumulate_currency(field, detected_currency)
 
         if decision.caveat:
             caveats.append(decision.caveat)
@@ -277,9 +292,13 @@ def merge_financial_report_data(
     _derive_aggregate_metrics(merged, details, used_keys)
     _derive_metrics(merged, details, used_keys)
 
-    repurchase = _field_value(_fields(extraction).get("repurchase_of_stock"))
-    if repurchase is not None:
-        merged["repurchase_of_stock"] = repurchase
+    repurchase_field = _fields(extraction).get("repurchase_of_stock")
+    if repurchase_field is not None:
+        # repurchase 在 FIELD_TO_KEY 之外，须单独校验币种，避免 HKD 回购混入 CNY 数据
+        detected_currency = _accumulate_currency(repurchase_field, detected_currency)
+        repurchase = _field_value(repurchase_field)
+        if repurchase is not None:
+            merged["repurchase_of_stock"] = repurchase
 
     if detected_currency:
         assert_same_currency(financial_data, {"_currency": detected_currency})

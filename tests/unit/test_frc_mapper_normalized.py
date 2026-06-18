@@ -86,3 +86,23 @@ def test_nonstandard_raw_currency_ignored():
                                             canonical_unit=None, currency="人民币")}, currency=None)
     r = merge_financial_report_data(financial_data={"_currency": "CNY"}, extraction=ext, policy=_policy())
     assert r.financial_data["_currency"] == "CNY"  # 未被「人民币」污染/触发 ValueError
+
+
+def test_mixed_field_currency_rejected():
+    # review #1：同一 extraction 内多 money 字段混币（net_profit=CNY, operating_cash_flow=HKD）
+    # → 须逐字段校验，不能只认第一个 → 拒绝
+    ext = _extraction({
+        "net_profit": _field(value=1.0, normalized_value=1.0, canonical_unit="CNY"),
+        "operating_cash_flow": _field(value=2.0, normalized_value=2.0, canonical_unit="HKD"),
+    })
+    with pytest.raises(ValueError):
+        merge_financial_report_data(financial_data={}, extraction=ext, policy=_policy())
+
+
+def test_repurchase_only_currency_validated():
+    # review #2：extraction 只含 repurchase（FIELD_TO_KEY 之外），顶层 currency None，
+    # financial_data 是 CNY → HKD 回购不得静默混入 → 拒绝
+    ext = _extraction({"repurchase_of_stock": _field(value=1.0, normalized_value=1.0,
+                                                     canonical_unit="HKD")}, currency=None)
+    with pytest.raises(ValueError):
+        merge_financial_report_data(financial_data={"_currency": "CNY"}, extraction=ext, policy=_policy())
