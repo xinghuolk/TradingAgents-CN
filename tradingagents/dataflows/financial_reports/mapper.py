@@ -60,10 +60,19 @@ def _field_value(field: Any) -> float | None:
 
 
 def _field_currency(field: Any) -> str | None:
-    """field 级币种：优先 canonical_unit（货币码 CNY/HKD/USD），回退 currency。"""
+    """field 级币种：优先 canonical_unit（标准货币码 CNY/HKD/USD）。
+
+    上游未发布 canonical_unit 时回退 raw currency，但**仅接受已是标准码的值**——
+    上游迁移指南明示 raw currency 可能是「人民币」等非标准写法，非标准码一律返回
+    None，交由其他来源 / akshare 已标的 _currency 兜底，避免污染币种校验。
+    """
     if field is None:
         return None
-    return _norm_currency(getattr(field, "canonical_unit", None) or getattr(field, "currency", None))
+    canonical = _norm_currency(getattr(field, "canonical_unit", None))
+    if canonical:
+        return canonical
+    raw = _norm_currency(getattr(field, "currency", None))
+    return raw if raw in {"CNY", "HKD", "USD"} else None
 
 
 def _fields(extraction: Any) -> dict[str, Any]:

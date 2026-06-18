@@ -77,3 +77,12 @@ def test_repurchase_uses_normalized_value():
                                                      canonical_unit="CNY", unit="万元")})
     r = merge_financial_report_data(financial_data={}, extraction=ext, policy=_policy())
     assert r.financial_data["repurchase_of_stock"] == 62879243.53
+
+
+def test_nonstandard_raw_currency_ignored():
+    # 上游迁移指南：raw currency 可能是「人民币」等非标准写法。无 canonical_unit 时
+    # 回退不得拿「人民币」去和 akshare 的 CNY 触发冲突——非标准码应被忽略，保留 CNY。
+    ext = _extraction({"net_profit": _field(value=1.0, normalized_value=None,
+                                            canonical_unit=None, currency="人民币")}, currency=None)
+    r = merge_financial_report_data(financial_data={"_currency": "CNY"}, extraction=ext, policy=_policy())
+    assert r.financial_data["_currency"] == "CNY"  # 未被「人民币」污染/触发 ValueError
