@@ -95,6 +95,12 @@ def _field_currency(field: Any) -> str | None:
     return raw.upper() if raw else None
 
 
+def _canonical_currency(field: Any) -> str | None:
+    """上游归一化后的标准货币码 canonical_unit，仅接受 CNY/HKD/USD。"""
+    raw = str(getattr(field, "canonical_unit", "") or "").strip().upper()
+    return raw if raw in {"CNY", "HKD", "USD"} else None
+
+
 def _is_numeric(value: Any) -> bool:
     if isinstance(value, bool):
         return False
@@ -139,27 +145,45 @@ def _adapt_value(
         caveat = _merge_caveats(caveat, degradation_caveat)
     elif _is_numeric(raw_value):
         numeric_value = float(raw_value)
-        unsafe_caveat = _numeric_display_only_caveat(field_id, field, numeric_value)
-        if unsafe_caveat is None:
-            currency = _field_currency(field)
-            unit = _field_unit(field)
-            assert currency is not None
-            assert unit is not None
+        normalized = getattr(field, "normalized_value", None)
+        canonical = _canonical_currency(field)
+        if normalized is not None and canonical is not None and _is_numeric(normalized):
+            # 优先消费上游归一字段：normalized_value 已是基础货币绝对值（元），
+            # unit="yuan"（multiplier 1/1e8 → 归一到亿元），跳过 raw unit 解析，
+            # 不再因 "unsupported unit"（如 元/ones）降级为 display_only。
+            nv = float(normalized)
             if field_id == "buyback_amount":
-                numeric_value = abs(numeric_value)
+                nv = abs(nv)
             value: Any = MoneyAmount(
-                value=numeric_value,
-                currency=currency,
-                unit=unit,
+                value=nv,
+                currency=canonical,
+                unit="yuan",
                 source_label=source_label,
                 source_reference=source_reference,
                 reliability=reliability,
             )
         else:
-            value = raw_value
-            reliability = "display_only"
-            degradation_caveat = unsafe_caveat
-            caveat = _merge_caveats(caveat, unsafe_caveat)
+            unsafe_caveat = _numeric_display_only_caveat(field_id, field, numeric_value)
+            if unsafe_caveat is None:
+                currency = _field_currency(field)
+                unit = _field_unit(field)
+                assert currency is not None
+                assert unit is not None
+                if field_id == "buyback_amount":
+                    numeric_value = abs(numeric_value)
+                value = MoneyAmount(
+                    value=numeric_value,
+                    currency=currency,
+                    unit=unit,
+                    source_label=source_label,
+                    source_reference=source_reference,
+                    reliability=reliability,
+                )
+            else:
+                value = raw_value
+                reliability = "display_only"
+                degradation_caveat = unsafe_caveat
+                caveat = _merge_caveats(caveat, unsafe_caveat)
     else:
         value = raw_value
 
