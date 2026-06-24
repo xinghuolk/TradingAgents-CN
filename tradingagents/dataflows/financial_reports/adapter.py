@@ -254,6 +254,7 @@ class FinancialReportAdapter:
             )
 
         ExtractorConfig, ExtractorError, FinancialReportClient, RefreshPolicy = loaded
+        client = None  # 防御：若 ExtractorConfig/FinancialReportClient 构造阶段就抛，except 重试不至于 UnboundLocalError
         try:
             can_run_llm = bool(self.config.include_llm_supplement and self.config.llm_config_path)
             extractor_config = ExtractorConfig(
@@ -278,7 +279,7 @@ class FinancialReportAdapter:
             )
         except ExtractorError as exc:
             reason = getattr(exc, "reason", "extractor_error")
-            if self.config.include_llm_supplement and reason in _LLM_RETRYABLE_REASONS:
+            if client is not None and self.config.include_llm_supplement and reason in _LLM_RETRYABLE_REASONS:
                 try:
                     extraction = client.get_extraction(
                         company=ticker,

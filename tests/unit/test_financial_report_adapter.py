@@ -338,6 +338,25 @@ def test_non_retryable_reason_does_not_retry(monkeypatch):
     assert any("unsupported_market" in e for e in result.errors)
 
 
+def test_force_refresh_miss_retries_provider_only(monkeypatch):
+    # FORCE_REFRESH 同样命中上游 llm_config_missing 断言 → 经 except 降级 provider-only 重试
+    install_fake_extractor(monkeypatch)
+    import financial_report_llm_extractor.client as fc
+    seq = []
+    def fake_get(self, **kwargs):
+        seq.append(kwargs)
+        if len(seq) == 1:
+            raise fc.ExtractorError("llm_config_missing", "needs llm_config")
+        return FakeExtraction(company=kwargs["company"], market=kwargs["market"],
+                              period_end=kwargs["period_end"], staleness=FakeStaleness(), fields={})
+    monkeypatch.setattr(fc.FinancialReportClient, "get_extraction", fake_get)
+    adapter = FinancialReportAdapter(config=_cfg(include_llm=True, llm_config_path="", force_refresh=True))
+    result = adapter.get_annual_report_data(ticker="600519", market="CN", period_end="2024-12-31")
+    assert result.available is True
+    assert len(seq) == 2
+    assert seq[1]["include_llm_supplement"] is False
+
+
 def test_pdf_resolver_uses_report_collector_pdf_info(tmp_path):
     pdf = tmp_path / "annual.pdf"
     pdf.write_text("pdf", encoding="utf-8")
