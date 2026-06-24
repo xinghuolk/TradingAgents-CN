@@ -10,7 +10,7 @@ from tradingagents.dataflows.value_investment.turtle.market_adapter import (
 def test_default_tax_rate_by_holding_channel():
     assert default_tax_rate("A", "long_term_domestic") == 0.0
     assert default_tax_rate("HK", "stock_connect") == 0.20
-    assert default_tax_rate("HK", "direct_h_share") == 0.28
+    assert default_tax_rate("HK", "direct_h_share") == 0.20  # direct_h_share 分支已移除，回落 HK 默认 0.20
     assert default_tax_rate("US", "w8ben") == 0.10
 
 
@@ -320,9 +320,10 @@ def test_build_market_facts_defaults_missing_hk_holding_channel():
     caveats = " ".join(facts.caveats)
     assert facts.fields["holding_channel"].value == "stock_connect"
     assert facts.fields["tax_rate"].value == 0.20
-    assert facts.fields["tax_rate"].reliability == "display_only"
+    # 港股通默认即使非显式也按政策默认给 reliable（带渠道假设 caveat）
+    assert facts.fields["tax_rate"].reliability == "reliable"
     assert "tax_rate unknown for HK:None" not in caveats
-    assert "default holding_channel" in (facts.fields["tax_rate"].caveat or "")
+    assert "港股通" in (facts.fields["tax_rate"].caveat or "")
 
 
 def test_build_market_facts_invalid_rf_env_value_adds_caveat(monkeypatch):
@@ -352,7 +353,8 @@ def _valid_market_data():
 
 
 class TestFailFastDefaults:
-    def test_default_channel_makes_tax_rate_display_only(self):
+    def test_a_share_default_channel_is_reliable_policy_default(self):
+        # A股 long_term_domestic(0%) 是政策无条件可靠默认：非显式也 reliable、无 caveat
         facts = build_market_facts(
             ticker="600519",
             market="A",
@@ -363,8 +365,8 @@ class TestFailFastDefaults:
             industry="白酒",
         )
         tax_rate = facts.fields["tax_rate"]
-        assert tax_rate.reliability == "display_only"
-        assert "default holding_channel" in (tax_rate.caveat or "")
+        assert tax_rate.reliability == "reliable"
+        assert tax_rate.caveat is None
 
     def test_explicit_channel_keeps_tax_rate_reliable(self):
         facts = build_market_facts(
@@ -381,6 +383,7 @@ class TestFailFastDefaults:
         assert tax_rate.caveat is None or "default" not in tax_rate.caveat
 
     def test_empty_holding_channel_string_counts_as_default(self):
+        # 空字符串回落到 A股默认 long_term_domestic，命中政策可靠默认 → reliable
         facts = build_market_facts(
             ticker="600519",
             market="A",
@@ -390,7 +393,7 @@ class TestFailFastDefaults:
             buyback_data=None,
             industry="白酒",
         )
-        assert facts.fields["tax_rate"].reliability == "display_only"
+        assert facts.fields["tax_rate"].reliability == "reliable"
 
 
 class TestNoUnconditionalDefaultChannelCaveat:
@@ -458,21 +461,23 @@ class TestMarketAdapterStatus:
         assert facts.status == "complete"
 
     def test_market_material_caveat_still_degrades_market_status(self):
+        # tax_rate display_only 仍是 material caveat：用 HK unknown_channel 触发（A股/港股通默认现已 reliable）
         facts = build_market_facts(
-            ticker="600519",
-            market="A",
-            holding_channel=None,
-            market_data={"market_cap": 200_000_000_000, "close_price": 1500.0},
+            ticker="00001",
+            market="HK",
+            holding_channel="unknown_channel",
+            market_data={"market_cap": 200_000_000_000, "close_price": 40.0},
             dividend_data=None,
             buyback_data=None,
-            industry="白酒",
+            industry="综合企业",
             rf_rate=0.025,
         )
 
-        assert any("default holding_channel" in caveat for caveat in facts.caveats)
+        assert any("tax_rate unknown" in caveat for caveat in facts.caveats)
         assert facts.status == "degraded"
 
-    def test_default_channel_yields_degraded(self):
+    def test_a_share_default_channel_yields_complete(self):
+        # A股默认渠道(long_term_domestic)现按政策可靠默认 → reliable → complete
         facts = build_market_facts(
             ticker="600519",
             market="A",
@@ -483,7 +488,7 @@ class TestMarketAdapterStatus:
             industry="白酒",
             rf_rate=0.025,
         )
-        assert facts.status == "degraded"
+        assert facts.status == "complete"
 
     def test_no_market_data_at_all_is_non_decisionable(self):
         facts = build_market_facts(
@@ -539,3 +544,69 @@ def test_fetch_turtle_market_data_keeps_existing_source(monkeypatch):
     )
     data = market_adapter._fetch_turtle_market_data("600519", "A")
     assert data["source"] == "custom"
+
+
+def _mk(market, holding_channel):
+    return build_market_facts(
+        ticker="TEST",
+        market=market,
+        holding_channel=holding_channel,
+        market_data={"market_cap": 1_000_000_000, "close_price": 10.0},
+        dividend_data={"avg_payout_ratio_3y": 0.4, "records": []},
+        buyback_data={"total_cancelled_amount": 0, "records": []},
+        industry="测试",
+        rf_rate=0.025,
+    )
+
+
+def test_a_share_default_channel_tax_rate_reliable_no_caveat():
+    facts = _mk("A", None)  # holding_channel 非显式 → 默认 long_term_domestic
+    tr = facts.fields["tax_rate"]
+    assert tr.value == 0.0
+    assert tr.reliability == "reliable"
+    assert tr.caveat is None
+    assert not any("tax_rate" in c for c in facts.caveats)
+
+
+def test_hk_stock_connect_default_channel_reliable_with_caveat():
+    facts = _mk("HK", None)  # 非显式 → 默认 stock_connect
+    tr = facts.fields["tax_rate"]
+    assert tr.value == 0.20
+    assert tr.reliability == "reliable"
+    assert tr.caveat is not None and "港股通" in tr.caveat
+    assert any("港股通" in c for c in facts.caveats)
+
+
+def test_hk_stock_connect_explicit_reliable_with_caveat():
+    facts = _mk("HK", "stock_connect")
+    tr = facts.fields["tax_rate"]
+    assert tr.value == 0.20
+    assert tr.reliability == "reliable"
+    assert "港股通" in (tr.caveat or "")
+
+
+def test_us_w8ben_default_channel_stays_display_only():
+    facts = _mk("US", None)  # 非显式 → 默认 w8ben；US 不在可靠默认表，走旧逻辑
+    tr = facts.fields["tax_rate"]
+    assert tr.reliability == "display_only"
+
+
+def test_us_w8ben_explicit_reliable():
+    facts = _mk("US", "w8ben")
+    tr = facts.fields["tax_rate"]
+    assert tr.value == 0.10
+    assert tr.reliability == "reliable"
+
+
+def test_hk_unknown_channel_display_only():
+    facts = _mk("HK", "foobar")
+    tr = facts.fields["tax_rate"]
+    assert tr.reliability == "display_only"
+    assert any("unknown" in c for c in facts.caveats)
+
+
+def test_hk_direct_h_share_removed_now_display_only():
+    # direct_h_share=28% 语义错误已移除：显式传它不再是 reliable 28%
+    facts = _mk("HK", "direct_h_share")
+    tr = facts.fields["tax_rate"]
+    assert tr.reliability == "display_only"
