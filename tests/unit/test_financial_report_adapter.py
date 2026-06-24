@@ -255,25 +255,87 @@ def test_adapter_falls_back_to_provider_only_when_llm_pipeline_fails(monkeypatch
     ]
 
 
-def test_adapter_does_not_request_llm_supplement_without_llm_config(monkeypatch):
+def _cfg(include_llm=True, llm_config_path="", cache_only=True, force_refresh=False):
+    return FinancialReportClientConfig(
+        enabled=True, cache_only=cache_only, force_refresh=force_refresh,
+        include_llm_supplement=include_llm, allow_llm_models=("codex",),
+        extractor_cache_root="", llm_config_path=llm_config_path, pdf_root="",
+    )
+
+
+def test_reads_llm_fields_without_llm_config(monkeypatch):
     install_fake_extractor(monkeypatch)
     FakeClient.calls.clear()
-    adapter = FinancialReportAdapter(config=FinancialReportClientConfig(
-        enabled=True,
-        cache_only=True,
-        force_refresh=False,
-        include_llm_supplement=True,
-        allow_llm_models=("codex",),
-        extractor_cache_root="",
-        llm_config_path="",
-        pdf_root="",
-    ))
-
+    adapter = FinancialReportAdapter(config=_cfg(include_llm=True, llm_config_path=""))
     result = adapter.get_annual_report_data(ticker="600519", market="CN", period_end="2024-12-31")
-
     assert result.available is True
-    assert FakeClient.calls[0]["include_llm_supplement"] is False
+    assert FakeClient.calls[0]["include_llm_supplement"] is True
     assert FakeClient.last_config.kwargs["pdf_resolver"] is None
+
+
+def test_pdf_resolver_present_with_llm_config(monkeypatch):
+    install_fake_extractor(monkeypatch)
+    FakeClient.calls.clear()
+    adapter = FinancialReportAdapter(config=_cfg(include_llm=True, llm_config_path="x"))
+    adapter.get_annual_report_data(ticker="600519", market="CN", period_end="2024-12-31")
+    assert FakeClient.last_config.kwargs["pdf_resolver"] is not None
+
+
+def test_explicit_disable_does_not_read_llm(monkeypatch):
+    install_fake_extractor(monkeypatch)
+    FakeClient.calls.clear()
+    adapter = FinancialReportAdapter(config=_cfg(include_llm=False, llm_config_path=""))
+    adapter.get_annual_report_data(ticker="600519", market="CN", period_end="2024-12-31")
+    assert FakeClient.calls[0]["include_llm_supplement"] is False
+
+
+def test_db_miss_retries_provider_only(monkeypatch):
+    install_fake_extractor(monkeypatch)
+    import financial_report_llm_extractor.client as fc
+    seq = []
+    def fake_get(self, **kwargs):
+        seq.append(kwargs)
+        if len(seq) == 1:
+            raise fc.ExtractorError("llm_config_missing", "needs llm_config")
+        return FakeExtraction(company=kwargs["company"], market=kwargs["market"],
+                              period_end=kwargs["period_end"], staleness=FakeStaleness(), fields={})
+    monkeypatch.setattr(fc.FinancialReportClient, "get_extraction", fake_get)
+    adapter = FinancialReportAdapter(config=_cfg(include_llm=True, llm_config_path="", cache_only=False))
+    result = adapter.get_annual_report_data(ticker="600519", market="CN", period_end="2024-12-31")
+    assert result.available is True
+    assert len(seq) == 2
+    assert seq[1]["include_llm_supplement"] is False
+    assert any("retried provider-only" in w for w in result.warnings)
+
+
+def test_retry_failure_surfaces_both_errors(monkeypatch):
+    install_fake_extractor(monkeypatch)
+    import financial_report_llm_extractor.client as fc
+    seq = []
+    def fake_get(self, **kwargs):
+        seq.append(kwargs)
+        raise fc.ExtractorError("llm_config_missing" if len(seq) == 1 else "fetch_failed", "boom")
+    monkeypatch.setattr(fc.FinancialReportClient, "get_extraction", fake_get)
+    adapter = FinancialReportAdapter(config=_cfg(include_llm=True, llm_config_path="", cache_only=False))
+    result = adapter.get_annual_report_data(ticker="600519", market="CN", period_end="2024-12-31")
+    assert result.available is False
+    joined = " ".join(result.errors)
+    assert "llm_config_missing" in joined and "fetch_failed" in joined
+
+
+def test_non_retryable_reason_does_not_retry(monkeypatch):
+    install_fake_extractor(monkeypatch)
+    import financial_report_llm_extractor.client as fc
+    seq = []
+    def fake_get(self, **kwargs):
+        seq.append(kwargs)
+        raise fc.ExtractorError("unsupported_market", "no")
+    monkeypatch.setattr(fc.FinancialReportClient, "get_extraction", fake_get)
+    adapter = FinancialReportAdapter(config=_cfg(include_llm=True, llm_config_path="", cache_only=False))
+    result = adapter.get_annual_report_data(ticker="600519", market="CN", period_end="2024-12-31")
+    assert result.available is False
+    assert len(seq) == 1
+    assert any("unsupported_market" in e for e in result.errors)
 
 
 def test_pdf_resolver_uses_report_collector_pdf_info(tmp_path):

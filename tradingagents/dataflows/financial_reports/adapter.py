@@ -32,6 +32,10 @@ def infer_annual_period_end(reference_date: str | None) -> str:
     return f"{report_year}-12-31"
 
 
+# provider-only 重试只对这些「跑 LLM/pipeline 相关、可绕过」的 reason 生效。
+_LLM_RETRYABLE_REASONS = {"llm_config_missing", "pdf_not_found", "fetch_failed", "evaluate_failed"}
+
+
 def _load_extractor_client() -> tuple[Any, Any, Any, Any] | None:
     try:
         from financial_report_llm_extractor.client import (  # type: ignore[import-not-found]
@@ -251,11 +255,11 @@ class FinancialReportAdapter:
 
         ExtractorConfig, ExtractorError, FinancialReportClient, RefreshPolicy = loaded
         try:
-            include_llm = bool(self.config.include_llm_supplement and self.config.llm_config_path)
+            can_run_llm = bool(self.config.include_llm_supplement and self.config.llm_config_path)
             extractor_config = ExtractorConfig(
                 llm_config_path=_optional_path(self.config.llm_config_path),
                 cache_root=_optional_path(self.config.extractor_cache_root),
-                pdf_resolver=self.resolve_pdf if include_llm else None,
+                pdf_resolver=self.resolve_pdf if can_run_llm else None,
                 subscription_token=self.subscription_token,
             )
             client = FinancialReportClient(config=extractor_config)
@@ -263,7 +267,7 @@ class FinancialReportAdapter:
                 company=ticker,
                 market=market,
                 period_end=resolved_period_end,
-                include_llm_supplement=include_llm,
+                include_llm_supplement=self.config.include_llm_supplement,
                 refresh_policy=self._refresh_policy(RefreshPolicy),
             )
             return self._result_from_extraction(
@@ -274,7 +278,7 @@ class FinancialReportAdapter:
             )
         except ExtractorError as exc:
             reason = getattr(exc, "reason", "extractor_error")
-            if include_llm:
+            if self.config.include_llm_supplement and reason in _LLM_RETRYABLE_REASONS:
                 try:
                     extraction = client.get_extraction(
                         company=ticker,
@@ -293,8 +297,17 @@ class FinancialReportAdapter:
                             f"{reason}: {exc}"
                         ],
                     )
-                except Exception:
-                    pass
+                except ExtractorError as exc2:
+                    reason2 = getattr(exc2, "reason", "retry_failed")
+                    return FinancialReportAdapterResult(
+                        available=False,
+                        company=ticker,
+                        market=market,
+                        period_end=resolved_period_end,
+                        extraction=None,
+                        warnings=[],
+                        errors=[f"{reason}: {exc}", f"{reason2}: {exc2}"],
+                    )
             return FinancialReportAdapterResult(
                 available=False,
                 company=ticker,
