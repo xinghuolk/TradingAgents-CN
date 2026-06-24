@@ -2,7 +2,8 @@
 
 - 日期：2026-06-24
 - 范围：单个 PR
-- 边界：`tradingagents/dataflows/financial_reports/adapter.py`（Apache 2.0）
+- 生产代码边界：`tradingagents/dataflows/financial_reports/adapter.py`（Apache 2.0，唯一改动的生产文件）
+- PR 文件范围：上述生产文件 + 单测 `tests/unit/test_financial_report_adapter.py` + 配套文档更正 `docs/analysis/00003`（执行时三者都不可漏）
 
 ## 背景
 
@@ -60,21 +61,28 @@ extraction = client.get_extraction(
     refresh_policy=self._refresh_policy(RefreshPolicy),
 )
 ...
+# 仅对 LLM/pipeline 相关、provider-only 可绕过的 reason 才降级重试
+_LLM_RETRYABLE_REASONS = {"llm_config_missing", "pdf_not_found", "fetch_failed", "evaluate_failed"}
+
 except ExtractorError as exc:
     reason = getattr(exc, "reason", "extractor_error")
-    if self.config.include_llm_supplement:                            # (3) 重试条件改为读取意图
+    if self.config.include_llm_supplement and reason in _LLM_RETRYABLE_REASONS:   # (3)(4)
         try:
             extraction = client.get_extraction(..., include_llm_supplement=False, ...)
             return self._result_from_extraction(..., warnings=["llm_supplement_failed; retried provider-only: ..."])
-        except Exception:
-            pass
+        except ExtractorError as exc2:                                            # (5) 不吞第二次错误
+            reason2 = getattr(exc2, "reason", "retry_failed")
+            return FinancialReportAdapterResult(available=False,
+                errors=[f"{reason}: {exc}", f"{reason2}: {exc2}"], ...)            # first + second 都暴露
     return FinancialReportAdapterResult(available=False, errors=[f"{reason}: {exc}"], ...)
 ```
 
-三处改动职责：
+改动职责：
 1. **`pdf_resolver` 用 `can_run_llm`**：无 `llm_config_path` 跑不了新 LLM（保持现状）。
 2. **`get_extraction(include_llm_supplement=self.config.include_llm_supplement)`**：读取仅看配置意图，不依赖 `llm_config_path`。CACHE 命中即读到 DB 的 LLM 字段。
 3. **except 重试条件 `include_llm` → `self.config.include_llm_supplement`**：原 except 块（`adapter.py:275-306`）已有 provider-only 重试机制；改名后必须用读取意图作条件，否则 `llm_config_path` 空时 `can_run_llm=False` 会跳过重试、让 DB-miss 直接报错（比现状更糟）。
+4. **重试白名单 `reason in _LLM_RETRYABLE_REASONS`**（review #2）：只对 LLM/pipeline 相关、provider-only 能绕过的 reason 降级；`unsupported_market`/`db_not_initialized`/`no_db_row`/`unknown_field` 等 provider-only 也救不了，不做无意义二次调用、直接返回原错误。`fetch_failed`/`evaluate_failed` 是上游 `client.py:472-475` run_pipeline 失败时动态生成的 reason。
+5. **不隐藏第二次错误**（review #1）：原 `except Exception: pass` 会丢掉 provider-only 重试自身的真实失败（如第二次 `fetch_failed`/`db_not_initialized`），最终只返回首个 `llm_config_missing`、误导排查。改为捕获第二次 `ExtractorError` 并把 first+second 两个 reason 都放进 `errors`。
 
 数据流：
 | 场景 | 行为 |
@@ -88,7 +96,7 @@ except ExtractorError as exc:
 ## 下游影响
 
 - 日常 backend 分析（CACHE 命中、deep env 可能缺失的路径）从「LLM 字段被过滤成 None」变为「读到 DB 已缓存的 normalized 值」。turtle/穿透回报率两条路径（PR #34 已对接 normalized_value）随之拿到分红/派息/回购，相应解除 `non_decisionable`。
-- CACHE miss + 无 llm_config：原 `include_llm=False` 直接 provider-only；新路径经「抛 → 重试」最终也 provider-only——**结果一致**（含 provider 字段、无 LLM 字段），只是多一次重试 + 一条 warning。
+- CACHE miss + 无 llm_config：原 `include_llm=False` 直接 provider-only；新路径经「抛 `llm_config_missing` → 重试」。**provider-only 成功时结果一致**（含 provider 字段、无 LLM 字段），仅多一次重试 + warning；**provider-only 也失败时**返回 first(`llm_config_missing`)+second 双错误（review #1），不隐藏 provider-only 真实失败。
 - provider 字段、有 config 时跑 LLM 的行为不变。`subscription_token`（codex）穿透不受影响（独立传参）。
 
 ## 非目标
@@ -103,6 +111,8 @@ except ExtractorError as exc:
 1. **更新现有测试** `tests/unit/test_financial_report_adapter.py::test_adapter_does_not_request_llm_supplement_without_llm_config`（:258-276）：config `include_llm_supplement=True` + `llm_config_path=""` 的断言从 `include_llm_supplement is False` 改为 **`is True`**；`pdf_resolver is None` 保持。（测试名也宜改为反映新语义，如 `..._reads_llm_fields_without_llm_config`。）
 2. **新单测-跑 LLM 仍需 config**：config `include_llm_supplement=True` + `llm_config_path` 非空 → `pdf_resolver` 非 None。
 3. **新单测-DB-miss 重试 provider-only**：FakeClient 首次 `get_extraction` 抛 `ExtractorError(reason="llm_config_missing")`、第二次（`include_llm_supplement=False`）返回 provider-only extraction → 断言 adapter 返回 `available=True` + warning 含 "retried provider-only"，且第二次调用 `include_llm_supplement=False`。
+6. **新单测-重试也失败、暴露第二次错误**（review #1）：FakeClient 首次抛 `llm_config_missing`、第二次抛 `fetch_failed` → 断言 `available=False` 且 `errors` **同时含** `llm_config_missing` 与 `fetch_failed`（不能只返回首个，否则隐藏 provider-only 真实失败原因）。
+7. **新单测-非可降级 reason 不重试**（review #2）：FakeClient 首次抛 `unsupported_market` → 断言**不发生第二次** `get_extraction` 调用、`errors` 含 `unsupported_market`。
 4. **新单测-显式关闭**：config `include_llm_supplement=False` → `get_extraction` 收到 `include_llm_supplement=False`。
 5. **integration（默认跳过）**：CACHE_FIRST 无 force_refresh、无 codex token、设 deep env 使 llm_config 生成→ 实则验证「命中读 LLM 字段」；另跑一次「不设任何 llm_config」确认 CACHE 命中仍读到（已预演）。
 
