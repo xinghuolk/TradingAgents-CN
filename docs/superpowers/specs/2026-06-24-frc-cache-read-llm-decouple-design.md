@@ -70,7 +70,7 @@ except ExtractorError as exc:
         try:
             extraction = client.get_extraction(..., include_llm_supplement=False, ...)
             return self._result_from_extraction(..., warnings=["llm_supplement_failed; retried provider-only: ..."])
-        except ExtractorError as exc2:                                            # (5) 不吞第二次错误
+        except Exception as exc2:                                                # (5) 不吞第二次错误，覆盖非 ExtractorError
             reason2 = getattr(exc2, "reason", "retry_failed")
             return FinancialReportAdapterResult(available=False,
                 errors=[f"{reason}: {exc}", f"{reason2}: {exc2}"], ...)            # first + second 都暴露
@@ -82,7 +82,7 @@ except ExtractorError as exc:
 2. **`get_extraction(include_llm_supplement=self.config.include_llm_supplement)`**：读取仅看配置意图，不依赖 `llm_config_path`。CACHE 命中即读到 DB 的 LLM 字段。
 3. **except 重试条件 `include_llm` → `self.config.include_llm_supplement`**：原 except 块（`adapter.py:275-306`）已有 provider-only 重试机制；改名后必须用读取意图作条件，否则 `llm_config_path` 空时 `can_run_llm=False` 会跳过重试、让 DB-miss 直接报错（比现状更糟）。
 4. **重试白名单 `reason in _LLM_RETRYABLE_REASONS`**（review #2）：只对 LLM/pipeline 相关、provider-only 能绕过的 reason 降级；`unsupported_market`/`db_not_initialized`/`no_db_row`/`unknown_field` 等 provider-only 也救不了，不做无意义二次调用、直接返回原错误。`fetch_failed`/`evaluate_failed` 是上游 `client.py:472-475` run_pipeline 失败时动态生成的 reason。
-5. **不隐藏第二次错误**（review #1）：原 `except Exception: pass` 会丢掉 provider-only 重试自身的真实失败（如第二次 `fetch_failed`/`db_not_initialized`），最终只返回首个 `llm_config_missing`、误导排查。改为捕获第二次 `ExtractorError` 并把 first+second 两个 reason 都放进 `errors`。
+5. **不隐藏第二次错误**（review #1）：原 `except Exception: pass` 会丢掉 provider-only 重试自身的真实失败（如第二次 `fetch_failed`/`db_not_initialized`），最终只返回首个 `llm_config_missing`、误导排查。改为捕获第二次异常并把 first+second 两个 reason 都放进 `errors`。**兜底须用 `except Exception`（非 `ExtractorError`）**（codex-review P2）：此处已在外层 except 内，块内逃逸的异常不会再被外层 `except Exception` 接住，若重试抛出非 ExtractorError（如未包装的 DB/session 错误）会直接传播、让 fundamentals/turtle 调用方崩溃。`reason2` 对非 ExtractorError 经 `getattr` 退化为 `retry_failed`。
 
 数据流：
 | 场景 | 行为 |

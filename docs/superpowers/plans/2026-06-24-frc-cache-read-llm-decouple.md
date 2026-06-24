@@ -185,8 +185,10 @@ _LLM_RETRYABLE_REASONS = {"llm_config_missing", "pdf_not_found", "fetch_failed",
                             f"{reason}: {exc}"
                         ],
                     )
-                except ExtractorError as exc2:
-                    # 不吞第二次错误：provider-only 重试自身失败的真实 reason 也要暴露
+                except Exception as exc2:
+                    # 不吞第二次错误，且须覆盖非 ExtractorError（如未包装的 DB/session 错误）：
+                    # 此处已在外层 except 内，块内逃逸的异常不会再被外层 except Exception 接住，
+                    # 直接抛出会让调用方崩溃。reason2 对非 ExtractorError 退化为 retry_failed。
                     reason2 = getattr(exc2, "reason", "retry_failed")
                     return FinancialReportAdapterResult(
                         available=False,
