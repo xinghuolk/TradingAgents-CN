@@ -298,7 +298,10 @@ class FinancialReportAdapter:
                             f"{reason}: {exc}"
                         ],
                     )
-                except ExtractorError as exc2:
+                except Exception as exc2:
+                    # 兜底必须覆盖非 ExtractorError（如未包装的 DB/session 错误）：
+                    # 此处已在外层 except 内，块内逃逸的异常不会再被 :321 的 except Exception 接住，
+                    # 直接抛出会让 fundamentals/turtle 调用方崩溃。reason2 对非 ExtractorError 退化为 retry_failed。
                     reason2 = getattr(exc2, "reason", "retry_failed")
                     return FinancialReportAdapterResult(
                         available=False,

@@ -323,6 +323,26 @@ def test_retry_failure_surfaces_both_errors(monkeypatch):
     assert "llm_config_missing" in joined and "fetch_failed" in joined
 
 
+def test_retry_non_extractor_error_is_contained(monkeypatch):
+    # provider-only 重试若抛非 ExtractorError（如未包装的 DB/session 错误），
+    # 必须被内层兜住并 surface 到 errors，绝不能逃出方法让 fundamentals/turtle 调用方崩溃。
+    install_fake_extractor(monkeypatch)
+    import financial_report_llm_extractor.client as fc
+    seq = []
+    def fake_get(self, **kwargs):
+        seq.append(kwargs)
+        if len(seq) == 1:
+            raise fc.ExtractorError("llm_config_missing", "needs llm_config")
+        raise RuntimeError("db session closed")
+    monkeypatch.setattr(fc.FinancialReportClient, "get_extraction", fake_get)
+    adapter = FinancialReportAdapter(config=_cfg(include_llm=True, llm_config_path="", cache_only=False))
+    result = adapter.get_annual_report_data(ticker="600519", market="CN", period_end="2024-12-31")
+    assert result.available is False
+    assert len(seq) == 2
+    joined = " ".join(result.errors)
+    assert "llm_config_missing" in joined and "db session closed" in joined
+
+
 def test_non_retryable_reason_does_not_retry(monkeypatch):
     install_fake_extractor(monkeypatch)
     import financial_report_llm_extractor.client as fc
