@@ -43,6 +43,54 @@ def _to_float(value: Any) -> float | None:
         return None
 
 
+def _norm_currency(currency: Any) -> str | None:
+    """货币码归一为大写字符串；空值返回 None。"""
+    return str(currency).upper() if currency else None
+
+
+def _field_value(field: Any) -> float | None:
+    """优先 normalized_value（上游已归一的同币种绝对值，单位=元/raw），
+    上游未提供时回退 raw value。对接 money-unit-normalization-funnel。"""
+    if field is None:
+        return None
+    normalized = getattr(field, "normalized_value", None)
+    if normalized is not None:
+        return _to_float(normalized)
+    return _to_float(getattr(field, "value", None))
+
+
+def _field_currency(field: Any) -> str | None:
+    """field 级币种：优先 canonical_unit（标准货币码 CNY/HKD/USD）。
+
+    上游未发布 canonical_unit 时回退 raw currency，但**仅接受已是标准码的值**——
+    上游迁移指南明示 raw currency 可能是「人民币」等非标准写法，非标准码一律返回
+    None，交由其他来源 / akshare 已标的 _currency 兜底，避免污染币种校验。
+    """
+    if field is None:
+        return None
+    canonical = _norm_currency(getattr(field, "canonical_unit", None))
+    if canonical:
+        return canonical
+    raw = _norm_currency(getattr(field, "currency", None))
+    return raw if raw in {"CNY", "HKD", "USD"} else None
+
+
+def _accumulate_currency(field: Any, detected: str | None) -> str | None:
+    """校验单个 field 的币种与已检测币种一致并累积。
+
+    每个 money field（含 FIELD_TO_KEY 之外的 repurchase_of_stock）都须经此校验，
+    避免同一份 extraction 内混入异币种字段（如 net_profit=CNY 但 operating_cash_flow
+    =HKD）被静默当作首个检测到的币种。检测到不一致即拒绝合并（与 assert_same_currency
+    同口径，跨币种是拒绝而非换算）。
+    """
+    field_currency = _field_currency(field)
+    if field_currency is None:
+        return detected
+    if detected is not None and field_currency != detected:
+        raise ValueError(f"上游字段币种不一致，拒绝合并: {detected} vs {field_currency}")
+    return field_currency if detected is None else detected
+
+
 def _fields(extraction: Any) -> dict[str, Any]:
     fields = getattr(extraction, "fields", None)
     return fields if isinstance(fields, dict) else {}
@@ -198,9 +246,9 @@ def merge_financial_report_data(
     policy: FinancialReportPolicy,
 ) -> FinancialReportMergeResult:
     from tradingagents.dataflows.value_investment.unit_normalizer import assert_same_currency
-    extraction_currency = getattr(extraction, "currency", None)
-    if extraction_currency:
-        assert_same_currency(financial_data, {"_currency": extraction_currency})
+
+    # 币种：优先 extraction 顶层 currency（通常 None），否则循环中从 field 级 canonical_unit 检测
+    detected_currency = _norm_currency(getattr(extraction, "currency", None))
 
     merged = dict(financial_data)
     merged["_data_source"] = dict(financial_data.get("_data_source") or {})
@@ -215,7 +263,8 @@ def merge_financial_report_data(
             continue
 
         decision = policy.decide(field=field, result=extraction)
-        value = _to_float(getattr(field, "value", None))
+        value = _field_value(field)
+        detected_currency = _accumulate_currency(field, detected_currency)
 
         if decision.caveat:
             caveats.append(decision.caveat)
@@ -243,12 +292,17 @@ def merge_financial_report_data(
     _derive_aggregate_metrics(merged, details, used_keys)
     _derive_metrics(merged, details, used_keys)
 
-    repurchase = _to_float(getattr(_fields(extraction).get("repurchase_of_stock"), "value", None))
-    if repurchase is not None:
-        merged["repurchase_of_stock"] = repurchase
+    repurchase_field = _fields(extraction).get("repurchase_of_stock")
+    if repurchase_field is not None:
+        # repurchase 在 FIELD_TO_KEY 之外，须单独校验币种，避免 HKD 回购混入 CNY 数据
+        detected_currency = _accumulate_currency(repurchase_field, detected_currency)
+        repurchase = _field_value(repurchase_field)
+        if repurchase is not None:
+            merged["repurchase_of_stock"] = repurchase
 
-    if extraction_currency:
-        merged["_currency"] = extraction_currency
+    if detected_currency:
+        assert_same_currency(financial_data, {"_currency": detected_currency})
+        merged["_currency"] = detected_currency
 
     merged["_supplemented_details"].update(details)
     merged["_financial_report_client"] = {
