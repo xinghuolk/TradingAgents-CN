@@ -16,26 +16,19 @@
 
 **端到端验证（603345，force_refresh + codex 穿透）**：`dividends_paid`/`buyback_amount`/`dividend_payout_ratio_current_year`(=0.783) 全部 `reliability=reliable`，不再因 "unsupported unit 元/ones" 降级为 display_only。turtle 的 `payout_M` 核心链路打通。
 
-## 2. 待解决：缓存持久化（CACHE_FIRST 读不到 normalized）
+## 2. 已修复：CACHE_FIRST 读不到 normalized（根因是 include_llm 退化，非缓存不同步）
 
-**现象**：上游重跑 / 下游 force_refresh 后，`evaluation.json` 已含 `normalized_value`，但 backend 日常分析走 **CACHE_FIRST** 仍读到 `normalized_value=None`。
+> **更正**：本节早先诊断为「缓存多层不同步、DB 旧」是**错误的**。后续实测 + 上游代码核实证明：上游 DB 里的值一直是对的，根因在下游 adapter 的 `include_llm` 退化。已由 PR `feat/frc-cache-read-llm-decouple`（spec `docs/superpowers/specs/2026-06-24-frc-cache-read-llm-decouple-design.md`）修复。
 
-**根因**：上游 `financial_report_client` 有多层缓存，且存在两套独立 run 存储：
+**现象**：backend 日常分析走 CACHE_FIRST 读到 LLM 字段（`dividends_paid` 等）`normalized_value=None`。
 
-| 存储 | 路径 | 谁写 | 谁读 |
-|---|---|---|---|
-| client 提取缓存 | `tmp/.cache/runs/<company>_<period_end>_<market>/` | 下游 client 首次提取 | 下游 CACHE_FIRST |
-| client DB 缓存 | `tmp/.cache/extracted.db` | 下游 client | 下游读取层（疑似） |
-| 上游 operator 重跑 | `tmp/runs/<company>_<year>/` | 上游 `pipeline` | ❌ 下游不读 |
+**真正根因（已实测确认）**：下游 `adapter.py` 的 `include_llm = include_llm_supplement and llm_config_path` 把「读取已缓存 LLM 字段」耦合到「能否跑新 LLM」。CACHE_FIRST 纯读 DB、根本不跑 LLM，却因 deep-provider env 缺失 → `llm_config_path` 空 → `include_llm=False` → client 把 `llm_supplement_present` 字段过滤成 None（上游 `client.py:672-686`）。**DB 里的值一直是对的**（DB / `.cache/evaluation.json` / `tmp/runs/evaluation.json` 三层一致，`dividends_paid normalized_value=929784589.68`），是读取侧被过滤掉了。
 
-- 下游 client cache_root = `extractor_cache_root = .../tmp/.cache`（非上游 `tmp/runs`）。
-- force_refresh 更新了 `.cache` 的 `evaluation.json`（实测 dividends_paid 已变 `llm_supplement_present`+`canonical_unit=CNY`），但 CACHE_FIRST 读取层（`.cache/extracted.db`）未同步 → 仍读旧值。
-- force_refresh 重提取时还伴随 `bridge_config_to_env` 的 `MongoDB 数据库未初始化` error（独立进程无 DB 连接），可能影响写回。
+**实测佐证**：CACHE_FIRST（不 force_refresh、不传 codex token、不清缓存），仅设 deep-provider env 使 `include_llm` 为真 → `dividends_paid normalized_value` 立即读到。
 
-**解决方向（三选一，待定）**：
-1. 清下游 client 缓存（`tmp/.cache/runs/<company>_*` + `tmp/.cache/extracted.db`），让 client 用新版 extractor 重建。
-2. 上游重跑直接写下游 `cache_root`（统一 run 存储）。
-3. backend 配 `FINANCIAL_REPORT_FORCE_REFRESH=true` 跑一次预热后改回（注意全局影响 + 需 restart）。
+**修复**：解耦读取与跑 LLM——读取用 `config.include_llm_supplement`、跑新 LLM 用 `can_run_llm`（= `and llm_config_path`）；CACHE-miss 触发上游 `client.py:421` 的 `llm_config_missing` 断言时，经 adapter except 降级 provider-only 重试（限定 reason 白名单、不吞第二次错误）。
+
+**历史背景（非根因，保留供参考）**：下游 client cache_root（`tmp/.cache`）与上游 operator 重跑（`tmp/runs/`）确实是两套独立 run 存储、不自动同步；force_refresh 会更新 `.cache/evaluation.json`。这些是真实的缓存机制，但**不是**本问题的根因——问题在 `include_llm` 过滤，与缓存是否同步无关。原列的「清缓存 / 统一 cache_root / force_refresh 预热」三方向因此**均不解决本问题**（详见 spec 的方案评估）。
 
 > 注：force_refresh 重提取走 codex LLM，需 DB 里有可用 codex 订阅 token（见 §4.2）。
 
