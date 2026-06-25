@@ -152,6 +152,17 @@ pytest tests/test_unified_news_tool.py::TestX::test_y   # one case
 
 The default `addopts` skips `test_server_config` and `test_stock_codes` by name — they require a live server / network and fail in CI.
 
+**Running tests inside Docker (the practical default for dev).** The local host often lacks deps (`pymongo`, `tenacity`, …) that only the container has, so run the suite inside the backend container rather than on the host:
+
+```bash
+docker exec -w /app tradingagents-backend python -m pytest tests/unit/test_financial_report_adapter.py -v
+docker exec -w /app tradingagents-backend python -m pytest tests/unit/ -q     # one subtree
+```
+
+- Source dirs (`tradingagents/`, `app/`, `tests/`, `scripts/`) are bind-mounted, so edits take effect with **no rebuild**. To make the *running* backend pick up changed code, `docker restart tradingagents-backend` (restart, not rebuild). `docker exec` spawns a fresh process that already sees the new files.
+- A `docker exec` process does **not** get `config_bridge`'s injected LLM env vars or DB wiring — pure unit tests are fine, but anything that hits the graph/LLM needs the script to call `bridge_config_to_env()` itself (see `scripts/diagnose_value_extraction.py`).
+- pytest inside the container is a transient `pip install`; it's gone after a rebuild and may need reinstalling.
+
 ### Docker
 
 ```bash

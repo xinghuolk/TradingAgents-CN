@@ -183,8 +183,8 @@ def default_tax_rate(market: str, holding_channel: str) -> float:
     if normalized_market in {"A", "CN", "CHINA"} and normalized_channel == "long_term_domestic":
         return 0.0
     if normalized_market in {"HK", "HKG"}:
-        if normalized_channel == "direct_h_share":
-            return 0.28
+        # 港股通默认 20%（财税81号文）。28%（红筹未计提10%企税）依赖每期股息公告，
+        # 不在此静态默认表内；离岸渠道留待后续改造。
         return 0.20
     if normalized_market in {"US", "USA"} and normalized_channel == "w8ben":
         return 0.10
@@ -198,10 +198,30 @@ def _is_known_tax_rate_combination(market: str, holding_channel: str) -> bool:
     if normalized_market in {"A", "CN", "CHINA"}:
         return normalized_channel == "long_term_domestic"
     if normalized_market in {"HK", "HKG"}:
-        return normalized_channel in {"stock_connect", "direct_h_share"}
+        return normalized_channel == "stock_connect"
     if normalized_market in {"US", "USA"}:
         return normalized_channel == "w8ben"
     return False
+
+
+def _reliable_default_tax(market: str, holding_channel: str) -> tuple[float, str | None] | None:
+    """政策上可靠的默认 (market, 渠道) 组合 → (tax_rate, caveat)；否则 None。
+
+    命中表示即使 holding_channel 非显式也按政策默认给 reliable。caveat=None 表示
+    无条件可靠（A股长期持有 0%）；非 None 表示可靠但需披露渠道假设（港股通 20%）。
+    税率值复用 default_tax_rate，保证唯一来源（DRY）。
+    """
+    normalized_market = _normalize_market(market)
+    normalized_channel = (holding_channel or "").strip().lower()
+    if normalized_market in {"A", "CN", "CHINA"} and normalized_channel == "long_term_domestic":
+        return (default_tax_rate(market, holding_channel), None)
+    if normalized_market in {"HK", "HKG"} and normalized_channel == "stock_connect":
+        return (
+            default_tax_rate(market, holding_channel),
+            "tax_rate 按港股通渠道默认 20%；离岸账户或未计提10%企税的红筹股税率不同，"
+            "如适用请显式传 holding_channel",
+        )
+    return None
 
 
 def build_market_facts(
@@ -254,25 +274,37 @@ def build_market_facts(
     if _is_numeric(close_price):
         fields["close_price"] = _field("close_price", float(close_price), close_price_ref)
 
-    tax_rate_known = _is_known_tax_rate_combination(market, active_channel)
-    if not tax_rate_known:
-        tax_rate_reliability = "display_only"
-        tax_rate_caveat = f"tax_rate unknown for {market}:{active_channel}"
-        _append_caveat(caveats, tax_rate_caveat)
-    elif not channel_is_explicit:
-        tax_rate_reliability = "display_only"
-        tax_rate_caveat = (
-            f"tax_rate uses default holding_channel '{active_channel}' for {market}; "
-            "pass holding_channel explicitly to enable computation"
-        )
-        _append_caveat(caveats, tax_rate_caveat)
-    else:
+    reliable_default = _reliable_default_tax(market, active_channel)
+    if reliable_default is not None:
+        # A股 long_term_domestic / 港股通 stock_connect：非显式也 reliable（政策默认有依据）
+        tax_rate_value, tax_rate_caveat = reliable_default
         tax_rate_reliability = "reliable"
-        tax_rate_caveat = None
+        if tax_rate_caveat:
+            _append_caveat(caveats, tax_rate_caveat)
+    else:
+        # 到此 reliable_default 为 None：A股 long_term_domestic / 港股通 stock_connect 已被
+        # _reliable_default_tax 前置拦截，故下面 _is_known_tax_rate_combination 的 known=True
+        # 分支实际只对 US w8ben 可达；A/HK 在此恒为未知或非显式。
+        tax_rate_value = default_tax_rate(market, active_channel)
+        tax_rate_known = _is_known_tax_rate_combination(market, active_channel)
+        if not tax_rate_known:
+            tax_rate_reliability = "display_only"
+            tax_rate_caveat = f"tax_rate unknown for {market}:{active_channel}"
+            _append_caveat(caveats, tax_rate_caveat)
+        elif not channel_is_explicit:
+            tax_rate_reliability = "display_only"
+            tax_rate_caveat = (
+                f"tax_rate uses default holding_channel '{active_channel}' for {market}; "
+                "pass holding_channel explicitly to enable computation"
+            )
+            _append_caveat(caveats, tax_rate_caveat)
+        else:
+            tax_rate_reliability = "reliable"
+            tax_rate_caveat = None
 
     fields["tax_rate"] = _field(
         "tax_rate",
-        default_tax_rate(market, active_channel),
+        tax_rate_value,
         "holding_channel.default_tax_rate",
         caveat=tax_rate_caveat,
         reliability=tax_rate_reliability,
