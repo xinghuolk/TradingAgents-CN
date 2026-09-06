@@ -76,6 +76,17 @@ def _resolve_codex_token(user_id: str) -> str | None:
     os.environ["TRADINGAGENTS_DEEP_PROVIDER"] = "codex"
     os.environ["TRADINGAGENTS_DEEP_MODEL"] = "gpt-5.5"
     os.environ["FINANCIAL_REPORT_FORCE_REFRESH"] = "true"
+    # 注入全局 Toolkit._config，让 turtle 多期取数路径也能穿透 codex token：
+    # prepare_turtle_analysis_payload → get_turtle_report_facts 内部自建 adapter，
+    # 经 create_financial_report_adapter → resolve_injected_codex_token 从 Toolkit._config
+    # 取 deep_api_key。这是 backend analysis_service 的注入方式，probe 之前漏了，
+    # 导致历史期 force 提取拿不到 token、提取不出 LLM 字段。
+    if token:
+        try:
+            from tradingagents.agents.utils.agent_utils import Toolkit
+            Toolkit._config = dict(Toolkit._config or {}, deep_api_key=token)
+        except Exception as exc:  # noqa: BLE001
+            print(f"[warn] 注入 Toolkit._config 失败（多期取数可能拿不到 token）: {exc}")
     print(f"codex token resolved: {bool(token)}")
     return token
 
