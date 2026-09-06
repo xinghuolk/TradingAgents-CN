@@ -176,12 +176,15 @@ Common keys:
 
 Indexes:
 
-- unique import identity on `{user_id, account_alias, file_sha256}`;
+- unique completed import identity on `{user_id, account_alias, file_sha256}`;
 - source row lookup on `{user_id, account_alias, fact_key}`;
 - source row uniqueness on `{import_id, line_number}`;
 - snapshots on `{user_id, account_alias, observed_on, import_id}`;
+- unique events on `{user_id, account_alias, event_id}`;
 - events on `{user_id, account_alias, security_id}`;
-- postings on `{event_id, effective_date}`;
+- postings on `{user_id, account_alias, event_id, effective_date}`;
+- event evidence uniqueness on
+  `{user_id, account_alias, event_id, import_id, line_number, evidence_role}`;
 - import history on `{user_id, account_alias, imported_at}`.
 
 Source archive:
@@ -189,11 +192,56 @@ Source archive:
 - store exact uploaded bytes in a private server-side directory such as
   `data/private/real_portfolio/<user-id>/<account>/<sha256>.xls`;
 - create directories with private permissions where the platform supports it;
+- validate `account_alias` before path construction: reject empty strings,
+  `.`, `..`, path separators, backslashes, NUL bytes, and aliases that change
+  after stripping whitespace;
+- resolve the configured private root and candidate archive path, then reject
+  any path that escapes the private root;
+- reject symlink ancestors below the private root before writing;
+- write archives with exclusive-create semantics and verify an existing file's
+  bytes before treating it as already archived;
+- use `0700` directories and `0600` files where the platform supports POSIX
+  permissions;
 - never return archive paths, raw source rows, transaction numbers, contract
   numbers, or raw file bytes through normal APIs.
 
-MongoDB writes should be ordered and idempotent. On a duplicate import, return
-the existing import summary without duplicating rows or events.
+MongoDB publication must be explicitly resumable. The preferred implementation
+is a MongoDB session transaction covering import metadata, source rows,
+snapshots, event rebuild, postings, evidence, and import completion. If the
+deployment cannot guarantee transactions, the service must use a publication
+state machine:
+
+- `publishing`: archive exists or source facts are being written, but derived
+  data may be incomplete;
+- `imported`: source facts and all current derived data for the account were
+  rebuilt with the current `derived_version`;
+- `failed`: a previous publication attempt failed after a durable write.
+
+Duplicate handling only returns `status: duplicate` for an `imported` document
+whose `parser_version` and `derived_version` match the current code. A duplicate
+request that finds `publishing`, `failed`, or stale derived data must resume or
+rebuild idempotently before reporting success. Import documents record
+`started_at`, `completed_at`, `parser_version`, `derived_version`, and the last
+safe error class when publication fails.
+
+Derived event identity is account-scoped and deterministic. Port the
+`../stock` identity rules:
+
+- mainland trades and non-trade events use the non-null source fact key;
+- complete Hong Kong trade events use the canonical matching-group key, with
+  execution date, settlement date, and cash movement excluded so a later
+  settlement leg can complete an earlier partial execution;
+- unpairable Hong Kong rows without a usable contract use their own fact key so
+  unrelated anonymous legs never collide;
+- reverse-repo phases use contract fingerprint plus row date and cash-sign
+  phase, falling back to row fact key when the contract is unavailable;
+- snapshot events, if represented as events, use account, observed date, and
+  source-file SHA-256.
+
+The stored `event_id` is namespaced by `user_id` and `account_alias` before
+persistence. Rebuilding an account's derived events replaces that account's
+derived event/posting/evidence set without deleting source imports, source
+rows, or warning evidence.
 
 ## 8. Import Flow
 
@@ -210,16 +258,26 @@ Flow:
 2. Decode and detect format by content.
 3. If the file is a snapshot and `as_of` is missing, return a validation error
    that identifies the detected source type.
-4. Parse valid rows and collect row-level warnings.
-5. Reject only file-level failures: unsupported header, invalid encoding,
+4. If the file is a delivery statement and `as_of` is provided, reject the
+   request. Delivery statement dates come only from the source rows.
+5. Parse valid rows and collect row-level warnings.
+6. Reject only file-level failures: unsupported header, invalid encoding,
    header-only or all-unusable data, archive failure, or database write failure.
-6. On dry run, return parse summary and warnings without writing archive or
+7. On dry run, return parse summary and warnings without writing archive or
    MongoDB documents.
-7. On import, archive exact bytes, persist source evidence, persist snapshot
+8. On import, archive exact bytes, persist source evidence, persist snapshot
    rows when applicable, rebuild current events for the account, and return a
    concise summary.
-8. If database publication fails after creating a new archive file, remove that
+9. If database publication fails after creating a new archive file, remove that
    newly-created archive file.
+
+Snapshot duplicate behavior is strict. If the same snapshot bytes are already
+stored with the same `observed_on`, return `status: duplicate`. If the same
+snapshot bytes are submitted with a different `as_of`, return a sanitized
+conflict that includes the originally stored `observed_on` and does not create
+a second anchor. V1 does not provide manual correction or deletion, so a wrong
+snapshot date must not be silently replaced. Delivery-statement duplicate
+identity remains `{user_id, account_alias, file_sha256}`.
 
 Supported source types in V1:
 
@@ -338,7 +396,7 @@ The feature belongs inside the existing TradingAgents-CN shell.
 
 Use the existing `ok(...)` response envelope.
 
-Representative import response:
+Representative import `data` payload inside the existing `ok(...)` envelope:
 
 ```json
 {
