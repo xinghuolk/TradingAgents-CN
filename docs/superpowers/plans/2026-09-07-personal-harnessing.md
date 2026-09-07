@@ -342,11 +342,11 @@ Commit: `fix(cli): point console script at the Typer entrypoint`
 - Consumes: all prior tasks.
 - Produces: an evidence-backed current debt snapshot and completed implementation checklist.
 
-- [ ] **Step 1: Re-measure non-blocking debt**
+- [x] **Step 1: Re-measure non-blocking debt**
 
 Run frontend lint and type checking, broad pytest collection from a temporary working directory, the `tradingagents -> app` import scan, source-file line counts, and a local Markdown-link scan. Record command, date, count, and revisit trigger; do not repair the entire legacy backlog.
 
-- [ ] **Step 2: Run the complete local harness**
+- [x] **Step 2: Run the complete local harness**
 
 Run:
 
@@ -356,7 +356,7 @@ python scripts/harness.py
 
 Expected: structural checks, Python compilation, explicit pytest quick suite, and Vite bundle all exit 0 in less than two minutes on the maintainer's machine.
 
-- [ ] **Step 3: Verify history and worktree scope**
+- [x] **Step 3: Verify history and worktree scope**
 
 Run:
 
@@ -368,7 +368,7 @@ git log --format=fuller --reverse 1da73091..HEAD
 
 Expected: only the final documentation updates are uncommitted; every harnessing commit has Implementation and Verification bodies.
 
-- [ ] **Step 4: Mark completed plan items and commit**
+- [x] **Step 4: Mark completed plan items and commit**
 
 Check every completed box in this plan, update the documented command results, then commit:
 
