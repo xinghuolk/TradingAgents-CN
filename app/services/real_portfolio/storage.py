@@ -8,6 +8,7 @@ from dataclasses import dataclass, fields, is_dataclass, replace
 from datetime import UTC, date, datetime, time
 from decimal import Decimal
 from functools import cache
+from hashlib import sha256
 from typing import Union, get_args, get_origin, get_type_hints
 from uuid import uuid4
 
@@ -32,6 +33,7 @@ from app.services.real_portfolio.models import (
 )
 
 DERIVED_VERSION = "real-portfolio-v1"
+MAX_PAGE_SIZE = 200
 
 
 @dataclass(frozen=True, slots=True)
@@ -107,6 +109,18 @@ def _unavailable():
     return PortfolioError(
         "PORTFOLIO_STORAGE_UNAVAILABLE", "portfolio generation is incomplete"
     )
+
+
+def _validate_pagination(page: int, page_size: int) -> None:
+    if page < 1 or page_size < 1 or page_size > MAX_PAGE_SIZE:
+        raise ValueError(
+            f"pagination requires page >= 1 and page_size <= {MAX_PAGE_SIZE}"
+        )
+
+
+def _trade_ui_key(event_id: str) -> str:
+    value = f"real-portfolio-ui-v1\0{event_id}"
+    return sha256(value.encode("utf-8")).hexdigest()
 
 
 def _group_documents(documents, key):
@@ -730,8 +744,7 @@ class RealPortfolioRepository:
         page: int,
         page_size: int,
     ) -> Page[TradeItem]:
-        if page < 1 or page_size < 1:
-            raise ValueError("pagination must be positive")
+        _validate_pagination(page, page_size)
         scope = _scope(user_id, account_alias)
         account = await self._collection("accounts").find_one(scope)
         if not account or not account.get("active_derived_generation"):
@@ -769,7 +782,7 @@ class RealPortfolioRepository:
             quantities = [p.amount for p in event.postings if p.role == "security"]
             items.append(
                 TradeItem(
-                    event.event_id,
+                    _trade_ui_key(event.event_id),
                     event.trade_date,
                     event.settlement_date,
                     event.security,
@@ -784,7 +797,10 @@ class RealPortfolioRepository:
                         if p.role == "cash" and p.currency
                     ),
                     event.completeness,
-                    event.warnings,
+                    tuple(
+                        replace(warning, import_id=None, line_number=None)
+                        for warning in event.warnings
+                    ),
                 )
             )
         return Page(tuple(items), page, page_size, total)
@@ -792,8 +808,7 @@ class RealPortfolioRepository:
     async def list_imports(
         self, *, user_id: str, account_alias: str, page: int, page_size: int
     ) -> Page[ImportHistoryItem]:
-        if page < 1 or page_size < 1:
-            raise ValueError("pagination must be positive")
+        _validate_pagination(page, page_size)
         query = _scope(user_id, account_alias)
         collection = self._collection("imports")
         total = await collection.count_documents(query)

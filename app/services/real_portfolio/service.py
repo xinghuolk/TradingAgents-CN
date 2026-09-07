@@ -12,21 +12,49 @@ from uuid import uuid4
 from app.services.real_portfolio.archive import archive_portfolio_bytes
 from app.services.real_portfolio.errors import PortfolioError
 from app.services.real_portfolio.formats import PARSER_VERSION, parse_portfolio_file
+from app.services.real_portfolio.holdings import build_portfolio_view
 from app.services.real_portfolio.models import (
     ImportedFacts,
+    ImportHistoryItem,
     ImportSummary,
+    Page,
     ParsedPortfolioFile,
     ParseWarning,
+    PortfolioView,
     ReconciledPortfolio,
+    SnapshotAnchor,
+    TradeFilters,
+    TradeItem,
 )
+from app.services.real_portfolio.quotes import attach_latest_quotes, load_latest_quotes
 from app.services.real_portfolio.reconciliation import reconcile_imports
-from app.services.real_portfolio.storage import DERIVED_VERSION, RealPortfolioRepository
+from app.services.real_portfolio.storage import (
+    DERIVED_VERSION,
+    MAX_PAGE_SIZE,
+    RealPortfolioRepository,
+)
 
 if TYPE_CHECKING:
     from app.services.unified_stock_service import UnifiedStockService
 
 _import_locks: dict[tuple[str, str], asyncio.Lock] = {}
 logger = logging.getLogger(__name__)
+
+
+def latest_full_snapshot_date(snapshots: Sequence[SnapshotAnchor]) -> date:
+    full_dates = [
+        snapshot.observed_on for snapshot in snapshots if snapshot.full_snapshot
+    ]
+    if not full_dates:
+        raise PortfolioError("NO_FULL_SNAPSHOT", "no full portfolio snapshot")
+    return max(full_dates)
+
+
+def _validate_pagination(page: int, page_size: int) -> None:
+    if page < 1 or page_size < 1 or page_size > MAX_PAGE_SIZE:
+        raise ValueError(
+            f"pagination requires page >= 1 and page_size <= {MAX_PAGE_SIZE}"
+        )
 
 
 def account_import_lock(user_id: str, account_alias: str) -> asyncio.Lock:
@@ -128,6 +156,45 @@ class RealPortfolioService:
         self.repository = repository
         self.archive_root = Path(archive_root)
         self.quote_service = quote_service
+
+    async def get_positions(self, *, user_id: str, as_of: date | None) -> PortfolioView:
+        portfolio = await self.repository.load_active_portfolio(
+            user_id=user_id, account_alias="main"
+        )
+        requested = as_of or latest_full_snapshot_date(portfolio.snapshots)
+        view = build_portfolio_view(portfolio, requested)
+        quotes = await load_latest_quotes(
+            self.quote_service, tuple(holding.security for holding in view.holdings)
+        )
+        return attach_latest_quotes(view, quotes)
+
+    async def list_trades(
+        self,
+        *,
+        user_id: str,
+        filters: TradeFilters,
+        page: int,
+        page_size: int,
+    ) -> Page[TradeItem]:
+        _validate_pagination(page, page_size)
+        return await self.repository.list_active_trades(
+            user_id=user_id,
+            account_alias="main",
+            filters=filters,
+            page=page,
+            page_size=page_size,
+        )
+
+    async def list_imports(
+        self, *, user_id: str, page: int, page_size: int
+    ) -> Page[ImportHistoryItem]:
+        _validate_pagination(page, page_size)
+        return await self.repository.list_imports(
+            user_id=user_id,
+            account_alias="main",
+            page=page,
+            page_size=page_size,
+        )
 
     async def preview_file(
         self, *, user_id: str, filename: str, content: bytes, as_of: date | None
