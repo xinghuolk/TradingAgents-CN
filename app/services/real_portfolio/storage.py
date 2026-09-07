@@ -266,8 +266,13 @@ class RealPortfolioRepository:
         await self._collection("source_rows").delete_many(
             {**query, "line_number": {"$nin": [row.line_number for row in parsed.rows]}}
         )
-        warning_query = {**query, "warning_scope": "parse"}
-        await self._collection("warnings").delete_many(warning_query)
+        # Published generations may still reference an earlier import-owned revision.
+        warning_revision = uuid4().hex
+        warning_query = {
+            **query,
+            "warning_scope": "parse",
+            "warning_revision": warning_revision,
+        }
         warnings = [
             replace(warning, import_id=str(import_doc["import_id"]))
             for warning in parsed.warnings
@@ -291,6 +296,7 @@ class RealPortfolioRepository:
                 "$set": {
                     "parsed_metadata": metadata,
                     "facts_complete": True,
+                    "warning_revision": warning_revision,
                     "parser_version": parsed.parser_version,
                     "row_count": len(parsed.rows),
                     "usable_rows": sum(row.usable for row in parsed.rows),
@@ -327,7 +333,13 @@ class RealPortfolioRepository:
             )
             warnings = (
                 await self._collection("warnings")
-                .find({**query, "warning_scope": "parse"})
+                .find(
+                    {
+                        **query,
+                        "warning_scope": "parse",
+                        "warning_revision": doc["warning_revision"],
+                    }
+                )
                 .sort([("warning_index", 1)])
                 .to_list(length=None)
             )
@@ -351,14 +363,19 @@ class RealPortfolioRepository:
             )
         return tuple(result)
 
-    async def _parse_warnings(self, scope, import_ids):
+    async def _parse_warnings(self, scope, warning_revisions):
+        if not warning_revisions:
+            return ()
         documents = (
             await self._collection("warnings")
             .find(
                 {
                     **scope,
                     "warning_scope": "parse",
-                    "import_id": {"$in": list(import_ids)},
+                    "$or": [
+                        {"import_id": import_id, "warning_revision": revision}
+                        for import_id, revision in warning_revisions.items()
+                    ],
                 }
             )
             .to_list(length=None)
@@ -437,7 +454,23 @@ class RealPortfolioRepository:
                 }
                 for index, ref in enumerate(event.evidence)
             )
-        parse_warnings = set(await self._parse_warnings(scope, portfolio.import_ids))
+        imports = (
+            await self._collection("imports")
+            .find(
+                {
+                    **scope,
+                    "import_id": {"$in": list(portfolio.import_ids)},
+                    "facts_complete": True,
+                }
+            )
+            .to_list(length=None)
+        )
+        warning_revisions = {
+            doc["import_id"]: doc["warning_revision"] for doc in imports
+        }
+        if set(warning_revisions) != set(portfolio.import_ids):
+            raise _unavailable()
+        parse_warnings = set(await self._parse_warnings(scope, warning_revisions))
         documents["warnings"] = [
             {**_encode(w), **query, "warning_scope": "derived"}
             for w in portfolio.warnings
@@ -466,6 +499,7 @@ class RealPortfolioRepository:
                 "$set": {
                     "pending_generation_manifest": _encode(manifest),
                     "pending_reported_coverage": _encode(portfolio.reported_coverage),
+                    "pending_warning_revisions": warning_revisions,
                 }
             },
             upsert=True,
@@ -505,6 +539,7 @@ class RealPortfolioRepository:
                     "active_derived_generation": manifest.generation,
                     "active_generation_manifest": _encode(manifest),
                     "active_reported_coverage": account["pending_reported_coverage"],
+                    "active_warning_revisions": account["pending_warning_revisions"],
                 }
             },
         )
@@ -518,6 +553,16 @@ class RealPortfolioRepository:
             return None
         manifest = _decode(GenerationManifest, account["active_generation_manifest"])
         if import_id not in manifest.import_ids:
+            return None
+        imported = await self._collection("imports").find_one(
+            {**scope, "import_id": import_id}
+        )
+        if (
+            not imported
+            or not imported.get("facts_complete")
+            or imported.get("warning_revision")
+            != account["active_warning_revisions"].get(import_id)
+        ):
             return None
         await self._validate_generation(scope, manifest)
         return manifest.generation
@@ -630,9 +675,9 @@ class RealPortfolioRepository:
             .find({**query, "warning_scope": "derived"})
             .to_list(length=None)
         )
-        all_warnings = set(await self._parse_warnings(scope, manifest.import_ids)) | {
-            _decode(ParseWarning, w) for w in warnings
-        }
+        all_warnings = set(
+            await self._parse_warnings(scope, account["active_warning_revisions"])
+        ) | {_decode(ParseWarning, w) for w in warnings}
         return ReconciledPortfolio(
             snapshots,
             await self._load_events(query, events),

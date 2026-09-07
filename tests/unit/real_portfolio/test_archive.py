@@ -87,3 +87,14 @@ def test_existing_private_archive_permissions_are_restricted(tmp_path):
     assert not reused.created
     assert stat.S_IMODE(reused.path.stat().st_mode) == 0o600
     assert stat.S_IMODE(private.stat().st_mode) == 0o700
+
+
+def test_self_referential_archive_symlink_has_safe_error(tmp_path):
+    result = archive_portfolio_bytes(tmp_path, "user-1", b"exact")
+    result.path.unlink()
+    result.path.symlink_to(result.path.name)
+    with pytest.raises(PortfolioError) as captured:
+        archive_portfolio_bytes(tmp_path, "user-1", b"exact")
+    assert captured.value.code == "PORTFOLIO_STORAGE_UNAVAILABLE"
+    assert str(tmp_path) not in str(captured.value)
+    assert result.path.is_symlink()

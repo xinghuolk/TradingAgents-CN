@@ -78,7 +78,7 @@ def archive_portfolio_bytes(root: Path, user_id: str, content: bytes) -> Archive
         finally:
             os.close(descriptor)
         return ArchiveResult(path, created)
-    except OSError:
+    except (OSError, RuntimeError):
         if created:
             try:
                 os.unlink(filename, dir_fd=directory)

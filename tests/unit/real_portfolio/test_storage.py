@@ -409,6 +409,85 @@ async def test_parse_warning_order_survives_mongo_query_order(database):
     )
 
 
+async def test_active_warning_revision_survives_failed_and_completed_replacement(
+    database,
+):
+    repo = RealPortfolioRepository(database)
+    parsed = parse_portfolio_file(
+        delivery_bytes(delivery_row(), delivery_row(成交数量="bad"))
+    )
+    doc = await facts(repo, parsed)
+    old, _ = await publish(repo, doc, "old-warning-revision")
+    await repo.mark_imported(
+        import_id=doc["import_id"],
+        generation="old-warning-revision",
+        summary=summary(parsed),
+    )
+    replacement = replace(
+        parsed,
+        warnings=(
+            replace(
+                parsed.warnings[0], message="reparsed warning", affects_quantity=False
+            ),
+        ),
+    )
+    warnings = database["real_portfolio_warnings"]
+
+    async def fail_after_first_warning(documents):
+        await warnings._insert_one(documents[0])
+        raise OSError("injected partial warning replacement")
+
+    warnings.insert_many.side_effect = fail_after_first_warning
+    with pytest.raises(OSError):
+        await repo.replace_import_facts(
+            user_id="user-1", account_alias="main", import_doc=doc, parsed=replacement
+        )
+    assert (
+        await repo.load_active_portfolio(user_id="user-1", account_alias="main") == old
+    )
+    assert (
+        await repo.find_active_generation_for_import(
+            user_id="user-1", account_alias="main", import_id=doc["import_id"]
+        )
+        is None
+    )
+    warnings.insert_many.side_effect = warnings._insert_many
+    await repo.mark_failed(import_id=doc["import_id"], error_class="OSError")
+    await facts(repo, replacement)
+    assert (
+        await repo.load_active_portfolio(user_id="user-1", account_alias="main") == old
+    )
+    assert (
+        await repo.find_active_generation_for_import(
+            user_id="user-1", account_alias="main", import_id=doc["import_id"]
+        )
+        is None
+    )
+    new = await rebuild(repo, doc)
+    assert new.warnings[0].message == "reparsed warning"
+    manifest = await repo.write_generation(
+        user_id="user-1",
+        account_alias="main",
+        generation="new-warning-revision",
+        portfolio=new,
+    )
+    assert (
+        await repo.load_active_portfolio(user_id="user-1", account_alias="main") == old
+    )
+    await repo.activate_generation(
+        user_id="user-1", account_alias="main", manifest=manifest
+    )
+    assert (
+        await repo.load_active_portfolio(user_id="user-1", account_alias="main") == new
+    )
+    assert (
+        await repo.find_active_generation_for_import(
+            user_id="user-1", account_alias="main", import_id=doc["import_id"]
+        )
+        == "new-warning-revision"
+    )
+
+
 async def test_copy_then_switch_round_trips_generations_and_warning_scopes(database):
     repo = RealPortfolioRepository(database)
     parsed = parse_portfolio_file(snapshot_bytes(), as_of=date(2026, 9, 1))
