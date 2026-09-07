@@ -383,6 +383,34 @@ const routes: RouteRecordRaw[] = [
   },
 
   {
+    path: '/portfolio',
+    name: 'Portfolio',
+    component: () => import('@/layouts/BasicLayout.vue'),
+    redirect: '/portfolio/real-holdings',
+    meta: { title: '投资组合', icon: 'Wallet', requiresAuth: true },
+    children: [
+      {
+        path: 'real-holdings',
+        name: 'RealHoldings',
+        component: () => import('@/views/Portfolio/RealHoldings.vue'),
+        meta: { title: '真实持仓', requiresAuth: true }
+      },
+      {
+        path: 'real-transactions',
+        name: 'RealTransactions',
+        component: () => import('@/views/Portfolio/RealTransactions.vue'),
+        meta: { title: '真实成交记录', requiresAuth: true }
+      },
+      {
+        path: 'imports',
+        name: 'PortfolioImports',
+        component: () => import('@/views/Portfolio/ImportHistory.vue'),
+        meta: { title: '导入记录', requiresAuth: true }
+      }
+    ]
+  },
+
+  {
     path: '/:pathMatch(.*)*',
     name: 'NotFound',
     component: () => import('@/views/Error/404.vue'),
