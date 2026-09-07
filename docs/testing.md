@@ -50,11 +50,13 @@ is recorded in [technical debt](technical-debt.md).
 ## Frontend Checks
 
 The actual deployed bundle uses Vite without the legacy type-check pre-step. With
-frontend dependencies already installed, run:
+frontend dependencies already installed, run the same package script as Docker:
 
 ```bash
-./frontend/node_modules/.bin/vite build --config frontend/vite.config.ts
+npm --prefix frontend run bundle
 ```
 
-Lint and type checking are useful diagnostics but currently report existing debt.
-They must become blocking only after their baselines are green.
+`npm --prefix frontend run lint` is non-mutating, and
+`npm --prefix frontend run type-check` only checks types. Both are useful diagnostics
+but currently report existing debt. They must become blocking only after their
+baselines are green.

@@ -198,7 +198,7 @@ Commit: `fix(harness): isolate quick Python validation`
 - Consumes: checked-in Vite dependency and existing `frontend/node_modules` for local verification.
 - Produces: `npm --prefix frontend run bundle` as the canonical production bundle command; `npm --prefix frontend run lint` as a non-mutating diagnostic.
 
-- [ ] **Step 1: Demonstrate the current command failures**
+- [x] **Step 1: Demonstrate the current command failures**
 
 Run:
 
@@ -209,15 +209,15 @@ npm --prefix frontend run build
 
 Expected: lint fails during configuration because `.gitignore` or `@rushstack/eslint-patch` is unavailable; build fails during existing `vue-tsc` errors.
 
-- [ ] **Step 2: Add a bundle script and repair lint invocation**
+- [x] **Step 2: Add a bundle script and repair lint invocation**
 
 Add `"bundle": "vite build"`; remove `--fix` and the missing `.gitignore` argument from `lint`; remove the undeclared `@rushstack/eslint-patch` import when ESLint resolves plugins normally from `frontend/node_modules`.
 
-- [ ] **Step 3: Point deployment paths at the package script**
+- [x] **Step 3: Point deployment paths at the package script**
 
 Replace direct `yarn vite build` calls with `yarn bundle`, keeping Yarn frozen installs unchanged. Document `bundle` as blocking and `lint` / `type-check` as diagnostic with current debt.
 
-- [ ] **Step 4: Verify bundle success and diagnostic semantics**
+- [x] **Step 4: Verify bundle success and diagnostic semantics**
 
 Run:
 
@@ -229,7 +229,7 @@ git diff --check
 
 Expected: bundle exits 0. Lint reaches source diagnostics without changing tracked files; its non-zero status remains recorded debt.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 Commit: `fix(frontend): make local quality commands deterministic`
 

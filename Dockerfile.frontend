@@ -29,8 +29,8 @@ COPY frontend/. ./
 COPY assets /app/frontend/public/assets
 COPY docs /app/docs
 
-# 构建生产版本（跳过类型检查以加快构建速度）
-RUN yarn vite build
+# 构建生产版本（跳过尚未清零的存量类型错误）
+RUN yarn bundle
 
 # 运行阶段：使用Nginx提供静态文件服务
 FROM nginx:alpine AS runtime

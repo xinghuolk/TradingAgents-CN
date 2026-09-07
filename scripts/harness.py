@@ -73,11 +73,6 @@ def validate_repository(root: Path) -> list[str]:
     return errors
 
 
-def _vite_executable(root: Path) -> Path:
-    suffix = ".cmd" if os.name == "nt" else ""
-    return root / "frontend" / "node_modules" / ".bin" / f"vite{suffix}"
-
-
 def build_checks(root: Path, temp_dir: Path) -> list[Check]:
     """Build the ordered command list for the full quick gate."""
     isolated_env = {
@@ -117,8 +112,8 @@ def build_checks(root: Path, temp_dir: Path) -> list[Check]:
         ),
         Check(
             name="Frontend production bundle",
-            command=(str(_vite_executable(root)), "build"),
-            cwd=root / "frontend",
+            command=("npm", "--prefix", "frontend", "run", "bundle"),
+            cwd=root,
         ),
     ]
 

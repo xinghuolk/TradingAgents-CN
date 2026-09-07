@@ -56,14 +56,22 @@ Until the unified harness lands, the service-free Python baseline is:
 python -m pytest -c tests/pytest.ini tests/config tests/unit/real_portfolio -q
 ```
 
-The deployed frontend bundle can be checked from the repository root with:
+The deployed frontend bundle can be checked from the repository root with the package
+script shared by the harness and Docker:
 
 ```bash
-./frontend/node_modules/.bin/vite build --config frontend/vite.config.ts
+npm --prefix frontend run bundle
 ```
 
-Frontend lint and type checking are diagnostic today because known legacy errors
-remain. Do not run formatting or lint with an automatic fix flag as a general gate.
+Frontend lint and type checking are non-mutating diagnostics today because known
+legacy errors remain:
+
+```bash
+npm --prefix frontend run lint
+npm --prefix frontend run type-check
+```
+
+Do not run formatting or lint with an automatic fix flag as a general gate.
 See [testing](testing.md) for test selection and [technical debt](technical-debt.md)
 for the measured baseline.
 
