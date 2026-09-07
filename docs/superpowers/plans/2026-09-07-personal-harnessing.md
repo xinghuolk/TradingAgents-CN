@@ -139,11 +139,11 @@ Commit: `feat(harness): add deterministic repository checks`
 - Consumes: `TRADINGAGENTS_LOG_DIR` and the harness `Check.env` field.
 - Produces: TOML logging configuration whose file, error, and structured handler directories honor an explicit environment override.
 
-- [ ] **Step 1: Write the failing logging override test**
+- [x] **Step 1: Write the failing logging override test**
 
 Instantiate `TradingAgentsLogger` from a temporary current directory containing a TOML file with `directory = "./logs"`, set `TRADINGAGENTS_LOG_DIR` to another temporary path, and assert all enabled file-producing handlers use the override path.
 
-- [ ] **Step 2: Verify the current TOML conversion ignores the override**
+- [x] **Step 2: Verify the current TOML conversion ignores the override**
 
 Run:
 
@@ -153,11 +153,11 @@ python -m pytest -c tests/pytest.ini tests/harness/test_logging_override.py -q
 
 Expected: FAIL because handler directories remain `./logs`.
 
-- [ ] **Step 3: Apply the override after TOML conversion**
+- [x] **Step 3: Apply the override after TOML conversion**
 
 Add a small `_apply_environment_overrides(config)` helper to `TradingAgentsLogger`; when `TRADINGAGENTS_LOG_DIR` is set, replace `directory` for the `file`, `error`, and `structured` handlers that exist. Call it for both TOML and built-in configuration before handlers are created.
 
-- [ ] **Step 4: Add the explicit quick pytest selection**
+- [x] **Step 4: Add the explicit quick pytest selection**
 
 Set a temporary log directory for the pytest check and select exactly:
 
@@ -167,7 +167,7 @@ tests/unit/real_portfolio
 tests/harness
 ```
 
-- [ ] **Step 5: Verify and commit**
+- [x] **Step 5: Verify and commit**
 
 Run:
 

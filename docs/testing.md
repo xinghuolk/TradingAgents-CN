@@ -24,8 +24,10 @@ python -m pytest -c tests/pytest.ini tests/config tests/unit/real_portfolio -q
 ```
 
 This explicit selection is the current green baseline. It does not need MongoDB,
-Redis, network access, market-data credentials, or LLM credentials. New harness
-regression tests will join this selection when the unified command is implemented.
+Redis, network access, market-data credentials, or LLM credentials. Harness regression
+tests are included in this selection.
+The harness sets `TRADINGAGENTS_LOG_DIR` to a temporary directory, so test imports do
+not depend on or modify the repository's runtime logs.
 
 For one change, run the closest test file or node first:
 
