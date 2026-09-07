@@ -1,4 +1,5 @@
 from datetime import UTC, date, datetime
+from collections import defaultdict
 from decimal import Decimal
 from pathlib import Path
 from unittest.mock import AsyncMock
@@ -24,7 +25,46 @@ from app.services.real_portfolio.models import (
     TradeItem,
 )
 from app.services.real_portfolio.service import RealPortfolioService
-from tests.unit.real_portfolio.fixtures import snapshot_bytes
+from tests.unit.real_portfolio.fixtures import snapshot_bytes, snapshot_row
+from tests.unit.real_portfolio.test_storage import MemoryCollection
+from app.services.real_portfolio.storage import RealPortfolioRepository
+
+
+@pytest.mark.parametrize("as_of", [None, "2026-09-03"])
+async def test_no_usable_snapshot_is_a_safe_not_found(tmp_path, as_of):
+    service = RealPortfolioService(
+        RealPortfolioRepository(defaultdict(MemoryCollection)), tmp_path
+    )
+    if as_of:
+        await service.import_file(
+            user_id="user-1",
+            filename="partial.xls",
+            content=snapshot_bytes(snapshot_row(), snapshot_row(证券代码="bad")),
+            as_of=date(2026, 9, 1),
+        )
+    async with create_test_client(create_test_app(service)) as client:
+        response = await client.get(
+            "/api/real-portfolio/positions", params={"as_of": as_of} if as_of else {}
+        )
+    assert response.status_code == 404
+    assert response.json()["detail"] == {
+        "code": "NO_FULL_SNAPSHOT",
+        "message": "no full portfolio snapshot",
+    }
+
+
+async def test_unexpected_failure_logs_only_exception_class(caplog):
+    private = "/private/archive/SYNTHETIC-TRANSACTION-928373/contract-293847"
+    service = AsyncMock(spec=RealPortfolioService)
+    service.get_positions.side_effect = RuntimeError(private)
+    with caplog.at_level("WARNING", logger=real_portfolio.__name__):
+        async with create_test_client(create_test_app(service)) as client:
+            response = await client.get("/api/real-portfolio/positions")
+    assert response.status_code == 500
+    assert private not in response.text
+    assert private not in caplog.text
+    assert "Traceback" not in caplog.text
+    assert "RuntimeError" in caplog.text
 
 
 def create_test_app(
@@ -40,9 +80,9 @@ def create_test_app(
     async def service_dependency() -> AsyncMock:
         return service
 
-    application.dependency_overrides[real_portfolio.get_real_portfolio_service] = (
-        service_dependency
-    )
+    application.dependency_overrides[
+        real_portfolio.get_real_portfolio_service
+    ] = service_dependency
     if authenticated:
 
         async def authenticated_user() -> dict[str, object]:
@@ -398,17 +438,23 @@ async def test_index_readiness_gates_imports_but_not_existing_portfolio_reads() 
         completeness="incomplete",
         warnings=(),
     )
+    service.list_trades.return_value = Page((), 1, 50, 0)
+    service.list_imports.return_value = Page((), 1, 50, 0)
 
     async with create_test_client(
         create_test_app(service, import_ready=False)
     ) as client:
         positions = await client.get("/api/real-portfolio/positions")
+        trades = await client.get("/api/real-portfolio/trades")
+        history = await client.get("/api/real-portfolio/imports")
         imported = await client.post(
             "/api/real-portfolio/import",
             files={"file": ("position.xls", snapshot_bytes())},
         )
 
     assert positions.status_code == 200
+    assert trades.status_code == history.status_code == 200
+    assert trades.json()["data"]["items"] == history.json()["data"]["items"] == []
     assert imported.status_code == 503
     assert imported.json()["detail"] == {
         "code": "PORTFOLIO_STORAGE_UNAVAILABLE",

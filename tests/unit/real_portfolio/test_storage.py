@@ -238,6 +238,11 @@ async def test_required_indexes_are_named_and_protect_identity(database):
             (("user_id", "account_alias", "fact_key"), False),
             (("import_id", "line_number"), True),
         ],
+        "source_revisions": [(("import_id", "source_revision"), True)],
+        "source_row_revisions": [
+            (("import_id", "source_revision", "line_number"), True),
+            (("user_id", "account_alias", "fact_key"), False),
+        ],
         "snapshots": [
             (
                 (
@@ -352,6 +357,10 @@ async def test_source_records_round_trip_and_replace_idempotently(database, pars
     rows = database["real_portfolio_source_rows"].documents
     assert len(rows) == len(parsed.rows)
     assert "成交编号" not in repr(rows) and "合同编号" not in repr(rows)
+    revisions = database["real_portfolio_source_row_revisions"].documents
+    assert len(revisions) == 2 * len(parsed.rows)
+    assert len({row["source_revision"] for row in revisions}) == 2
+    assert "成交编号" not in repr(revisions) and "合同编号" not in repr(revisions)
     assert all(
         d["warning_scope"] == "parse"
         for d in database["real_portfolio_warnings"].documents
@@ -361,6 +370,7 @@ async def test_source_records_round_trip_and_replace_idempotently(database, pars
 async def test_rebuild_excludes_incomplete_current_and_other_failed_imports(database):
     repo = RealPortfolioRepository(database)
     completed = await facts(repo)
+    await publish(repo, completed, "old")
     await repo.mark_imported(
         import_id=completed["import_id"],
         generation="old",
@@ -492,6 +502,7 @@ async def test_copy_then_switch_round_trips_generations_and_warning_scopes(datab
     repo = RealPortfolioRepository(database)
     parsed = parse_portfolio_file(snapshot_bytes(), as_of=date(2026, 9, 1))
     snapshot = await facts(repo, parsed)
+    await publish(repo, snapshot, "initial")
     await repo.mark_imported(
         import_id=snapshot["import_id"], generation="initial", summary=summary(parsed)
     )
@@ -544,7 +555,7 @@ async def test_copy_then_switch_round_trips_generations_and_warning_scopes(datab
         await repo.find_active_generation_for_import(
             user_id="user-1", account_alias="main", import_id=delivery["import_id"]
         )
-        is None
+        == "generation-2"
     )
 
 

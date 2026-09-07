@@ -49,6 +49,7 @@ ERROR_STATUS = {
     "DELIVERY_AS_OF_NOT_ALLOWED": 400,
     "SNAPSHOT_DATE_CONFLICT": 409,
     "NO_USABLE_ROWS": 400,
+    "NO_FULL_SNAPSHOT": 404,
     "UPLOAD_TOO_LARGE": 413,
     "PORTFOLIO_STORAGE_UNAVAILABLE": 503,
 }
@@ -83,7 +84,7 @@ def _internal_error() -> HTTPException:
 def _portfolio_error(error: PortfolioError) -> HTTPException:
     status_code = ERROR_STATUS.get(error.code)
     if status_code is None:
-        logger.warning("Unmapped real portfolio error: %s", error.code)
+        logger.warning("Unmapped real portfolio error (PortfolioError)")
         return _internal_error()
 
     detail = {"code": error.code, "message": error.message}
@@ -100,7 +101,7 @@ async def _call_service(operation: Awaitable[_T]) -> _T:
     except PortfolioError as error:
         raise _portfolio_error(error) from None
     except Exception as error:
-        logger.exception(
+        logger.error(
             "Unexpected real portfolio service failure (%s)", type(error).__name__
         )
         raise _internal_error() from None

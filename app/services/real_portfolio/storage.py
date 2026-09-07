@@ -16,6 +16,7 @@ from pymongo import ReturnDocument
 from pymongo.errors import DuplicateKeyError
 
 from app.services.real_portfolio.errors import PortfolioError
+from app.services.real_portfolio.decimal_math import exact_sum
 from app.services.real_portfolio.models import (
     CurrencyMovement,
     ImportedFacts,
@@ -140,6 +141,19 @@ async def ensure_real_portfolio_indexes(db) -> None:
         ("source_rows", "source_fact", (*account, "fact_key"), False),
         ("source_rows", "source_row_identity", ("import_id", "line_number"), True),
         (
+            "source_revisions",
+            "source_revision_identity",
+            ("import_id", "source_revision"),
+            True,
+        ),
+        (
+            "source_row_revisions",
+            "source_revision_row_identity",
+            ("import_id", "source_revision", "line_number"),
+            True,
+        ),
+        ("source_row_revisions", "source_revision_fact", (*account, "fact_key"), False),
+        (
             "snapshots",
             "snapshot_generation",
             (*generation, "observed_on", "import_id"),
@@ -152,6 +166,12 @@ async def ensure_real_portfolio_indexes(db) -> None:
             True,
         ),
         ("events", "event_identity", (*generation, "event_id"), True),
+        (
+            "events",
+            "event_operation_date",
+            (*generation, "operation_date", "event_id"),
+            False,
+        ),
         (
             "postings",
             "event_postings",
@@ -260,11 +280,14 @@ class RealPortfolioRepository:
                 "$inc": {"attempt": 1},
             },
         )
+        source_revision = uuid4().hex
+        revision_query = {**query, "source_revision": source_revision}
         observations = {
             obs.evidence.line_number: obs for obs in parsed.delivery_observations
         }
+        rows = []
         for index, row in enumerate(parsed.rows):
-            document = {**query, **_encode(row), "row_index": index}
+            document = {**revision_query, **_encode(row), "row_index": index}
             if row.line_number in observations:
                 document["observation"] = _encode(observations[row.line_number])
             # Position slots preserve parser order without embedding a whole file in an import.
@@ -272,14 +295,21 @@ class RealPortfolioRepository:
                 document["snapshot_position"] = _encode(
                     parsed.snapshot_positions[index]
                 )
-            await self._collection("source_rows").replace_one(
+            rows.append(document)
+            # The registry owns row identity only; payloads live in immutable revisions.
+            await self._collection("source_rows").update_one(
                 {**query, "line_number": row.line_number},
-                document,
+                {
+                    "$setOnInsert": {
+                        **query,
+                        "line_number": row.line_number,
+                        "fact_key": row.fact_key,
+                    }
+                },
                 upsert=True,
             )
-        await self._collection("source_rows").delete_many(
-            {**query, "line_number": {"$nin": [row.line_number for row in parsed.rows]}}
-        )
+        if rows:
+            await self._collection("source_row_revisions").insert_many(rows)
         # Published generations may still reference an earlier import-owned revision.
         warning_revision = uuid4().hex
         warning_query = {
@@ -304,12 +334,24 @@ class RealPortfolioRepository:
             if key
             not in {"rows", "snapshot_positions", "delivery_observations", "warnings"}
         }
+        # This completion record is inserted only after every row and warning is durable.
+        await self._collection("source_revisions").insert_one(
+            {
+                **revision_query,
+                "import_sequence": stored["import_sequence"],
+                "parsed_metadata": metadata,
+                "row_count": len(rows),
+                "warning_revision": warning_revision,
+                "warning_count": len(warnings),
+            }
+        )
         await imports.update_one(
             query,
             {
                 "$set": {
                     "parsed_metadata": metadata,
                     "facts_complete": True,
+                    "source_revision": source_revision,
                     "warning_revision": warning_revision,
                     "parser_version": parsed.parser_version,
                     "row_count": len(parsed.rows),
@@ -324,23 +366,21 @@ class RealPortfolioRepository:
         self, *, user_id: str, account_alias: str, current_import_id: str
     ) -> tuple[ImportedFacts, ...]:
         scope = _scope(user_id, account_alias)
-        documents = (
-            await self._collection("imports")
-            .find(
-                {
-                    **scope,
-                    "facts_complete": True,
-                    "$or": [{"status": "imported"}, {"import_id": current_import_id}],
-                }
-            )
-            .sort([("import_sequence", 1)])
-            .to_list(length=None)
+        account = await self._collection("accounts").find_one(scope) or {}
+        revisions = dict(account.get("active_source_revisions", {}))
+        current = await self._collection("imports").find_one(
+            {**scope, "import_id": current_import_id}
         )
+        if current and current.get("facts_complete"):
+            revisions[current_import_id] = current["source_revision"]
         result = []
-        for doc in documents:
-            query = {**scope, "import_id": doc["import_id"]}
+        for import_id, revision in sorted(revisions.items()):
+            query = {**scope, "import_id": import_id, "source_revision": revision}
+            doc = await self._collection("source_revisions").find_one(query)
+            if not doc:
+                raise _unavailable()
             rows = (
-                await self._collection("source_rows")
+                await self._collection("source_row_revisions")
                 .find(query)
                 .sort([("row_index", 1)])
                 .to_list(length=None)
@@ -349,7 +389,8 @@ class RealPortfolioRepository:
                 await self._collection("warnings")
                 .find(
                     {
-                        **query,
+                        **scope,
+                        "import_id": import_id,
                         "warning_scope": "parse",
                         "warning_revision": doc["warning_revision"],
                     }
@@ -357,6 +398,8 @@ class RealPortfolioRepository:
                 .sort([("warning_index", 1)])
                 .to_list(length=None)
             )
+            if len(rows) != doc["row_count"] or len(warnings) != doc["warning_count"]:
+                raise _unavailable()
             data = {
                 **doc["parsed_metadata"],
                 "rows": rows,
@@ -373,9 +416,12 @@ class RealPortfolioRepository:
                     doc["import_id"],
                     doc["import_sequence"],
                     _decode(ParsedPortfolioFile, data),
+                    revision,
                 )
             )
-        return tuple(result)
+        return tuple(
+            sorted(result, key=lambda item: (item.import_sequence, item.import_id))
+        )
 
     async def _parse_warnings(self, scope, warning_revisions):
         if not warning_revisions:
@@ -453,6 +499,9 @@ class RealPortfolioRepository:
                     **event_scope,
                     "security_id": str(event.security) if event.security else None,
                     "market": event.security.market if event.security else None,
+                    "operation_date": _encode(
+                        event.trade_date or event.settlement_date
+                    ),
                 }
             )
             documents["postings"].extend(
@@ -468,13 +517,18 @@ class RealPortfolioRepository:
                 }
                 for index, ref in enumerate(event.evidence)
             )
+        source_revisions = dict(portfolio.source_revisions)
+        if set(source_revisions) != set(portfolio.import_ids):
+            raise _unavailable()
         imports = (
-            await self._collection("imports")
+            await self._collection("source_revisions")
             .find(
                 {
                     **scope,
-                    "import_id": {"$in": list(portfolio.import_ids)},
-                    "facts_complete": True,
+                    "$or": [
+                        {"import_id": import_id, "source_revision": revision}
+                        for import_id, revision in source_revisions.items()
+                    ],
                 }
             )
             .to_list(length=None)
@@ -514,6 +568,7 @@ class RealPortfolioRepository:
                     "pending_generation_manifest": _encode(manifest),
                     "pending_reported_coverage": _encode(portfolio.reported_coverage),
                     "pending_warning_revisions": warning_revisions,
+                    "pending_source_revisions": source_revisions,
                 }
             },
             upsert=True,
@@ -554,6 +609,7 @@ class RealPortfolioRepository:
                     "active_generation_manifest": _encode(manifest),
                     "active_reported_coverage": account["pending_reported_coverage"],
                     "active_warning_revisions": account["pending_warning_revisions"],
+                    "active_source_revisions": account["pending_source_revisions"],
                 }
             },
         )
@@ -574,6 +630,8 @@ class RealPortfolioRepository:
         if (
             not imported
             or not imported.get("facts_complete")
+            or imported.get("source_revision")
+            != account["active_source_revisions"].get(import_id)
             or imported.get("warning_revision")
             != account["active_warning_revisions"].get(import_id)
         ):
@@ -733,6 +791,7 @@ class RealPortfolioRepository:
             ),
             _decode(tuple[tuple[date, date], ...], account["active_reported_coverage"]),
             manifest.import_ids,
+            tuple(sorted(account["active_source_revisions"].items())),
         )
 
     async def list_active_trades(
@@ -765,12 +824,12 @@ class RealPortfolioRepository:
         if filters.date_through is not None:
             dates["$lte"] = filters.date_through.isoformat()
         if dates:
-            query["trade_date"] = dates
+            query["operation_date"] = dates
         collection = self._collection("events")
         total = await collection.count_documents(query)
         documents = (
             await collection.find(query)
-            .sort([("trade_date", -1), ("event_id", -1)])
+            .sort([("operation_date", -1), ("event_id", -1)])
             .skip((page - 1) * page_size)
             .limit(page_size)
             .to_list(length=page_size)
@@ -789,7 +848,7 @@ class RealPortfolioRepository:
                     details.get("broker_name") or None,
                     event.event_type,
                     details.get("operation", event.event_type),
-                    sum(quantities, Decimal(0)) if quantities else None,
+                    exact_sum(quantities) if quantities else None,
                     details.get("trade_currency") or None,
                     tuple(
                         CurrencyMovement(p.currency, p.amount)

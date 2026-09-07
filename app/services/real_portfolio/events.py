@@ -382,6 +382,9 @@ def build_trade_events(
     hk_groups: dict[str, list[DeliveryObservation]] = defaultdict(list)
     fill_groups: dict[tuple[object, ...], set[str]] = defaultdict(set)
     events: list[PortfolioEvent] = []
+    repo_groups: dict[
+        str, list[tuple[DeliveryObservation, PortfolioEvent]]
+    ] = defaultdict(list)
 
     for observation in current:
         if (
@@ -398,7 +401,43 @@ def build_trade_events(
             if observation.contract_fingerprint:
                 fill_groups[_group_key(observation, _HK_FILL_FIELDS)].add(key)
         else:
-            events.append(_single_trade_event(observation))
+            event = _single_trade_event(observation)
+            if event.event_type in ("repo_open", "repo_close"):
+                repo_groups[event.event_id].append((observation, event))
+            else:
+                events.append(event)
+
+    for group in repo_groups.values():
+        # A phase is one economic event. Conflicting observations cannot be summed.
+        observation, winner = max(
+            group,
+            key=lambda item: (
+                _observation_key(item[0]),
+                _evidence_key(item[0].evidence),
+            ),
+        )
+        bodies = []
+        for candidate, _ in group:
+            body = delivery_observation_to_document(candidate)
+            body.pop("evidence")
+            body.pop("transaction_fingerprint")
+            bodies.append(_json(body))
+        warnings = ()
+        if len(set(bodies)) > 1:
+            warnings = (
+                replace(
+                    _warning(observation, "repo_phase_conflict"),
+                    affects_quantity=False,
+                    message="conflicting reverse repo observations; one deterministic value selected",
+                ),
+            )
+        events.append(
+            replace(
+                winner,
+                evidence=tuple(item.evidence for item, _ in group),
+                warnings=warnings,
+            )
+        )
 
     for _, group in sorted(hk_groups.items()):
         group.sort(

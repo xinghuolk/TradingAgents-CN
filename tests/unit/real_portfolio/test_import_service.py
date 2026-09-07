@@ -181,13 +181,13 @@ async def test_failure_keeps_previous_generation_and_retry_is_idempotent(
                 lambda *args: (_ for _ in ()).throw(OSError("private path")),
             )
         elif stage == "partial_source":
-            collection = database["real_portfolio_source_rows"]
+            collection = database["real_portfolio_source_row_revisions"]
 
-            async def fail_after_row(*args, **kwargs):
-                await collection._replace_one(*args, **kwargs)
+            async def fail_after_row(documents):
+                await collection._insert_one(documents[0])
                 raise OSError("source interrupted")
 
-            patch.setattr(collection, "replace_one", fail_after_row)
+            patch.setattr(collection, "insert_many", fail_after_row)
         elif stage == "generation":
             database["real_portfolio_postings"].insert_many.side_effect = OSError(
                 "generation interrupted"

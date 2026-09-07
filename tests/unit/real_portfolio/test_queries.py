@@ -210,6 +210,7 @@ async def test_position_read_pins_every_collection_and_parse_warning_revision(da
     repository = RealPortfolioRepository(database)
     snapshot = parse_portfolio_file(snapshot_bytes(), as_of=date(2026, 9, 1))
     snapshot_doc = await facts(repository, snapshot)
+    await publish(repository, snapshot_doc, "snapshot-source")
     await repository.mark_imported(
         import_id=snapshot_doc["import_id"],
         generation="snapshot-source",

@@ -129,5 +129,6 @@ def parse_portfolio_file(
 def fingerprint_identifier(domain: str, value: str) -> str | None:
     if value.strip() in {"", "NULL", "0000000000"}:
         return None
-    fingerprint_input = f"{PARSER_VERSION}\0{domain}\0{value}".encode()
+    # This identity namespace is permanent, independent of parser software versions.
+    fingerprint_input = f"portfolio-v1\0{domain}\0{value}".encode()
     return sha256(fingerprint_input).hexdigest()

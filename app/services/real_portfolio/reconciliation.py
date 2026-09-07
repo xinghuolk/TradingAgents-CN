@@ -183,4 +183,11 @@ def reconcile_imports(
         warnings=tuple(sorted(warnings, key=_warning_key)),
         reported_coverage=_merge_coverage(coverage),
         import_ids=tuple(sorted({imported.import_id for imported in imports})),
+        source_revisions=tuple(
+            sorted(
+                (imported.import_id, imported.source_revision)
+                for imported in imports
+                if imported.source_revision is not None
+            )
+        ),
     )

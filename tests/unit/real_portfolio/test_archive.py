@@ -1,5 +1,7 @@
 import os
 import stat
+import subprocess
+import sys
 from hashlib import sha256
 
 import pytest
@@ -7,6 +9,56 @@ import pytest
 from app.services.real_portfolio.archive import archive_portfolio_bytes
 from app.services.real_portfolio.errors import PortfolioError
 from tests.unit.real_portfolio.fixtures import snapshot_bytes
+
+
+def test_process_death_during_write_does_not_poison_final_archive(tmp_path):
+    code = """
+import os, sys
+from pathlib import Path
+from app.services.real_portfolio.archive import archive_portfolio_bytes
+write = os.write
+def crash(fd, content):
+    write(fd, content[:3])
+    os._exit(73)
+os.write = crash
+archive_portfolio_bytes(Path(sys.argv[1]), "crash-user", b"complete source bytes")
+"""
+    child = subprocess.run([sys.executable, "-c", code, str(tmp_path)], check=False)
+    assert child.returncode == 73
+    assert list(tmp_path.rglob("*.xls")) == []
+    abandoned = set(tmp_path.rglob("*.tmp"))
+    result = archive_portfolio_bytes(tmp_path, "crash-user", b"complete source bytes")
+    assert result.path.read_bytes() == b"complete source bytes"
+    assert set(tmp_path.rglob("*.tmp")) == abandoned
+
+
+def test_racing_archive_keeps_verified_winner_and_cleans_only_own_temp(
+    tmp_path, monkeypatch
+):
+    content = b"complete concurrent bytes"
+    link = os.link
+    winner_inode = []
+
+    def publish_winner(source, destination, **kwargs):
+        descriptor = os.open(
+            destination,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+            0o600,
+            dir_fd=kwargs["dst_dir_fd"],
+        )
+        try:
+            os.write(descriptor, content)
+            winner_inode.append(os.fstat(descriptor).st_ino)
+        finally:
+            os.close(descriptor)
+        link(source, destination, **kwargs)
+
+    monkeypatch.setattr(os, "link", publish_winner)
+    result = archive_portfolio_bytes(tmp_path, "racing-user", content)
+    assert result.created is False
+    assert result.path.read_bytes() == content
+    assert result.path.stat().st_ino == winner_inode[0]
+    assert list(tmp_path.rglob("*.tmp")) == []
 
 
 def test_archive_uses_private_server_components_and_exact_bytes(tmp_path):

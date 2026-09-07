@@ -64,6 +64,45 @@ validates a complete generation before switching the account's active pointer,
 so interrupted work does not replace the last readable holdings and trades.
 Do not manually edit import records or active generation pointers.
 
+### Source Revision Schema
+
+Source rows have a permanent identity registry in `real_portfolio_source_rows`
+with the required unique `(import_id, line_number)` index. Immutable payloads
+live in `real_portfolio_source_row_revisions`, uniquely indexed by
+`(import_id, source_revision, line_number)` and searchable by scoped `fact_key`.
+`real_portfolio_source_revisions` contains a completion record only after all
+rows and parse warnings for that revision are durable, including their counts,
+parser metadata and warning revision. Old revisions remain available to any
+published generation that references them; the row registry never supplies
+rebuild facts.
+
+An account's active source revision map, warning revision map, generation,
+manifest and delivery coverage switch together in one MongoDB update. Rebuilds
+read the pinned active revisions and replace only the current import with its
+completed new revision. A failed completion acknowledgement, partial reparse or
+complete but unpublished reparse therefore cannot remove already published
+holdings or trades. Recovery also checks the staged summary's parser version,
+derived version and generation before finalizing it.
+
+The source fingerprint namespace is permanent and does not vary with parser
+software versions. Derived events store `operation_date` as trade date, falling
+back to settlement date, with an account/generation/date/event index for stable
+filters and pagination. Reverse repo observations sharing one contract/date/
+cash-sign phase retain every evidence row in one event; conflicting values use
+a deterministic normalized-content winner and emit `repo_phase_conflict`.
+
+These are schema extensions for this undeployed feature branch; no production
+migration is needed. Pre-release test databases using the earlier layout must
+be recreated or explicitly rebuilt before use. Backups include both new source
+revision collections and every pinned older revision. No automatic revision
+cleanup is implemented.
+
+Archives are fully written, permission-restricted and fsynced in a private
+same-directory temporary file, then atomically linked to the final content hash
+name without replacing an existing winner. Existing winners are verified byte
+for byte. An interrupted process may leave a private `.tmp` file; retries ignore
+it, and cleanup removes only the current attempt's temporary file.
+
 ## Backup And Recovery
 
 A backup **must include both MongoDB and the private archive directory**.

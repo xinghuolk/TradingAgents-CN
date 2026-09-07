@@ -4,6 +4,7 @@ from datetime import date
 from decimal import Decimal
 
 from app.services.real_portfolio.errors import PortfolioError
+from app.services.real_portfolio.decimal_math import exact_sum
 from app.services.real_portfolio.models import (
     Holding,
     ParseWarning,
@@ -93,14 +94,13 @@ def build_portfolio_view(portfolio: ReconciledPortfolio, as_of: date) -> Portfol
         for event in portfolio.events:
             if event.security is None:
                 continue
-            delta = sum(
+            delta = exact_sum(
                 (
                     posting.amount
                     for posting in event.postings
                     if posting.role == "security"
                     and low < posting.effective_date <= high
                 ),
-                Decimal(0),
             )
             if not delta:
                 continue
@@ -114,7 +114,13 @@ def build_portfolio_view(portfolio: ReconciledPortfolio, as_of: date) -> Portfol
                     Decimal(0),
                 )
             holdings[key] = replace(
-                holdings[key], quantity=holdings[key].quantity + sign * delta
+                holdings[key],
+                quantity=exact_sum(
+                    (
+                        holdings[key].quantity,
+                        delta if sign == 1 else delta.copy_negate(),
+                    )
+                ),
             )
 
         warnings = tuple(

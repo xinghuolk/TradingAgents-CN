@@ -1,5 +1,5 @@
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime, time
 from decimal import Decimal
 from typing import Generic, Literal, TypeVar
@@ -390,6 +390,7 @@ class ImportedFacts:
     import_id: str
     import_sequence: int
     parsed: ParsedPortfolioFile
+    source_revision: str | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.parsed, ParsedPortfolioFile):
@@ -419,6 +420,7 @@ class ReconciledPortfolio:
     warnings: tuple[ParseWarning, ...]
     reported_coverage: tuple[tuple[date, date], ...]
     import_ids: tuple[str, ...]
+    source_revisions: tuple[tuple[str, str], ...] = field(default=(), compare=False)
 
     def __post_init__(self) -> None:
         _require_tuple_elements(
@@ -428,6 +430,10 @@ class ReconciledPortfolio:
         _require_tuple_elements(self.warnings, "warnings", ParseWarning, "ParseWarning")
         _require_coverage(self.reported_coverage, "reported_coverage")
         _require_tuple_elements(self.import_ids, "import_ids", str, "str")
+        for revision in _require_tuple(self.source_revisions, "source_revisions"):
+            _require_tuple_elements(revision, "source_revision", str, "str")
+            if len(revision) != 2:
+                raise ValueError("source revision must contain import and revision ids")
 
 
 @dataclass(frozen=True, slots=True)
