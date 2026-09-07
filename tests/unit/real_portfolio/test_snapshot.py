@@ -128,7 +128,7 @@ def test_hk_snapshot_keeps_mixed_currency_semantics():
     ),
 )
 def test_malformed_snapshot_row_warns_without_hiding_a_valid_row(invalid_cell):
-    malformed = snapshot_row(**invalid_cell)
+    malformed = snapshot_row(**{"证券代码": "000002", **invalid_cell})
 
     parsed = parse_portfolio_file(
         snapshot_bytes(SNAPSHOT_ROW, malformed), as_of=AS_OF
@@ -201,6 +201,43 @@ def test_duplicate_security_makes_snapshot_partial_and_excludes_both_rows():
     assert len(parsed.warnings) == 1
     assert parsed.warnings[0].line_number is None
     assert parsed.warnings[0].affects_quantity is True
+
+
+def test_valid_then_malformed_duplicate_excludes_the_valid_position():
+    malformed_duplicate = snapshot_row(**{"市价": "not-a-decimal"})
+
+    parsed = parse_portfolio_file(
+        snapshot_bytes(SNAPSHOT_ROW, malformed_duplicate), as_of=AS_OF
+    )
+
+    assert parsed.snapshot_positions == ()
+    assert len(parsed.warnings) == 2
+    assert parsed.warnings[1].line_number is None
+    assert parsed.warnings[1].message == "duplicate snapshot security: A:000001"
+
+
+def test_malformed_then_valid_duplicate_excludes_the_later_valid_position():
+    malformed_duplicate = snapshot_row(**{"证券名称": ""})
+
+    parsed = parse_portfolio_file(
+        snapshot_bytes(malformed_duplicate, SNAPSHOT_ROW), as_of=AS_OF
+    )
+
+    assert parsed.snapshot_positions == ()
+    assert len(parsed.warnings) == 2
+    assert parsed.warnings[1].line_number is None
+    assert parsed.warnings[1].message == "duplicate snapshot security: A:000001"
+
+
+def test_invalid_security_warning_does_not_expose_the_raw_code():
+    sentinel = "PRIVATE-CODE-\x1b[31m"
+    invalid = snapshot_row(**{"证券代码": sentinel})
+    valid = snapshot_row(**{"证券代码": "000002"})
+
+    parsed = parse_portfolio_file(snapshot_bytes(invalid, valid), as_of=AS_OF)
+
+    assert parsed.warnings[0].message == "invalid snapshot security"
+    assert sentinel not in parsed.warnings[0].message
 
 
 def test_snapshot_requires_an_explicit_as_of_date():

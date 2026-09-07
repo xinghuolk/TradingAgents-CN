@@ -52,18 +52,27 @@ def _warning(line_number: int | None, as_of: date, message: str) -> ParseWarning
     )
 
 
-def _parse_position(row: tuple[str, ...]) -> SnapshotPosition:
+def _parse_security(row: tuple[str, ...]) -> tuple[str, SecurityId]:
     if len(row) != 20:
         raise ValueError("snapshot row must contain 20 cells")
+    market = _MARKETS.get(row[17].strip())
+    if market is None:
+        raise ValueError("invalid snapshot market")
+    try:
+        security = SecurityId(market, row[2].strip())
+    except ValueError:
+        raise ValueError("invalid snapshot security") from None
+    return market, security
+
+
+def _parse_position(
+    row: tuple[str, ...], market: str, security: SecurityId
+) -> SnapshotPosition:
     if row[-1] != "":
         raise ValueError("snapshot trailing cell must be empty")
     if not row[3].strip():
         raise ValueError("snapshot broker name must not be empty")
 
-    market = _MARKETS.get(row[17].strip())
-    if market is None:
-        raise ValueError("invalid snapshot market")
-    security = SecurityId(market, row[2].strip())
     values = {
         "总盈亏": _decimal(row[4], "总盈亏"),
         "盈亏比例(%)": _decimal(row[5], "盈亏比例(%)"),
@@ -114,6 +123,7 @@ def parse_snapshot_v1(
     rows: list[SourceRow] = []
     warnings: list[ParseWarning] = []
     positions: dict[SecurityId, SnapshotPosition] = {}
+    seen_securities: set[SecurityId] = set()
     duplicate_securities: set[SecurityId] = set()
     nonblank_rows = 0
 
@@ -123,7 +133,30 @@ def parse_snapshot_v1(
         nonblank_rows += 1
         row_sha256 = _row_sha256(row)
         try:
-            position = _parse_position(row)
+            market, security = _parse_security(row)
+        except ValueError as error:
+            rows.append(
+                SourceRow(
+                    line_number,
+                    row_sha256,
+                    row_sha256,
+                    row,
+                    None,
+                    None,
+                    False,
+                )
+            )
+            warnings.append(_warning(line_number, as_of, str(error)))
+            continue
+
+        if security in seen_securities:
+            duplicate_securities.add(security)
+            positions.pop(security, None)
+        else:
+            seen_securities.add(security)
+
+        try:
+            position = _parse_position(row, market, security)
         except ValueError as error:
             rows.append(
                 SourceRow(
@@ -150,10 +183,7 @@ def parse_snapshot_v1(
                 True,
             )
         )
-        if position.security in positions or position.security in duplicate_securities:
-            duplicate_securities.add(position.security)
-            positions.pop(position.security, None)
-        else:
+        if position.security not in duplicate_securities:
             positions[position.security] = position
 
     for security in sorted(duplicate_securities, key=str):
