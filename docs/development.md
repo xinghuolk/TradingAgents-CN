@@ -36,6 +36,9 @@ yarn --cwd frontend install --frozen-lockfile
 Environment creation is a one-time setup step. Daily validation reuses the installed
 Python environment and `frontend/node_modules`.
 
+CI installs the narrower pinned `requirements-harness.txt` because the service-free
+gate does not need the project's LLM, market-data, or vector-database runtimes.
+
 ## Run The Application
 
 ```bash
@@ -87,3 +90,11 @@ for the measured baseline.
 When a change touches or fixes an item in `docs/technical-debt.md`, update or remove
 that entry in the same commit. Add a service-free regression test to the quick suite
 when it protects behavior important enough to retain.
+
+GitHub Actions runs `python scripts/harness.py` for pull requests and pushes to
+`main`. Version-tag Docker publication reuses that workflow and cannot begin until it
+passes.
+
+The scheduled upstream workflow only detects commits and opens an issue. Apply
+upstream changes manually on a reviewable branch; automation must not merge or push
+them directly to `main`.

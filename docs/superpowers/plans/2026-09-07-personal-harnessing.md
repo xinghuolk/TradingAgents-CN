@@ -246,19 +246,19 @@ Commit: `fix(frontend): make local quality commands deterministic`
 - Consumes: `python scripts/harness.py`, Python 3.11, Node 22, Yarn 1.22.22, `requirements-lock.txt`, and `frontend/yarn.lock`.
 - Produces: a `quality` workflow for pull requests and `main`, plus a successful quality prerequisite for image publication.
 
-- [ ] **Step 1: Add the normal quality workflow**
+- [x] **Step 1: Add the normal quality workflow**
 
 Checkout, set up Python 3.11 and Node 22 with Yarn cache, activate Yarn 1.22.22 through Corepack, install `requirements-lock.txt` and the project, run `yarn --cwd frontend install --frozen-lockfile`, then run `python scripts/harness.py`.
 
-- [ ] **Step 2: Gate Docker publication**
+- [x] **Step 2: Gate Docker publication**
 
 Add a `quality` job with the same installation and harness steps to the tag/manual Docker workflow. Make `build-and-push` depend on `quality` so credentials and image pushes happen only after validation.
 
-- [ ] **Step 3: Remove direct upstream mutation**
+- [x] **Step 3: Remove direct upstream mutation**
 
 Delete the `auto-sync` job from `upstream-sync-check.yml`. Keep update detection and issue creation so upstream changes remain visible and manually reviewable.
 
-- [ ] **Step 4: Validate workflow structure**
+- [x] **Step 4: Validate workflow structure**
 
 Add standard-library workflow checks to the harness: required workflow files exist, the Docker publish job depends on quality, and no workflow line invokes `git push origin main`. Then run:
 
@@ -269,7 +269,7 @@ git diff --check
 
 Expected: structural checks and diff check exit 0.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 Commit: `ci(harness): enforce the personal quality gate`
 

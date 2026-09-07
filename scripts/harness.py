@@ -70,6 +70,41 @@ def validate_repository(root: Path) -> list[str]:
             errors.append(f"{relative_path}: required repository document is missing")
             continue
         errors.extend(validate_local_links(document, root))
+    errors.extend(validate_workflows(root))
+    return errors
+
+
+def validate_workflows(root: Path) -> list[str]:
+    """Check the small set of automation properties that protect repository state."""
+    workflow_dir = root / ".github" / "workflows"
+    required = ("quality.yml", "docker-publish.yml", "upstream-sync-check.yml")
+    errors: list[str] = []
+    contents: dict[str, str] = {}
+
+    for name in required:
+        path = workflow_dir / name
+        if not path.is_file():
+            errors.append(f".github/workflows/{name}: required workflow is missing")
+            continue
+        contents[name] = path.read_text(encoding="utf-8")
+
+    quality = contents.get("quality.yml", "")
+    if quality and "python scripts/harness.py" not in quality:
+        errors.append(".github/workflows/quality.yml: harness command is missing")
+
+    docker_publish = contents.get("docker-publish.yml", "")
+    if docker_publish and not re.search(
+        r"^\s+needs:\s*quality\s*$", docker_publish, re.MULTILINE
+    ):
+        errors.append(
+            ".github/workflows/docker-publish.yml: publishing must need quality"
+        )
+
+    for path in sorted(workflow_dir.glob("*.y*ml")):
+        if "git push origin main" in path.read_text(encoding="utf-8"):
+            errors.append(
+                f"{path.relative_to(root)}: direct push to main is forbidden"
+            )
     return errors
 
 

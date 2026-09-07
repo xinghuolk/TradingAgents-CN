@@ -17,6 +17,10 @@ the frontend with the project-local Vite binary:
 python scripts/harness.py
 ```
 
+GitHub Actions runs this exact command with Python dependencies from
+`requirements-harness.txt` and frontend dependencies from `frontend/yarn.lock`.
+Docker publishing depends on the same reusable workflow.
+
 Run in a Python 3.11 environment with project dependencies:
 
 ```bash

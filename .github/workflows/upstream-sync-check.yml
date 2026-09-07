@@ -5,13 +5,10 @@ on:
     # 每周一上午9点检查上游更新
     - cron: '0 9 * * 1'
   workflow_dispatch:
-    # 允许手动触发
-    inputs:
-      force_sync:
-        description: '强制同步（跳过确认）'
-        required: false
-        default: 'false'
-        type: boolean
+
+permissions:
+  contents: read
+  issues: write
 
 jobs:
   check-upstream:
@@ -185,71 +182,3 @@ jobs:
         echo "- 新提交数量: ${{ steps.check_updates.outputs.new_commits }}"
         echo "- 更新优先级: ${{ steps.analyze_updates.outputs.priority }}"
         echo "- 已创建Issue进行跟踪"
-
-  auto-sync:
-    runs-on: ubuntu-latest
-    name: 自动同步（仅限低风险更新）
-    needs: check-upstream
-    if: github.event.inputs.force_sync == 'true' || (needs.check-upstream.outputs.priority == 'low' && needs.check-upstream.outputs.fixes == '0')
-    
-    steps:
-    - name: 检出代码
-      uses: actions/checkout@v4
-      with:
-        fetch-depth: 0
-        token: ${{ secrets.GITHUB_TOKEN }}
-    
-    - name: 设置Python环境
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.11'
-    
-    - name: 配置Git
-      run: |
-        git config --global user.name 'GitHub Actions Bot'
-        git config --global user.email 'actions@github.com'
-    
-    - name: 添加上游仓库
-      run: |
-        git remote add upstream https://github.com/TauricResearch/TradingAgents.git
-        git fetch upstream
-    
-    - name: 执行自动同步
-      run: |
-        python scripts/sync_upstream.py --auto
-    
-    - name: 推送更新
-      run: |
-        git push origin main
-    
-    - name: 创建同步报告
-      uses: actions/github-script@v7
-      with:
-        script: |
-          const reportTitle = '🤖 自动同步完成';
-          const reportBody = `
-          ## ✅ 自动同步成功
-          
-          GitHub Actions 已自动完成上游同步。
-          
-          **同步时间**: ${new Date().toISOString()}
-          **触发方式**: ${context.eventName === 'workflow_dispatch' ? '手动触发' : '自动触发'}
-          
-          ## 📋 后续建议
-          
-          1. 检查同步的更改是否正常
-          2. 运行本地测试验证功能
-          3. 更新相关文档（如需要）
-          
-          ---
-          
-          *此报告由GitHub Actions自动生成*
-          `;
-          
-          await github.rest.issues.create({
-            owner: context.repo.owner,
-            repo: context.repo.repo,
-            title: reportTitle,
-            body: reportBody,
-            labels: ['upstream-sync', 'auto-sync']
-          });
