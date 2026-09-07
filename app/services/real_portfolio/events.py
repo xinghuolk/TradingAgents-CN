@@ -78,6 +78,10 @@ def _observation_key(observation: DeliveryObservation) -> str:
     return _json(document)
 
 
+def _deduplication_key(observation: DeliveryObservation) -> str:
+    return _json((observation.evidence.fact_key, _observation_key(observation)))
+
+
 def _evidence_key(evidence: EvidenceRef) -> tuple[bool, str, int, str, str]:
     return (
         evidence.import_id is not None,
@@ -97,7 +101,7 @@ def _deduplicate_observations(
 ]:
     versions_by_body: dict[str, list[DeliveryObservation]] = defaultdict(list)
     for observation in observations:
-        versions_by_body[_observation_key(observation)].append(observation)
+        versions_by_body[_deduplication_key(observation)].append(observation)
 
     current: list[DeliveryObservation] = []
     body_by_evidence: dict[tuple[str | None, int, str], str] = {}

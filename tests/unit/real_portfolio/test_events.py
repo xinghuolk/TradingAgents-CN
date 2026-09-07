@@ -289,6 +289,94 @@ def test_equal_observations_merge_evidence_without_duplicate_postings():
     assert result.warnings == ()
 
 
+def test_distinct_anonymous_mainland_fact_keys_keep_separate_trade_postings():
+    parsed = parse_delivery_rows(
+        delivery_row(**{"成交编号": "NULL"}),
+        delivery_row(**{"成交编号": ""}),
+    )
+
+    result = build_delivery_events(parsed.delivery_observations)
+
+    assert {event.event_id for event in result.events} == {
+        "74ba0a988b2577726160762d4f8206ae7e1252d9e0cb3c71115808190abb2014",
+        "aa077736538326b7aadba4d4aab084485b6825f1042f57ac0f4e7f21ca72d834",
+    }
+    assert len(result.events) == 2
+    assert sum(len(postings(event, "security")) for event in result.events) == 2
+    assert sum(len(postings(event, "cash")) for event in result.events) == 2
+
+
+def test_distinct_anonymous_interest_fact_keys_keep_separate_cash_postings():
+    common = {"操作": "利息归本", "发生金额": "12.34"}
+    parsed = parse_delivery_rows(
+        delivery_row(**(common | {"成交编号": "NULL"})),
+        delivery_row(**(common | {"成交编号": ""})),
+    )
+
+    result = build_delivery_events(parsed.delivery_observations)
+
+    assert {event.event_id for event in result.events} == {
+        "0db2a10b73edc4b1b53586a2e2a32a9fd9ff95948c4d8da63088a95e3381a327",
+        "d3a7a81bf48c7f9652971996656eddaee34a03b0d3335f7fd7f403ff0e7a5c27",
+    }
+    assert [event.event_type for event in result.events] == [
+        "cash_interest",
+        "cash_interest",
+    ]
+    assert sum(
+        posting.amount
+        for event in result.events
+        for posting in postings(event, "cash")
+    ) == Decimal("24.68")
+
+
+def test_distinct_anonymous_hk_fact_keys_keep_separate_partial_events():
+    common = {
+        "合同编号": "NULL",
+        "证券代码": "00700",
+        "市场名称": "沪HK",
+        "交易币种": "HKD",
+        "发生金额": "0",
+    }
+    parsed = parse_delivery_rows(
+        delivery_row(**(common | {"成交编号": "NULL"})),
+        delivery_row(**(common | {"成交编号": ""})),
+    )
+
+    result = build_delivery_events(parsed.delivery_observations)
+
+    assert {event.event_id for event in result.events} == {
+        "f5fccc9a718df70ada7926bc70ead09d555209d3a1f8d90615ac56e74ebdde9e",
+        "cb77661bd95d19cb31ac0f795c629270fba2cc1322f17330186b02088a59eff6",
+    }
+    assert len(result.events) == 2
+    assert all(event.completeness == "partial" for event in result.events)
+    assert sum(len(postings(event, "security")) for event in result.events) == 2
+    assert {warning.warning_type for warning in result.warnings} == {
+        "missing_settlement"
+    }
+
+
+def test_repeated_evidence_for_same_mainland_fact_posts_once():
+    observation = parse_delivery_rows(
+        delivery_row(**{"成交编号": "NULL"})
+    ).delivery_observations[0]
+    repeated = replace(
+        observation,
+        evidence=replace(observation.evidence, import_id="delivery-repeat"),
+    )
+
+    result = build_delivery_events((observation, repeated))
+    (event,) = result.events
+
+    assert event.event_id == (
+        "74ba0a988b2577726160762d4f8206ae7e1252d9e0cb3c71115808190abb2014"
+    )
+    assert len(event.evidence) == 2
+    assert len(postings(event, "security")) == 1
+    assert len(postings(event, "cash")) == 1
+
+
 def test_reverse_repo_open_and_close_keep_cash_sign_phase_identity():
     common = {
         "证券代码": "204001",
