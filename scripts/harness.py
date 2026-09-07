@@ -4,12 +4,15 @@
 from __future__ import annotations
 
 import argparse
+import ast
+import fnmatch
 import os
 import re
 import shlex
 import subprocess
 import sys
 import tempfile
+import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import unquote
@@ -71,7 +74,58 @@ def validate_repository(root: Path) -> list[str]:
             continue
         errors.extend(validate_local_links(document, root))
     errors.extend(validate_workflows(root))
+    errors.extend(validate_console_entrypoint(root))
     return errors
+
+
+def validate_console_entrypoint(root: Path) -> list[str]:
+    """Validate that the console target is a declared function in a packaged module."""
+    pyproject_path = root / "pyproject.toml"
+    if not pyproject_path.is_file():
+        return ["pyproject.toml: project metadata is missing"]
+
+    with pyproject_path.open("rb") as handle:
+        pyproject = tomllib.load(handle)
+    target = pyproject.get("project", {}).get("scripts", {}).get("tradingagents")
+    if not isinstance(target, str) or target.count(":") != 1:
+        return ["pyproject.toml: tradingagents console target must be module:function"]
+
+    module_name, function_name = target.split(":", 1)
+    module_path = root.joinpath(*module_name.split(".")).with_suffix(".py")
+    if not module_path.is_file():
+        package_init = root.joinpath(*module_name.split("."), "__init__.py")
+        if package_init.is_file():
+            module_path = package_init
+        else:
+            return [f"pyproject.toml: console module {module_name} is missing"]
+
+    tree = ast.parse(module_path.read_text(encoding="utf-8"), filename=str(module_path))
+    declared_functions = {
+        node.name
+        for node in tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    if function_name not in declared_functions:
+        return [
+            f"pyproject.toml: console target {target} does not name a declared function"
+        ]
+
+    if "." in module_name:
+        package_name = module_name.split(".", 1)[0]
+        package_patterns = (
+            pyproject.get("tool", {})
+            .get("setuptools", {})
+            .get("packages", {})
+            .get("find", {})
+            .get("include", [])
+        )
+        if not any(
+            fnmatch.fnmatchcase(package_name, pattern) for pattern in package_patterns
+        ):
+            return [
+                f"pyproject.toml: console package {package_name} is not included by setuptools"
+            ]
+    return []
 
 
 def validate_workflows(root: Path) -> list[str]:

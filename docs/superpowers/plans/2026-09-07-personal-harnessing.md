@@ -286,11 +286,11 @@ Commit: `ci(harness): enforce the personal quality gate`
 - Consumes: `[project.scripts].tradingagents` from `pyproject.toml` and `cli.main.main()`.
 - Produces: side-effect-free resolution of the installed `tradingagents` console command.
 
-- [ ] **Step 1: Write the failing entry-point resolution test**
+- [x] **Step 1: Write the failing entry-point resolution test**
 
 Parse `pyproject.toml` with `tomllib`, resolve the configured `module:function` in a subprocess with a five-second timeout, and assert import succeeds and the target is callable. The subprocess sets a temporary `TRADINGAGENTS_LOG_DIR`.
 
-- [ ] **Step 2: Verify the root demo module is unsafe**
+- [x] **Step 2: Verify the root demo module is unsafe**
 
 Run:
 
@@ -300,7 +300,7 @@ python -m pytest -c tests/pytest.ini tests/harness/test_console_entrypoint.py -q
 
 Expected: FAIL because importing `main:main` either has no callable `main` or executes the NVDA example.
 
-- [ ] **Step 3: Point the console command at the existing CLI**
+- [x] **Step 3: Point the console command at the existing CLI**
 
 Change the entry point to:
 
@@ -311,20 +311,22 @@ tradingagents = "cli.main:main"
 
 Add console-entry-point validation to the harness structural checks and update canonical documentation.
 
-- [ ] **Step 4: Verify resolution and editable installation**
+- [x] **Step 4: Verify resolution and isolated installation**
 
-Run:
+Run an isolated package build without changing the active environment:
 
 ```bash
 python -m pytest -c tests/pytest.ini tests/harness/test_console_entrypoint.py -q
-python -m pip install --no-deps -e .
-python -c "import importlib.metadata as m; ep=next(x for x in m.entry_points(group='console_scripts') if x.name=='tradingagents'); assert callable(ep.load())"
+UV_CACHE_DIR=/tmp/tradingagents-entrypoint-uv-cache uv pip install \
+  --target /tmp/tradingagents-entrypoint --no-deps --no-build-isolation .
+PYTHONPATH=/tmp/tradingagents-entrypoint python -c \
+  "import importlib.metadata as m; d=next(x for x in m.distributions(path=['/tmp/tradingagents-entrypoint']) if x.metadata['Name']=='tradingagents'); ep=next(x for x in d.entry_points if x.name=='tradingagents'); assert callable(ep.load())"
 git diff --check
 ```
 
 Expected: all commands exit 0 without starting an analysis or requiring services.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 Commit: `fix(cli): point console script at the Typer entrypoint`
 

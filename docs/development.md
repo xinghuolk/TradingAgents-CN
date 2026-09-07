@@ -45,8 +45,12 @@ gate does not need the project's LLM, market-data, or vector-database runtimes.
 python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 yarn --cwd frontend dev
 python -m cli.main
+tradingagents
 docker compose up -d
 ```
+
+The `tradingagents` command is available after installing the project package and
+resolves to the same Typer CLI as `python -m cli.main`.
 
 The standalone backend expects reachable MongoDB and Redis services. The API also
 validates application configuration during startup.

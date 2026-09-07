@@ -20,6 +20,8 @@ python scripts/harness.py
 GitHub Actions runs this exact command with Python dependencies from
 `requirements-harness.txt` and frontend dependencies from `frontend/yarn.lock`.
 Docker publishing depends on the same reusable workflow.
+The structural phase also checks that the configured console target is a declared
+function in a package included by setuptools.
 
 Run in a Python 3.11 environment with project dependencies:
 
