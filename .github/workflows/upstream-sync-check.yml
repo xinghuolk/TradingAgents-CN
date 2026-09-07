@@ -22,21 +22,6 @@ jobs:
         fetch-depth: 0
         token: ${{ secrets.GITHUB_TOKEN }}
     
-    - name: 设置Python环境
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.11'
-    
-    - name: 安装依赖
-      run: |
-        python -m pip install --upgrade pip
-        pip install requests
-    
-    - name: 配置Git
-      run: |
-        git config --global user.name 'GitHub Actions'
-        git config --global user.email 'actions@github.com'
-    
     - name: 添加上游仓库
       run: |
         git remote add upstream https://github.com/TauricResearch/TradingAgents.git || true
@@ -54,7 +39,7 @@ jobs:
           echo "发现 $NEW_COMMITS 个新提交"
           
           # 获取最新提交信息
-          git log --oneline --no-merges HEAD..upstream/main | head -10 > recent_commits.txt
+          git log --oneline --no-merges -n 10 HEAD..upstream/main > recent_commits.txt
           echo "recent_commits<<EOF" >> $GITHUB_OUTPUT
           cat recent_commits.txt >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
@@ -68,9 +53,9 @@ jobs:
       id: analyze_updates
       run: |
         # 分析提交类型
-        FEATURES=$(git log --oneline --no-merges HEAD..upstream/main | grep -i -E "(feat|feature|add)" | wc -l)
-        FIXES=$(git log --oneline --no-merges HEAD..upstream/main | grep -i -E "(fix|bug|patch)" | wc -l)
-        DOCS=$(git log --oneline --no-merges HEAD..upstream/main | grep -i -E "(doc|readme)" | wc -l)
+        FEATURES=$(git log --format=%s --no-merges HEAD..upstream/main | awk 'tolower($0) ~ /(feat|feature|add)/ { count++ } END { print count + 0 }')
+        FIXES=$(git log --format=%s --no-merges HEAD..upstream/main | awk 'tolower($0) ~ /(fix|bug|patch)/ { count++ } END { print count + 0 }')
+        DOCS=$(git log --format=%s --no-merges HEAD..upstream/main | awk 'tolower($0) ~ /(doc|readme)/ { count++ } END { print count + 0 }')
         
         echo "features=$FEATURES" >> $GITHUB_OUTPUT
         echo "fixes=$FIXES" >> $GITHUB_OUTPUT
@@ -91,15 +76,23 @@ jobs:
     - name: 创建Issue报告
       if: steps.check_updates.outputs.has_updates == 'true'
       uses: actions/github-script@v7
+      env:
+        NEW_COMMITS: ${{ steps.check_updates.outputs.new_commits }}
+        RECENT_COMMITS: ${{ steps.check_updates.outputs.recent_commits }}
+        FEATURES: ${{ steps.analyze_updates.outputs.features }}
+        FIXES: ${{ steps.analyze_updates.outputs.fixes }}
+        DOCS: ${{ steps.analyze_updates.outputs.docs }}
+        PRIORITY: ${{ steps.analyze_updates.outputs.priority }}
+        REASON: ${{ steps.analyze_updates.outputs.reason }}
       with:
         script: |
-          const newCommits = '${{ steps.check_updates.outputs.new_commits }}';
-          const recentCommits = `${{ steps.check_updates.outputs.recent_commits }}`;
-          const features = '${{ steps.analyze_updates.outputs.features }}';
-          const fixes = '${{ steps.analyze_updates.outputs.fixes }}';
-          const docs = '${{ steps.analyze_updates.outputs.docs }}';
-          const priority = '${{ steps.analyze_updates.outputs.priority }}';
-          const reason = '${{ steps.analyze_updates.outputs.reason }}';
+          const newCommits = process.env.NEW_COMMITS;
+          const recentCommits = process.env.RECENT_COMMITS;
+          const features = process.env.FEATURES;
+          const fixes = process.env.FIXES;
+          const docs = process.env.DOCS;
+          const priority = process.env.PRIORITY;
+          const reason = process.env.REASON;
           
           const issueTitle = `🔄 上游更新检测 - ${newCommits} 个新提交`;
           const issueBody = `

@@ -147,6 +147,10 @@ def validate_workflows(root: Path) -> list[str]:
         errors.append(".github/workflows/quality.yml: harness command is missing")
 
     docker_publish = contents.get("docker-publish.yml", "")
+    if docker_publish and "uses: ./.github/workflows/quality.yml" not in docker_publish:
+        errors.append(
+            ".github/workflows/docker-publish.yml: quality job must reuse quality.yml"
+        )
     if docker_publish and not re.search(
         r"^\s+needs:\s*quality\s*$", docker_publish, re.MULTILINE
     ):
@@ -154,11 +158,33 @@ def validate_workflows(root: Path) -> list[str]:
             ".github/workflows/docker-publish.yml: publishing must need quality"
         )
 
+    direct_main_push = re.compile(
+        r"\bgit\s+push\b[^\n]*(?:(?<![\w/-])main(?![\w/-])|:main\b)"
+    )
     for path in sorted(workflow_dir.glob("*.y*ml")):
-        if "git push origin main" in path.read_text(encoding="utf-8"):
+        workflow = path.read_text(encoding="utf-8")
+        if direct_main_push.search(workflow):
             errors.append(
                 f"{path.relative_to(root)}: direct push to main is forbidden"
             )
+        lines = workflow.splitlines()
+        for index, line in enumerate(lines):
+            if line.strip() != "script: |":
+                continue
+            indentation = len(line) - len(line.lstrip())
+            script_lines: list[str] = []
+            for script_line in lines[index + 1 :]:
+                if script_line.strip():
+                    script_indentation = len(script_line) - len(script_line.lstrip())
+                    if script_indentation <= indentation:
+                        break
+                script_lines.append(script_line)
+            script = "\n".join(script_lines)
+            if re.search(r"\$\{\{\s*steps\.[^}]+\.outputs\.", script):
+                errors.append(
+                    f"{path.relative_to(root)}: step outputs must not be interpolated into JavaScript"
+                )
+                break
     return errors
 
 
