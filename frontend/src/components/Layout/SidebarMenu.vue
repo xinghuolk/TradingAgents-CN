@@ -42,10 +42,16 @@
       <template #title>我的自选股</template>
     </el-menu-item>
 
-    <el-menu-item index="/paper">
-      <el-icon><CreditCard /></el-icon>
-      <template #title>模拟交易</template>
-    </el-menu-item>
+    <el-sub-menu index="/portfolio">
+      <template #title>
+        <el-icon><Wallet /></el-icon>
+        <span>投资组合</span>
+      </template>
+      <el-menu-item index="/paper">模拟交易</el-menu-item>
+      <el-menu-item index="/portfolio/real-holdings">真实持仓</el-menu-item>
+      <el-menu-item index="/portfolio/real-transactions">真实成交记录</el-menu-item>
+      <el-menu-item index="/portfolio/imports">导入记录</el-menu-item>
+    </el-sub-menu>
 
 
     <!-- 分析报告已移至“股票分析”子菜单，保留注释便于追踪 -->
@@ -112,7 +118,7 @@ import {
   /* Document 移除：不再使用顶级分析报告菜单图标 */
   Setting,
   InfoFilled,
-  CreditCard
+  Wallet
 } from '@element-plus/icons-vue'
 
 const route = useRoute()

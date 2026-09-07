@@ -8,6 +8,9 @@
         <el-tag size="small">{{ market || '-' }}</el-tag>
       </div>
       <div class="actions">
+        <el-tooltip v-if="market === 'HK' || market === 'CN' || market === 'A'" content="查看真实持仓">
+          <el-button :icon="Wallet" aria-label="查看真实持仓" @click="openRealHolding" />
+        </el-tooltip>
         <el-button @click="onToggleFavorite">
           <el-icon><Star /></el-icon> {{ isFav ? '已自选' : '加自选' }}
         </el-button>
@@ -359,7 +362,7 @@
 import { ref, reactive, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { TrendCharts, Star, Refresh, Link, Document, Clock, Reading, CreditCard, Delete } from '@element-plus/icons-vue'
+import { TrendCharts, Star, Refresh, Link, Document, Clock, Reading, CreditCard, Delete, Wallet } from '@element-plus/icons-vue'
 import { marked } from 'marked'
 import { stocksApi } from '@/api/stocks'
 import { analysisApi } from '@/api/analysis'
@@ -887,6 +890,12 @@ async function onToggleFavorite() {
   }
 }
 
+function openRealHolding() {
+  const internalMarket = market.value === 'HK' ? 'HK' : 'A'
+  const normalizedCode = symbol.value.padStart(internalMarket === 'HK' ? 5 : 6, '0')
+  router.push({ name: 'RealHoldings', query: { security_id: `${internalMarket}:${normalizedCode}` } })
+}
+
 function goPaperTrading() {
   router.push({ name: 'PaperTradingHome', query: { code: code.value } })
 }
@@ -1187,11 +1196,12 @@ function exportReport() {
   display: flex; flex-direction: column; gap: 16px;
 }
 
-.header { display: flex; justify-content: space-between; align-items: center; }
-.title { display: flex; align-items: center; gap: 12px; }
+.header { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; }
+.title { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .code { font-size: 22px; font-weight: 700; }
 .name { font-size: 18px; color: var(--el-text-color-regular); }
-.actions { display: flex; gap: 8px; }
+.actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.actions .el-button { margin-left: 0; }
 
 .quote-card { border-radius: 12px; }
 .quote { display: flex; flex-direction: column; gap: 8px; }
