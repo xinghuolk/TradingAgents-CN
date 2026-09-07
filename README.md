@@ -1,8 +1,8 @@
 # TradingAgents 中文增强版
 
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
-[![Python](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://www.python.org/)
-[![Version](https://img.shields.io/badge/Version-cn--0.1.15-green.svg)](./VERSION)
+[![Python](https://img.shields.io/badge/Python-3.11-blue.svg)](https://www.python.org/)
+[![Version](https://img.shields.io/badge/Version-1.0.0--preview-green.svg)](./pyproject.toml)
 [![Documentation](https://img.shields.io/badge/docs-中文文档-green.svg)](./docs/)
 [![Original](https://img.shields.io/badge/基于-TauricResearch/TradingAgents-orange.svg)](https://github.com/TauricResearch/TradingAgents)
 
@@ -172,6 +172,8 @@ TradingAgentsCN 已经获得 **13,000+ stars**，但一直由我一个人开发�
 **详细信息**: 查看完整招募公告 → [📢 测试志愿者招募](docs/community/CALL_FOR_TESTERS.md)
 
 ## 🤝 贡献指南
+
+项目当前的环境、开发和验证命令见 [开发指南](docs/development.md)。
 
 我们欢迎各种形式的贡献：
 

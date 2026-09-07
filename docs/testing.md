@@ -1,0 +1,45 @@
+# Testing
+
+The repository distinguishes fast, service-free checks from opt-in integration work.
+
+## Service-Free Baseline
+
+Run from the repository root in a Python 3.11 environment with project dependencies:
+
+```bash
+python -m pytest -c tests/pytest.ini tests/config tests/unit/real_portfolio -q
+```
+
+This explicit selection is the current green baseline. It does not need MongoDB,
+Redis, network access, market-data credentials, or LLM credentials. New harness
+regression tests will join this selection when the unified command is implemented.
+
+For one change, run the closest test file or node first:
+
+```bash
+python -m pytest -c tests/pytest.ini tests/unit/real_portfolio/test_holdings.py -q
+python -m pytest -c tests/pytest.ini tests/unit/real_portfolio/test_holdings.py::test_name -q
+```
+
+## Integration Checks
+
+Tests marked `integration` and checks that start the FastAPI application, connect to
+MongoDB or Redis, call external market-data providers, or invoke an LLM are opt-in.
+Configure the required services and secrets, then select the relevant path explicitly.
+Do not add these checks to the personal quick gate.
+
+The broad `tests/` collection is not a reliable gate yet because some legacy modules
+perform external work while importing or refer to removed modules. Its current status
+is recorded in [technical debt](technical-debt.md).
+
+## Frontend Checks
+
+The actual deployed bundle uses Vite without the legacy type-check pre-step. With
+frontend dependencies already installed, run:
+
+```bash
+./frontend/node_modules/.bin/vite build --config frontend/vite.config.ts
+```
+
+Lint and type checking are useful diagnostics but currently report existing debt.
+They must become blocking only after their baselines are green.

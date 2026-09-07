@@ -38,23 +38,23 @@
 - Consumes: current package layout, `pyproject.toml`, `frontend/package.json`, Dockerfiles, and pytest configuration.
 - Produces: canonical files later validated by `scripts/harness.py`.
 
-- [ ] **Step 1: Replace duplicated agent guidance with a short map**
+- [x] **Step 1: Replace duplicated agent guidance with a short map**
 
 Keep `AGENTS.md` and `CLAUDE.md` limited to repository layout, authoritative-document links, the quick command, and security constraints. Commands live only in `docs/development.md`; architecture lives only in `ARCHITECTURE.md`.
 
-- [ ] **Step 2: Write current-state architecture and development references**
+- [x] **Step 2: Write current-state architecture and development references**
 
 Document the FastAPI, Vue, CLI, LangGraph, MongoDB/Redis, configuration bridge, worker, and deployment boundaries in `ARCHITECTURE.md`. Record Python 3.11, Node 22, Yarn 1.22.22, install/run commands, and the debt-update rule in `docs/development.md`.
 
-- [ ] **Step 3: Replace the stale documentation home**
+- [x] **Step 3: Replace the stale documentation home**
 
 Make `docs/README.md` identify v1.0.0-preview, link the four canonical references first, and classify the existing versioned documents as historical references. Add a development-guide link to the root README without rewriting user-facing setup.
 
-- [ ] **Step 4: Record measured legacy debt**
+- [x] **Step 4: Record measured legacy debt**
 
 Create `docs/technical-debt.md` with owners expressed as repository areas, current evidence, impact, and an explicit trigger for revisiting each item: broad pytest collection, frontend type errors, frontend formatting/lint debt, historical broken links, `tradingagents -> app` imports, and oversized production files.
 
-- [ ] **Step 5: Verify and commit**
+- [x] **Step 5: Verify and commit**
 
 Run:
 
