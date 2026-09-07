@@ -162,7 +162,7 @@ class SourceRow:
 @dataclass(frozen=True, slots=True)
 class ParseWarning:
     warning_type: str
-    import_id: int | None
+    import_id: str | None
     line_number: int | None
     impact_from: date | None
     impact_through: date | None
@@ -176,7 +176,7 @@ class ParseWarning:
 
 @dataclass(frozen=True, slots=True)
 class EvidenceRef:
-    import_id: int | None
+    import_id: str | None
     line_number: int
     fact_key: str
     role: str
