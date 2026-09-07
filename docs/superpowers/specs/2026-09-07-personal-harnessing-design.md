@@ -82,19 +82,27 @@ It will run only deterministic checks that do not require credentials or service
 
 1. repository-specific structural checks implemented with the Python standard
    library;
-2. Python source compilation;
-3. a curated pytest quick suite;
-4. frontend production bundling with the checked-in Yarn lockfile;
-5. non-mutating frontend lint when its existing error level permits it.
+2. compilation of Python files under `app/`, `tradingagents/`, and `cli/`;
+3. an explicit pytest quick suite covering `tests/config`,
+   `tests/unit/real_portfolio`, and harness regression tests;
+4. frontend production bundling through a package script that invokes the
+   project-local Vite binary. CI installs dependencies from the checked-in Yarn
+   lockfile, while the harness itself does not require a globally installed Yarn.
+
+The quick path should complete in under two minutes on the maintainer's normal
+development machine. `yarn lint` and `yarn type-check` will remain visible diagnostic
+commands until their existing errors are resolved; they will not be represented as
+green blocking checks.
 
 The structural checks will validate a small set of high-value invariants:
 
 - required repository-map documents exist and their local links resolve;
-- the Apache-licensed `tradingagents/` package does not import proprietary `app/`
-  modules;
-- the project console entry point resolves to a callable function;
-- newly introduced oversized source files are rejected while existing large files
-  remain documented debt.
+- the project console entry point resolves to a callable function.
+
+Current `tradingagents/` imports from proprietary `app/` modules and oversized source
+files will be reported in technical debt rather than blocked in this pass. Enforcing
+either rule before the existing violations are removed would make the first harness
+permanently red and turn a personal-use cleanup into a broad architecture project.
 
 The harness will print the exact failed command and remediation guidance. It will
 return a non-zero exit status on failure.
@@ -113,18 +121,33 @@ Every behavior-changing fix will follow a focused red-green cycle. Configuration
 documentation changes will be verified with the harness itself.
 
 Frontend type-check debt will be documented but will not be hidden: `yarn type-check`
-remains available as a full diagnostic command. The quick gate uses the actual Vite
-production build because that is the repository's current deploy path.
+remains available as a full diagnostic command. `yarn lint` will be repaired so it is
+non-mutating and useful for cleanup, but it also remains diagnostic in this pass. The
+quick gate invokes the project-local Vite binary, matching the current Docker
+deployment path without coupling local validation to a globally installed package
+manager.
 
 ## CI And Automation
 
 A single lightweight GitHub Actions workflow will run on pull requests and pushes to
-`main`. It will install Python and frontend dependencies from the committed project
-metadata, then invoke the same local harness command.
+`main`. It will use Python 3.11, Node 22, Yarn 1.22.22, a small locked Python
+development dependency group, and `yarn install --frozen-lockfile`, then invoke the
+same local harness command.
 
-Docker publishing and upstream synchronization must run the harness before publishing
-or pushing. The upstream workflow will not gain more automation; it will only lose
-the ability to bypass validation.
+Docker publishing must run the harness before publishing. Upstream synchronization
+will retain update detection but lose its direct-to-`main` auto-sync job. Applying
+upstream changes remains a human-reviewed action because a small deterministic gate
+cannot assess the semantics of a divergent upstream merge.
+
+`docs/development.md` will be the only canonical command reference, and
+`ARCHITECTURE.md` the only canonical architecture overview. `AGENTS.md` and
+`CLAUDE.md` will be maps to those sources; the root README will stay focused on users
+and link to the development guide instead of duplicating it.
+
+When work fixes or touches a listed debt item, the same change must update or remove
+the debt entry. A service-free regression test should join the quick suite when it
+guards behavior important enough to keep. This is the personal-project equivalent of
+continuous gardening; it requires no scheduled automation.
 
 ## Implementation Sequence
 
@@ -132,7 +155,8 @@ the ability to bypass validation.
 2. Replace stale entry-point documentation with the small repository knowledge map.
 3. Add and test the structural checker and unified local harness command.
 4. Fix test logging isolation and define a deterministic Python quick suite.
-5. Repair the frontend lint command and validate the current production build path.
+5. Repair the frontend lint command as a diagnostic and validate the project-local
+   Vite bundle as the current production build path.
 6. Add the CI workflow and guard existing publish/sync workflows.
 7. Fix the console-script entry point and add an installation smoke check.
 8. Re-run all lightweight gates and update the technical-debt document with measured
@@ -150,6 +174,3 @@ Implementation:
 Verification:
 - commands run and their results
 ```
-
-The original checkout's modified `uv.lock`, `.codex/`, `Untitled`, and untracked
-analysis documents are outside this worktree and outside the scope of every commit.
