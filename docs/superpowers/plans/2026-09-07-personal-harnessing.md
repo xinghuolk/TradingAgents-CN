@@ -81,11 +81,11 @@ Commit: `docs(harness): establish canonical repository knowledge`
 - Consumes: canonical paths from Task 1 and the repository root derived from `__file__`.
 - Produces: `validate_repository(root: Path) -> list[str]`, `build_checks(root: Path) -> list[Check]`, and `main() -> int`.
 
-- [ ] **Step 1: Write failing structural-check tests**
+- [x] **Step 1: Write failing structural-check tests**
 
 Add tests that build a temporary repository map, verify valid relative Markdown links return no errors, then remove one linked file and expect an error naming both the source and missing target. Add a runner test using a real `sys.executable -c` command and assert that a non-zero child status makes `run_checks()` return non-zero without running later checks.
 
-- [ ] **Step 2: Verify the tests fail for the missing module**
+- [x] **Step 2: Verify the tests fail for the missing module**
 
 Run:
 
@@ -95,7 +95,7 @@ python -m pytest -c tests/pytest.ini tests/harness/test_harness.py -q
 
 Expected: collection fails because `scripts.harness` does not exist.
 
-- [ ] **Step 3: Implement the minimum harness**
+- [x] **Step 3: Implement the minimum harness**
 
 Use `dataclasses.dataclass` for:
 
@@ -110,7 +110,7 @@ class Check:
 
 Validate local Markdown links only in `AGENTS.md`, `CLAUDE.md`, `ARCHITECTURE.md`, `docs/README.md`, `docs/development.md`, and `docs/testing.md`. Build checks for repository validation, Python compilation with a temporary `PYTHONPYCACHEPREFIX`, the explicit pytest paths, and `npm --prefix frontend run bundle`. Stop on the first failure and print the failed command.
 
-- [ ] **Step 4: Verify unit behavior and the structural-only path**
+- [x] **Step 4: Verify unit behavior and the structural-only path**
 
 Run:
 
@@ -122,7 +122,7 @@ git diff --check
 
 Expected: all harness tests pass, structural validation exits 0, and the diff check is clean.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 Commit: `feat(harness): add deterministic repository checks`
 

@@ -4,7 +4,20 @@ The repository distinguishes fast, service-free checks from opt-in integration w
 
 ## Service-Free Baseline
 
-Run from the repository root in a Python 3.11 environment with project dependencies:
+Run the canonical repository-map check from the repository root:
+
+```bash
+python scripts/harness.py --structural-only
+```
+
+The full harness also compiles Python, runs the service-free tests below, and builds
+the frontend with the project-local Vite binary:
+
+```bash
+python scripts/harness.py
+```
+
+Run in a Python 3.11 environment with project dependencies:
 
 ```bash
 python -m pytest -c tests/pytest.ini tests/config tests/unit/real_portfolio -q
