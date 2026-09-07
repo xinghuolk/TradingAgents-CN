@@ -567,6 +567,28 @@ class RealPortfolioRepository:
         await self._validate_generation(scope, manifest)
         return manifest.generation
 
+    async def stage_import_summary(
+        self,
+        *,
+        import_id: str,
+        generation: str,
+        parser_version: str,
+        summary: ImportSummary,
+    ) -> None:
+        result = await self._collection("imports").update_one(
+            {"import_id": import_id},
+            {
+                "$set": {
+                    "summary": _encode(summary),
+                    "summary_generation": generation,
+                    "summary_parser_version": parser_version,
+                    "summary_derived_version": DERIVED_VERSION,
+                }
+            },
+        )
+        if result.matched_count != 1:
+            raise _unavailable()
+
     async def mark_imported(
         self, *, import_id: str, generation: str, summary: ImportSummary
     ) -> None:

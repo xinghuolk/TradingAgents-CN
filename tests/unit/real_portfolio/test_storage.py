@@ -653,6 +653,47 @@ async def test_completion_history_and_failure_metadata_are_safe(database):
     assert persisted["import_sequence"] == first["import_sequence"]
 
 
+async def test_staged_summary_is_durable_without_publishing_success(database):
+    repo = RealPortfolioRepository(database)
+    parsed = parse_portfolio_file(delivery_bytes())
+    doc = await facts(repo, parsed)
+    await repo.stage_import_summary(
+        import_id=doc["import_id"],
+        generation="pending",
+        parser_version=parsed.parser_version,
+        summary=summary(parsed),
+    )
+    stored = await database["real_portfolio_imports"].find_one(
+        {"import_id": doc["import_id"]}
+    )
+    assert stored["summary"]["new_facts"] == 1
+    assert stored["summary"]["warnings"] == []
+    assert stored["summary_generation"] == "pending"
+    assert stored["summary_parser_version"] == parsed.parser_version
+    assert stored["summary_derived_version"] == "real-portfolio-v1"
+    assert stored["status"] == "publishing"
+    assert stored["completed_at"] is None
+    assert stored["derived_version"] is None
+    assert (
+        not database["real_portfolio_accounts"]
+        .documents[0]
+        .get("active_derived_generation")
+    )
+
+
+async def test_staging_summary_requires_an_existing_import(database):
+    repo = RealPortfolioRepository(database)
+    parsed = parse_portfolio_file(delivery_bytes())
+    with pytest.raises(PortfolioError) as caught:
+        await repo.stage_import_summary(
+            import_id="missing",
+            generation="pending",
+            parser_version=parsed.parser_version,
+            summary=summary(parsed),
+        )
+    assert caught.value.code == "PORTFOLIO_STORAGE_UNAVAILABLE"
+
+
 @pytest.mark.parametrize("fails", [False, True])
 async def test_startup_index_readiness_is_nonfatal(fails):
     # Execute the real lifespan prefix, stopping before unrelated service startup.
