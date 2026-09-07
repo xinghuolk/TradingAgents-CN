@@ -1,6 +1,6 @@
 # Repository Map
 
-TradingAgents-CN is a Python 3.11 application with three main surfaces:
+TradingAgents-CN is a Python 3.11 application with four main surfaces:
 
 - `tradingagents/`: the reusable multi-agent analysis and market-data core.
 - `app/`: the FastAPI API, services, workers, persistence, and scheduling layer.

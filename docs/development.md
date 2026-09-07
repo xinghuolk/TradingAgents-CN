@@ -12,18 +12,16 @@ This is the canonical command reference for the current v1.0.0-preview codebase.
 ## Setup
 
 Copy `.env.example` to `.env` and add local credentials without committing the file.
-For a locked Python environment, use:
+Install the application and its declared Python dependencies in an active Python 3.11
+environment:
 
 ```bash
-uv sync --frozen
+python -m pip install -e .
 ```
 
-The equivalent pip-based environment can be installed from the committed lock export:
-
-```bash
-python -m pip install -r requirements-lock.txt
-python -m pip install --no-deps -e .
-```
+`uv.lock` and `requirements-lock.txt` do not currently match `pyproject.toml` and are
+not supported setup paths. Their refresh is tracked in
+[technical debt](technical-debt.md).
 
 Install frontend dependencies from the lockfile:
 
@@ -57,10 +55,10 @@ validates application configuration during startup.
 
 ## Current Quality Commands
 
-Until the unified harness lands, the service-free Python baseline is:
+The service-free Python baseline used by the unified harness is:
 
 ```bash
-python -m pytest -c tests/pytest.ini tests/config tests/unit/real_portfolio -q
+python -m pytest -c tests/pytest.ini tests/config tests/unit/real_portfolio tests/harness -q
 ```
 
 The deployed frontend bundle can be checked from the repository root with the package

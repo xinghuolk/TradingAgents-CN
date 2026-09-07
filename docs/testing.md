@@ -21,12 +21,13 @@ GitHub Actions runs this exact command with Python dependencies from
 `requirements-harness.txt` and frontend dependencies from `frontend/yarn.lock`.
 Docker publishing depends on the same reusable workflow.
 The structural phase also checks that the configured console target is a declared
-function in a package included by setuptools.
+function in a package included by setuptools. A regression test loads that entry
+point without initializing the CLI runtime.
 
 Run in a Python 3.11 environment with project dependencies:
 
 ```bash
-python -m pytest -c tests/pytest.ini tests/config tests/unit/real_portfolio -q
+python -m pytest -c tests/pytest.ini tests/config tests/unit/real_portfolio tests/harness -q
 ```
 
 This explicit selection is the current green baseline. It does not need MongoDB,
@@ -69,7 +70,7 @@ baselines are green.
 
 ## Verified Baseline
 
-On 2026-09-08, the complete harness finished in 18.85 seconds on the maintainer's
-development machine. Python compilation succeeded, 282 tests passed, and Vite built
-the production bundle. One existing Python deprecation warning and existing Vite/Sass
-bundle warnings remain visible but do not fail the gate.
+On 2026-09-08, the review-updated complete harness finished in 18.7 seconds on the
+maintainer's development machine. Python compilation succeeded, 287 tests passed,
+and Vite built the production bundle. One existing Python deprecation warning and
+existing Vite/Sass bundle warnings remain visible but do not fail the gate.

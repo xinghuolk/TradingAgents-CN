@@ -243,12 +243,16 @@ Commit: `fix(frontend): make local quality commands deterministic`
 - Modify: `docs/testing.md`
 
 **Interfaces:**
-- Consumes: `python scripts/harness.py`, Python 3.11, Node 22, Yarn 1.22.22, `requirements-lock.txt`, and `frontend/yarn.lock`.
+- Consumes: `python scripts/harness.py`, Python 3.11, Node 22, Yarn 1.22.22,
+  `requirements-harness.txt`, and `frontend/yarn.lock`.
 - Produces: a `quality` workflow for pull requests and `main`, plus a successful quality prerequisite for image publication.
 
 - [x] **Step 1: Add the normal quality workflow**
 
-Checkout, set up Python 3.11 and Node 22 with Yarn cache, activate Yarn 1.22.22 through Corepack, install `requirements-lock.txt` and the project, run `yarn --cwd frontend install --frozen-lockfile`, then run `python scripts/harness.py`.
+Checkout, set up Python 3.11 and Node 22 with Yarn cache, activate Yarn 1.22.22
+through Corepack, install `requirements-harness.txt`, run
+`yarn --cwd frontend install --frozen-lockfile`, then run
+`python scripts/harness.py`.
 
 - [x] **Step 2: Gate Docker publication**
 
@@ -276,6 +280,8 @@ Commit: `ci(harness): enforce the personal quality gate`
 ### Task 6: Safe Console Entry Point
 
 **Files:**
+- Create: `cli/entrypoint.py`
+- Modify: `cli/__init__.py`
 - Create: `tests/harness/test_console_entrypoint.py`
 - Modify: `pyproject.toml`
 - Modify: `scripts/harness.py`
@@ -284,7 +290,8 @@ Commit: `ci(harness): enforce the personal quality gate`
 
 **Interfaces:**
 - Consumes: `[project.scripts].tradingagents` from `pyproject.toml` and `cli.main.main()`.
-- Produces: side-effect-free resolution of the installed `tradingagents` console command.
+- Produces: side-effect-free metadata loading and lazy runtime initialization of the
+  installed `tradingagents` console command.
 
 - [x] **Step 1: Write the failing entry-point resolution test**
 
@@ -300,16 +307,18 @@ python -m pytest -c tests/pytest.ini tests/harness/test_console_entrypoint.py -q
 
 Expected: FAIL because importing `main:main` either has no callable `main` or executes the NVDA example.
 
-- [x] **Step 3: Point the console command at the existing CLI**
+- [x] **Step 3: Point the console command at a lazy packaged wrapper**
 
 Change the entry point to:
 
 ```toml
 [project.scripts]
-tradingagents = "cli.main:main"
+tradingagents = "cli.entrypoint:main"
 ```
 
-Add console-entry-point validation to the harness structural checks and update canonical documentation.
+The wrapper imports `cli.main:main` only when the command runs. Declare Typer as a
+direct dependency, add console-entry-point validation to the harness structural
+checks, and update canonical documentation.
 
 - [x] **Step 4: Verify resolution and isolated installation**
 

@@ -8,6 +8,7 @@ when the related area changes.
 | --- | --- | --- | --- | --- |
 | High | Broad Python tests | Collection from a temporary working directory with isolated logs does not complete within 60 seconds. Earlier collection also exposed removed imports and database work during import. | `pytest tests/` cannot be the normal gate. | A touched failing module becomes service-free or its external setup moves out of collection. |
 | High | Frontend type safety | `vue-tsc --noEmit` reports about 240 errors across 41 files. | Type checking cannot block ordinary changes yet. | Fix errors by feature area and make type-check blocking only at zero. |
+| Medium | Python lock artifacts | `uv lock --check` exits 2. `uv.lock` still resolves OpenAI 1.x/LangChain OpenAI 0.x while `pyproject.toml` requires their newer major versions; `requirements-lock.txt` is also behind current metadata. | Frozen installs can silently produce an environment that conflicts with declared application requirements. | Refresh both artifacts together when a reproducible full application environment is needed; verify their frozen install commands before documenting them again. |
 | Medium | Frontend lint and format | Non-mutating lint reports 57 errors in 22 source files; Prettier reports 103 files with drift. | These diagnostics cannot block ordinary changes yet. | Clean only touched areas until lint and formatting diagnostics are green. |
 | Medium | Package boundary | 26 executable import sites across 12 files under `tradingagents/` load proprietary `app/` modules. | The reusable core is coupled to the application layer. | When one import site is touched, move the interface toward the core or inject the application dependency; enforce only after violations are removed or baselined. |
 | Medium | Documentation links | The harness link parser reports 307 unresolved local links across 114 documents, primarily in historical material. | Older guidance is difficult to navigate and cannot all be structurally gated. | Repair links in any historical document being edited; keep the canonical map at zero. |
@@ -19,6 +20,7 @@ Run these diagnostics deliberately; non-zero status is expected until the matchi
 entry is cleared:
 
 ```bash
+uv lock --check
 npm --prefix frontend run type-check
 npm --prefix frontend run lint
 frontend/node_modules/.bin/prettier --check frontend/src
