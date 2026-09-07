@@ -19,9 +19,10 @@ environment:
 python -m pip install -e .
 ```
 
-`uv.lock` and `requirements-lock.txt` do not currently match `pyproject.toml` and are
-not supported setup paths. Their refresh is tracked in
-[technical debt](technical-debt.md).
+The unpublished financial-report extractor is pinned to a Git commit in standard
+project metadata, so this command requires Git and GitHub access. `uv.lock` and
+`requirements-lock.txt` do not currently match `pyproject.toml` and are not supported
+setup paths. Their refresh is tracked in [technical debt](technical-debt.md).
 
 Install frontend dependencies from the lockfile:
 

@@ -46,6 +46,7 @@ assert not any(
         text=True,
         capture_output=True,
         check=False,
+        timeout=5,
     )
 
     assert result.returncode == 0, result.stderr

@@ -70,7 +70,7 @@ baselines are green.
 
 ## Verified Baseline
 
-On 2026-09-08, the review-updated complete harness finished in 18.7 seconds on the
-maintainer's development machine. Python compilation succeeded, 287 tests passed,
+On 2026-09-08, the review-updated complete harness finished in 19.4 seconds on the
+maintainer's development machine. Python compilation succeeded, 288 tests passed,
 and Vite built the production bundle. One existing Python deprecation warning and
 existing Vite/Sass bundle warnings remain visible but do not fail the gate.
