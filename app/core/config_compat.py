@@ -34,7 +34,7 @@ class ConfigManagerCompat:
             warnings.warn(
                 "ConfigManagerCompat is a compatibility layer for legacy code. "
                 "Please migrate to app.services.config_service.ConfigService. "
-                "See docs/DEPRECATION_NOTICE.md for details.",
+                "See docs/reference/deprecations.md for details.",
                 DeprecationWarning,
                 stacklevel=3
             )
@@ -263,4 +263,3 @@ def get_token_tracker() -> TokenTrackerCompat:
         TokenTrackerCompat: Token 跟踪器兼容实例
     """
     return token_tracker_compat
-
