@@ -235,6 +235,8 @@ def build_checks(root: Path, temp_dir: Path) -> list[Check]:
                 "tests/pytest.ini",
                 "tests/config",
                 "tests/unit/real_portfolio",
+                "tests/unit/stock_research",
+                "tests/unit/test_stock_research_router.py",
                 "tests/harness",
                 "-q",
             ),

@@ -3,7 +3,13 @@ from datetime import UTC, date, datetime
 import pytest
 
 from app.services.stock_research.errors import ResearchError
-from app.services.stock_research.models import EntryPatch, NewEntry, ThesisPatch
+from app.services.stock_research.models import (
+    EntryPatch,
+    EntryQuery,
+    NewEntry,
+    ThesisPatch,
+    WorkspaceQuery,
+)
 from app.services.stock_research.service import StockResearchService
 from app.services.stock_research.storage import StockResearchRepository
 from tests.unit.stock_research.fakes import FakeDatabase
@@ -290,3 +296,51 @@ async def test_missing_owned_records_raise_not_found(service):
         await service.update_entry_draft("u1", "missing", EntryPatch(body="x"))
     with pytest.raises(ResearchError, match="revision not found"):
         await service.restore_revision("u1", "missing")
+
+
+@pytest.mark.asyncio
+async def test_read_workflows_delegate_to_user_scoped_repository_queries(service, repo):
+    workspace = await service.get_or_create_workspace(
+        "u1", "CN", "600519", "贵州茅台"
+    )
+    entry = await service.create_entry(
+        "u1", NewEntry.note("A:600519", "标题", "正文")
+    )
+    revision = await service.save_workspace_version(
+        "u1", workspace.security_id, "初始版本"
+    )
+    await service.delete_entry("u1", entry.id)
+
+    workspaces = await service.list_workspaces("u1", WorkspaceQuery(page_size=10))
+    entries = await service.list_entries(
+        "u1", EntryQuery(security_id="A:600519", page_size=10)
+    )
+    revisions = await service.list_revisions(
+        "u1", "workspace", workspace.security_id
+    )
+    trash = await service.list_trash("u1", page=1, page_size=10)
+
+    assert [item.security_id for item in workspaces.items] == [workspace.security_id]
+    assert workspaces.items[0].current_revision == 1
+    assert entries.items == ()
+    deleted = await service.get_entry("u1", entry.id, include_deleted=True)
+    assert deleted.id == entry.id
+    assert deleted.deleted_at == NOW
+    assert revisions == [revision]
+    assert await service.get_revision("u1", revision.id) == revision
+    assert [item.id for item in trash.items] == [entry.id]
+
+
+@pytest.mark.asyncio
+async def test_read_workflows_hide_missing_or_other_user_records(service, repo):
+    entry = await service.create_entry(
+        "u1", NewEntry.note("A:600519", "标题", "正文")
+    )
+    revision = await repo.append_revision(
+        "u1", "entry", entry.id, entry.to_document(), "manual"
+    )
+
+    with pytest.raises(ResearchError, match="entry not found"):
+        await service.get_entry("u2", entry.id)
+    with pytest.raises(ResearchError, match="revision not found"):
+        await service.get_revision("u2", revision.id)

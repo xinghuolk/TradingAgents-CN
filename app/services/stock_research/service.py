@@ -9,12 +9,15 @@ from app.services.stock_research.errors import ResearchError
 from app.services.stock_research.models import (
     Entry,
     EntryPatch,
+    EntryQuery,
     NewEntry,
     Reference,
+    ResearchPage,
     ResearchSecurityId,
     Revision,
     ThesisPatch,
     Workspace,
+    WorkspaceQuery,
     utc_now,
 )
 from app.services.stock_research.storage import StockResearchRepository
@@ -37,6 +40,11 @@ class StockResearchService:
         if workspace is None:
             raise ResearchError("RESEARCH_NOT_FOUND", "research workspace not found")
         return workspace
+
+    async def list_workspaces(
+        self, user_id: str, query: WorkspaceQuery
+    ) -> ResearchPage[Workspace]:
+        return await self.repository.list_workspaces(user_id, query)
 
     async def get_or_create_workspace(
         self, user_id: str, market: str, code: str, name: str
@@ -82,6 +90,22 @@ class StockResearchService:
             )
         )
         return revision
+
+    async def get_entry(
+        self,
+        user_id: str,
+        entry_id: str,
+        *,
+        include_deleted: bool = False,
+    ) -> Entry:
+        return await self._get_entry(
+            user_id, entry_id, include_deleted=include_deleted
+        )
+
+    async def list_entries(
+        self, user_id: str, query: EntryQuery
+    ) -> ResearchPage[Entry]:
+        return await self.repository.list_entries(user_id, query)
 
     async def create_entry(self, user_id: str, request: NewEntry) -> Entry:
         now = self.clock()
@@ -246,6 +270,17 @@ class StockResearchService:
             return revision
         raise ResearchError("INVALID_REVISION", "revision target type is invalid")
 
+    async def get_revision(self, user_id: str, revision_id: str) -> Revision:
+        revision = await self.repository.get_revision(user_id, revision_id)
+        if revision is None:
+            raise ResearchError("RESEARCH_NOT_FOUND", "research revision not found")
+        return revision
+
+    async def list_revisions(
+        self, user_id: str, target_type: str, target_id: str
+    ) -> list[Revision]:
+        return await self.repository.list_revisions(user_id, target_type, target_id)
+
     async def apply_review_to_thesis(
         self, user_id: str, review_id: str, patch: ThesisPatch
     ) -> Revision:
@@ -286,6 +321,11 @@ class StockResearchService:
         if entry.deleted_at is None:
             raise ResearchError("RESEARCH_NOT_FOUND", "research entry not found")
         return await self.repository.restore_entry(user_id, entry_id)
+
+    async def list_trash(
+        self, user_id: str, page: int, page_size: int
+    ) -> ResearchPage[Entry]:
+        return await self.repository.list_trash(user_id, page, page_size)
 
     async def permanently_delete_entry(self, user_id: str, entry_id: str) -> None:
         await self._get_entry(user_id, entry_id, include_deleted=True)
