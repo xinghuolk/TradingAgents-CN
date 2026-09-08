@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import json
 from dataclasses import replace
 from datetime import datetime
 from typing import Callable, Literal
 from uuid import uuid4
+
+from pymongo.errors import DuplicateKeyError
 
 from app.services.stock_research.errors import ResearchError
 from app.services.stock_research.models import (
@@ -334,12 +337,66 @@ class StockResearchService:
     async def set_decision_trade_links(
         self, user_id: str, decision_id: str, references: list[Reference]
     ) -> Entry:
-        raise NotImplementedError("decision trade links are implemented in Task 4")
+        decision = await self._get_entry(user_id, decision_id)
+        if decision.entry_type != "decision":
+            raise ResearchError("INVALID_ENTRY", "trade links require a decision")
+        confirmed: list[Reference] = []
+        trade_link_keys: list[str] = []
+        seen: set[str] = set()
+        for reference in references:
+            key = self._trade_link_key(reference)
+            if key in seen:
+                continue
+            seen.add(key)
+            confirmed.append(reference)
+            trade_link_keys.append(key)
+        non_trade_references = tuple(
+            reference
+            for reference in decision.references
+            if reference.kind not in {"real_trade", "paper_trade"}
+        )
+        updated = replace(
+            decision,
+            references=(*non_trade_references, *confirmed),
+            trade_link_keys=tuple(trade_link_keys),
+            updated_at=self.clock(),
+        )
+        try:
+            return await self.repository.replace_entry(updated)
+        except DuplicateKeyError:
+            raise ResearchError(
+                "RESEARCH_CONFLICT", "trade is already linked to another decision"
+            ) from None
 
     async def get_decision_trade_links(
         self, user_id: str, decision_id: str
     ) -> list[Reference]:
-        raise NotImplementedError("decision trade links are implemented in Task 4")
+        decision = await self._get_entry(user_id, decision_id)
+        if decision.entry_type != "decision":
+            raise ResearchError("INVALID_ENTRY", "trade links require a decision")
+        return [
+            reference
+            for reference in decision.references
+            if reference.kind in {"real_trade", "paper_trade"}
+        ]
+
+    @staticmethod
+    def _trade_link_key(reference: Reference) -> str:
+        expected_account = {
+            "real_trade": "real",
+            "paper_trade": "paper",
+        }.get(reference.kind)
+        if (
+            expected_account is None
+            or reference.account_type != expected_account
+            or not reference.source_id.strip()
+        ):
+            raise ResearchError("INVALID_ENTRY", "trade reference is invalid")
+        return json.dumps(
+            [reference.kind, reference.account_type, reference.source_id],
+            ensure_ascii=True,
+            separators=(",", ":"),
+        )
 
     async def _get_entry(
         self,

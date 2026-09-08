@@ -64,6 +64,10 @@ async def test_indexes_and_revision_numbers_are_user_scoped(fake_db):
         "target_id",
         "revision",
     ) in fake_db["stock_research_revisions"].unique_keys
+    assert (
+        "user_id",
+        "trade_link_keys",
+    ) in fake_db["stock_research_entries"].unique_keys
 
 
 @pytest.mark.asyncio

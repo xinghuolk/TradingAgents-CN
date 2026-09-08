@@ -28,6 +28,7 @@ from app.services.stock_research.models import (
     Workspace,
     WorkspaceQuery,
 )
+from app.services.stock_research.references import ReferenceCandidate
 from app.services.stock_research.service import StockResearchService
 from app.services.stock_research.storage import StockResearchRepository
 from tests.unit.stock_research.fakes import FakeDatabase
@@ -72,6 +73,13 @@ class ServiceSpy:
             "list_trash": ResearchPage((entry(deleted_at=NOW),), 2, 10, 11),
             "restore_entry": entry(),
             "permanently_delete_entry": None,
+            "list_candidates": [reference_candidate()],
+            "recommend_trade_links": [reference_candidate(kind="paper_trade")],
+            "set_decision_trade_links": entry(entry_type="decision"),
+            "get_decision_trade_links": [
+                Reference.real_trade("real-1"),
+                Reference.paper_trade("paper-1"),
+            ],
         }
 
     def __getattr__(self, operation: str):
@@ -150,6 +158,22 @@ def revision(*, reason: str = "manual", number: int = 1) -> Revision:
     )
 
 
+def reference_candidate(
+    *, kind: str = "real_trade"
+) -> ReferenceCandidate:
+    account_type = "real" if kind == "real_trade" else "paper"
+    return ReferenceCandidate(
+        user_id="private-user",
+        security_id="A:600519",
+        kind=kind,
+        source_id=f"{account_type}-1",
+        account_type=account_type,
+        source_date=date(2026, 9, 7),
+        label=f"{account_type} buy",
+        snapshot={"quantity": "100"},
+    )
+
+
 def create_test_app(
     service: ServiceSpy | StockResearchService, *, authenticated: bool = True
 ) -> FastAPI:
@@ -161,6 +185,9 @@ def create_test_app(
 
     application.dependency_overrides[
         stock_research.get_stock_research_service
+    ] = service_dependency
+    application.dependency_overrides[
+        stock_research.get_reference_service
     ] = service_dependency
     if authenticated:
 
@@ -285,6 +312,26 @@ async def test_request_body_cannot_override_authenticated_user() -> None:
         ("get", "/api/research/trash", {}),
         ("post", "/api/research/trash/entry-1/restore", {}),
         ("delete", "/api/research/trash/entry-1", {}),
+        (
+            "get",
+            "/api/research/references?security_id=A:600519",
+            {},
+        ),
+        (
+            "get",
+            "/api/research/links/recommendations?decision_id=d1",
+            {},
+        ),
+        (
+            "put",
+            "/api/research/links/decisions/d1",
+            {"json": {"references": []}},
+        ),
+        (
+            "delete",
+            "/api/research/links/decisions/d1/real_trade/real-1",
+            {},
+        ),
     ],
 )
 async def test_every_research_endpoint_requires_authentication(
@@ -335,6 +382,93 @@ async def test_workspace_list_translates_filters_and_serializes_page() -> None:
                 ),
             },
         )
+    ]
+
+
+async def test_reference_and_link_routes_use_authenticated_scope() -> None:
+    service_spy = ServiceSpy()
+    async with create_test_client(create_test_app(service_spy)) as client:
+        candidates = await client.get(
+            "/api/research/references",
+            params={
+                "security_id": "A:600519",
+                "date_from": "2026-08-01",
+                "date_through": "2026-09-08",
+            },
+        )
+        recommendations = await client.get(
+            "/api/research/links/recommendations", params={"decision_id": "d1"}
+        )
+        linked = await client.put(
+            "/api/research/links/decisions/d1",
+            json={
+                "references": [
+                    {
+                        "kind": "real_trade",
+                        "source_id": "real-1",
+                        "account_type": "real",
+                    },
+                    {
+                        "kind": "paper_trade",
+                        "source_id": "paper-1",
+                        "account_type": "paper",
+                    },
+                ]
+            },
+        )
+        unlinked = await client.delete(
+            "/api/research/links/decisions/d1/real_trade/real-1"
+        )
+
+    assert all(
+        response.status_code == 200
+        for response in (candidates, recommendations, linked, unlinked)
+    )
+    assert "user_id" not in candidates.json()["data"][0]
+    assert candidates.json()["data"][0]["account_type"] == "real"
+    assert recommendations.json()["data"][0]["account_type"] == "paper"
+    assert service_spy.calls == [
+        ServiceCall(
+            "list_candidates",
+            (),
+            {
+                "user_id": "authenticated-user",
+                "security_id": "A:600519",
+                "date_from": date(2026, 8, 1),
+                "date_through": date(2026, 9, 8),
+            },
+        ),
+        ServiceCall(
+            "recommend_trade_links",
+            (),
+            {"user_id": "authenticated-user", "decision_id": "d1"},
+        ),
+        ServiceCall(
+            "set_decision_trade_links",
+            (),
+            {
+                "user_id": "authenticated-user",
+                "decision_id": "d1",
+                "references": [
+                    Reference.real_trade("real-1"),
+                    Reference.paper_trade("paper-1"),
+                ],
+            },
+        ),
+        ServiceCall(
+            "get_decision_trade_links",
+            (),
+            {"user_id": "authenticated-user", "decision_id": "d1"},
+        ),
+        ServiceCall(
+            "set_decision_trade_links",
+            (),
+            {
+                "user_id": "authenticated-user",
+                "decision_id": "d1",
+                "references": [Reference.paper_trade("paper-1")],
+            },
+        ),
     ]
 
 

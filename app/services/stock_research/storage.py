@@ -66,6 +66,12 @@ class StockResearchRepository:
             ],
             name="entry_listing",
         )
+        await entries.create_index(
+            [("user_id", ASCENDING), ("trade_link_keys", ASCENDING)],
+            name="decision_trade_identity",
+            unique=True,
+            partialFilterExpression={"trade_link_keys.0": {"$exists": True}},
+        )
         await self._collection("revisions").create_index(
             [
                 ("user_id", ASCENDING),

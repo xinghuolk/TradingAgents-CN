@@ -5,15 +5,19 @@ from __future__ import annotations
 import logging
 from collections.abc import Awaitable
 from datetime import date
+from pathlib import Path
 from typing import Literal, TypeVar
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field
 from pymongo.errors import PyMongoError
 
+from app.core.config import settings
 from app.core.database import get_mongo_db
 from app.core.response import ok
 from app.routers.auth_db import get_current_user
+from app.services.real_portfolio.service import RealPortfolioService
+from app.services.real_portfolio.storage import RealPortfolioRepository
 from app.services.stock_research.errors import ResearchError
 from app.services.stock_research.models import (
     Entry,
@@ -27,6 +31,12 @@ from app.services.stock_research.models import (
     ThesisPatch,
     Workspace,
     WorkspaceQuery,
+)
+from app.services.stock_research.references import (
+    AnalysisReportAdapter,
+    PaperTradeAdapter,
+    ReferenceCandidate,
+    ReferenceService,
 )
 from app.services.stock_research.service import StockResearchService
 from app.services.stock_research.storage import StockResearchRepository
@@ -224,10 +234,27 @@ class ConvertEntryRequest(StrictRequest):
     topic: str | None = None
 
 
+class SetDecisionTradeLinksRequest(StrictRequest):
+    references: list[ReferenceRequest] = Field(default_factory=list)
+
+
 def get_stock_research_service(
     db=Depends(get_mongo_db),  # noqa: B008 - FastAPI dependency declaration
 ) -> StockResearchService:
     return StockResearchService(StockResearchRepository(db))
+
+
+def get_reference_service(
+    db=Depends(get_mongo_db),  # noqa: B008 - FastAPI dependency declaration
+) -> ReferenceService:
+    return ReferenceService(
+        StockResearchRepository(db),
+        AnalysisReportAdapter(db),
+        RealPortfolioService(
+            RealPortfolioRepository(db), Path(settings.TRADINGAGENTS_DATA_DIR)
+        ),
+        PaperTradeAdapter(db),
+    )
 
 
 def _internal_error() -> HTTPException:
@@ -304,8 +331,92 @@ def _page(page: ResearchPage[Workspace] | ResearchPage[Entry]) -> dict[str, obje
     }
 
 
+def _public_reference(item: ReferenceCandidate) -> dict[str, object]:
+    document = item.to_document()
+    document.pop("user_id", None)
+    return document
+
+
 def _user_id(current_user: dict) -> str:
     return str(current_user["id"])
+
+
+@router.get("/references")
+async def list_reference_candidates(
+    security_id: str,
+    date_from: date | None = None,
+    date_through: date | None = None,
+    current_user: dict = Depends(get_current_user),  # noqa: B008
+    service: ReferenceService = Depends(get_reference_service),  # noqa: B008
+):
+    result = await _call_service(
+        service.list_candidates(
+            user_id=_user_id(current_user),
+            security_id=security_id,
+            date_from=date_from,
+            date_through=date_through,
+        )
+    )
+    return ok([_public_reference(item) for item in result])
+
+
+@router.get("/links/recommendations")
+async def recommend_trade_links(
+    decision_id: str,
+    current_user: dict = Depends(get_current_user),  # noqa: B008
+    service: ReferenceService = Depends(get_reference_service),  # noqa: B008
+):
+    result = await _call_service(
+        service.recommend_trade_links(
+            user_id=_user_id(current_user), decision_id=decision_id
+        )
+    )
+    return ok([_public_reference(item) for item in result])
+
+
+@router.put("/links/decisions/{decision_id}")
+async def set_decision_trade_links(
+    decision_id: str,
+    payload: SetDecisionTradeLinksRequest,
+    current_user: dict = Depends(get_current_user),  # noqa: B008
+    service: StockResearchService = Depends(get_stock_research_service),  # noqa: B008
+):
+    result = await _call_service(
+        service.set_decision_trade_links(
+            user_id=_user_id(current_user),
+            decision_id=decision_id,
+            references=[item.to_domain() for item in payload.references],
+        )
+    )
+    return ok(_public_document(result))
+
+
+@router.delete("/links/decisions/{decision_id}/{kind}/{source_id}")
+async def delete_decision_trade_link(
+    decision_id: str,
+    kind: Literal["real_trade", "paper_trade"],
+    source_id: str,
+    current_user: dict = Depends(get_current_user),  # noqa: B008
+    service: StockResearchService = Depends(get_stock_research_service),  # noqa: B008
+):
+    user_id = _user_id(current_user)
+    current = await _call_service(
+        service.get_decision_trade_links(user_id=user_id, decision_id=decision_id)
+    )
+    result = await _call_service(
+        service.set_decision_trade_links(
+            user_id=user_id,
+            decision_id=decision_id,
+            references=[
+                reference
+                for reference in current
+                if not (
+                    reference.kind == kind and reference.source_id == source_id
+                )
+            ],
+        )
+    )
+    return ok(_public_document(result))
 
 
 @router.get("/workspaces")
