@@ -53,11 +53,20 @@ const thesis = {
 }
 
 {
-  const { app, calls } = setup('ReviewEditor', {})
-  app.securities.value = [
+  const securities = [
     { security_id: 'A:600519', has_real_holding: true, has_paper_holding: false },
     { security_id: 'HK:00700', has_real_holding: false, has_paper_holding: true }
   ]
+  const { app, calls, mount } = setup(
+    'ReviewEditor',
+    {},
+    {
+      async listWorkspaces() {
+        return { data: { items: securities } }
+      }
+    }
+  )
+  await mount()
   await app.saveDraft()
   assert.deepEqual(Array.from(calls[0][1].security_ids), ['A:600519'])
   app.form.scope_metadata.include_real_holdings = false
@@ -96,6 +105,8 @@ const thesis = {
 function setup(name, props = {}, overrides = {}) {
   const calls = []
   const events = []
+  const mounted = []
+  const unmounted = []
   const api = {
     async createEntry(input) {
       calls.push(['create', input])
@@ -149,7 +160,13 @@ function setup(name, props = {}, overrides = {}) {
   )
   const compiled = compileScript(descriptor, { id: name }).content
   const module = evaluate(compiled, dep => {
-    if (dep === 'vue') return { ...vue, onMounted() {}, watch() {} }
+    if (dep === 'vue')
+      return {
+        ...vue,
+        onMounted: callback => mounted.push(callback),
+        onBeforeUnmount: callback => unmounted.push(callback),
+        watch() {}
+      }
     if (dep === 'element-plus') return { ElMessage: { warning() {}, error() {}, success() {} } }
     if (dep === '@/api/stockResearch') return { stockResearchApi: api }
     if (dep === '@/composables/useResearchAutosave') return autosaveModule
@@ -159,8 +176,146 @@ function setup(name, props = {}, overrides = {}) {
   return {
     app: module.default.setup(props, { expose() {}, emit: (...args) => events.push(args) }),
     calls,
-    events
+    events,
+    mount: () => Promise.all(mounted.map(callback => callback())),
+    unmount: () => unmounted.forEach(callback => callback())
   }
+}
+{
+  let resolveSources
+  const { app, calls, mount } = setup(
+    'ReviewEditor',
+    {
+      entry: {
+        id: 'pending-review',
+        status: 'draft',
+        scope: 'portfolio',
+        security_ids: ['A:600519'],
+        references: [],
+        scope_metadata: { include_real_holdings: true, include_paper_holdings: false }
+      }
+    },
+    {
+      listWorkspaces: () =>
+        new Promise(resolve => {
+          resolveSources = resolve
+        })
+    }
+  )
+  const loading = mount()
+  app.form.scope_metadata.include_market = false
+  app.contextChanged()
+  await app.saveDraft()
+  assert.equal(
+    calls[0][2].security_ids,
+    undefined,
+    'pending selected holdings must not erase stored associations on a context edit'
+  )
+  app.form.scope_metadata.include_real_holdings = false
+  app.form.scope_metadata.include_paper_holdings = true
+  app.contextChanged()
+  await app.saveDraft()
+  assert.equal(
+    calls[1][2].security_ids,
+    undefined,
+    'switching to another pending source still preserves stored associations'
+  )
+  resolveSources({
+    data: {
+      items: [
+        { security_id: 'A:600519', has_real_holding: true, has_paper_holding: false },
+        { security_id: 'HK:00700', has_real_holding: false, has_paper_holding: true }
+      ]
+    }
+  })
+  await loading
+  await app.flush()
+  assert.ok(calls[2], 'successful source loading must schedule the deferred association update')
+  assert.deepEqual(
+    Array.from(calls[2][2].security_ids),
+    ['HK:00700'],
+    'successful load reschedules the latest context instead of retaining an earlier incomplete patch'
+  )
+}
+{
+  const { app, calls, mount } = setup(
+    'ReviewEditor',
+    {
+      entry: {
+        id: 'unavailable-review',
+        status: 'draft',
+        scope: 'portfolio',
+        security_ids: ['A:600519'],
+        references: [],
+        scope_metadata: { include_real_holdings: true, include_paper_holdings: false }
+      }
+    },
+    {
+      async listWorkspaces() {
+        throw new Error('unavailable')
+      }
+    }
+  )
+  await mount()
+  app.form.scope_metadata.include_market = false
+  app.contextChanged()
+  await app.saveDraft()
+  assert.equal(
+    calls[0][2].security_ids,
+    undefined,
+    'failed selected holdings must not erase stored associations'
+  )
+  app.form.body = 'Body after unavailable context'
+  app.changed()
+  await app.saveDraft()
+  assert.equal(
+    calls[1][2].security_ids,
+    undefined,
+    'ordinary body edits preserve associations after failure'
+  )
+  app.form.scope_metadata.include_real_holdings = false
+  app.contextChanged()
+  await app.saveDraft()
+  assert.deepEqual(
+    Array.from(calls[2][2].security_ids),
+    [],
+    'excluding all holdings can explicitly clear associations without loading those sources'
+  )
+}
+{
+  let resolveSources
+  const { app, calls, mount, unmount } = setup(
+    'ReviewEditor',
+    {
+      entry: {
+        id: 'leaving-review',
+        status: 'draft',
+        scope: 'portfolio',
+        security_ids: ['A:600519'],
+        references: [],
+        scope_metadata: { include_real_holdings: true }
+      }
+    },
+    {
+      listWorkspaces: () =>
+        new Promise(resolve => {
+          resolveSources = resolve
+        })
+    }
+  )
+  const loading = mount()
+  app.form.scope_metadata.include_market = false
+  app.contextChanged()
+  await app.saveDraft()
+  unmount()
+  resolveSources({ data: { items: [] } })
+  await loading
+  await app.flush()
+  assert.equal(
+    calls.length,
+    1,
+    'a source response after leaving the editor cannot schedule another write'
+  )
 }
 {
   const { app, calls } = setup('DecisionEditor', { securityId: 'A:600519' })

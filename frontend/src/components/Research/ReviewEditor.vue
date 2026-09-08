@@ -160,7 +160,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Check, Clock, DocumentAdd, EditPen, Refresh, Switch } from '@element-plus/icons-vue'
 import ResearchMarkdownEditor from '@/components/Research/ResearchMarkdownEditor.vue'
@@ -241,6 +241,13 @@ const canApplyToThesis = computed(
     (!props.securityId || record.value.security_id === props.securityId)
 )
 const securities = ref<ResearchWorkspaceSummary[]>([])
+const securitiesState = ref<'loading' | 'ready' | 'failed'>('loading')
+const associationsReady = computed(
+  () =>
+    form.scope === 'stock' ||
+    securitiesState.value === 'ready' ||
+    (!form.scope_metadata.include_real_holdings && !form.scope_metadata.include_paper_holdings)
+)
 const decisions = ref<ResearchEntry[]>([])
 const decisionsFailed = ref(false)
 const selectedDecision = computed(() => decisions.value.find(item => item.id === form.decision_id))
@@ -263,7 +270,8 @@ function input(): EntryPatchInput {
     decision_id: form.decision_id || (record.value?.decision_id ? '' : undefined),
     references: form.references.map(item => ({ ...item })),
     security_ids:
-      !record.value || (record.value.status === 'draft' && contextDirty.value)
+      associationsReady.value &&
+      (!record.value || (record.value.status === 'draft' && contextDirty.value))
         ? form.scope === 'portfolio'
           ? [...contextSecurityIds.value]
           : [form.security_id]
@@ -497,10 +505,20 @@ async function applyDiff() {
     busy.value = false
   }
 }
+let contextActive = true
+onBeforeUnmount(() => {
+  contextActive = false
+})
 onMounted(async () => {
   try {
-    securities.value = (await stockResearchApi.listWorkspaces({ page_size: 100 })).data.items
+    const response = await stockResearchApi.listWorkspaces({ page_size: 100 })
+    if (!contextActive) return
+    securities.value = response.data.items
+    securitiesState.value = 'ready'
+    if (contextDirty.value && record.value?.status === 'draft') changed()
   } catch {
+    if (!contextActive) return
+    securitiesState.value = 'failed'
     ElMessage.warning('证券范围加载失败')
   }
   await loadDecisions()
