@@ -33,6 +33,7 @@
 ## 历史资料
 
 - [归档说明](archive/README.md)
+- [归档文档清单](archive/inventory.md)
 - [更新日志](releases/CHANGELOG.md)
 - [学习中心资料](learning/)
 - [论文资料](paper/)
