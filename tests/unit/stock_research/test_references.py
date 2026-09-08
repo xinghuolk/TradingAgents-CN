@@ -355,6 +355,28 @@ async def test_one_trade_links_to_at_most_one_decision_and_unlink_releases_it() 
 
 
 @pytest.mark.asyncio
+async def test_dollar_prefixed_trade_link_values_are_stored_and_unlinked_literally(
+) -> None:
+    repository = StockResearchRepository(FakeDatabase())
+    await repository.ensure_indexes()
+    await repository.insert_entry(decision("u1", "d1"))
+    service = StockResearchService(repository, clock=lambda: NOW)
+    reference = Reference.real_trade("$id", label="$100")
+
+    linked = await service.set_decision_trade_links("u1", "d1", [reference])
+
+    assert linked.references == (reference,)
+    assert linked.trade_link_keys == (reference.trade_link_key(),)
+
+    unlinked = await service.delete_decision_trade_link(
+        "u1", "d1", reference
+    )
+
+    assert unlinked.references == ()
+    assert unlinked.trade_link_keys == ()
+
+
+@pytest.mark.asyncio
 async def test_generic_decision_creation_reserves_trade_reference_keys() -> None:
     repository = StockResearchRepository(FakeDatabase())
     await repository.ensure_indexes()

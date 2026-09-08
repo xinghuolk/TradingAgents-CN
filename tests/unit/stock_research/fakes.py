@@ -90,6 +90,8 @@ def _evaluate_expression(
         ]
     if not isinstance(expression, Mapping):
         return deepcopy(expression)
+    if "$literal" in expression:
+        return deepcopy(expression["$literal"])
     if "$ifNull" in expression:
         values = expression["$ifNull"]
         assert isinstance(values, list) and len(values) == 2

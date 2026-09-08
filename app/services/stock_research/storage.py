@@ -263,7 +263,12 @@ class StockResearchRepository:
                                             },
                                         }
                                     },
-                                    [item.to_document() for item in references],
+                                    {
+                                        "$literal": [
+                                            item.to_document()
+                                            for item in references
+                                        ]
+                                    },
                                 ]
                             },
                             "trade_link_keys": list(trade_link_keys),
