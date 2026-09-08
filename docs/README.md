@@ -1,25 +1,31 @@
 # TradingAgents-CN 文档
 
-当前代码版本为 **v1.0.0-preview**。以下文档是项目现状的权威入口：
+当前代码版本为 **v1.0.0-preview**。从本页进入当前的用户、运维和工程文档。
+
+## 使用与运维
+
+- [快速开始](current/getting-started.md)
+- [配置](current/configuration.md)
+- [使用](current/usage.md)
+- [部署](current/deployment.md)
+- [故障排除](current/troubleshooting.md)
+
+## 开发与架构
 
 - [系统架构](../ARCHITECTURE.md)
 - [开发指南](development.md)
 - [测试指南](testing.md)
 - [技术债务](technical-debt.md)
 
-## 当前专题
+## 稳定参考
 
-- `architecture/`：历史架构设计和迁移背景；当前边界以根目录
-  `ARCHITECTURE.md` 为准。
-- `configuration/`：数据源、LLM 和部署配置专题。
-- `development/`：早期开发记录和专题指南；当前命令以
-  `docs/development.md` 为准。
-- `features/`、`guides/`、`usage/`：功能说明和用户指南。
-- `releases/`：历史版本说明和升级记录。
-- `superpowers/specs/`、`superpowers/plans/`：已评审设计和实施计划。
+稳定参考文档会在迁移完成后列在这里；当前请以“使用与运维”和“开发与架构”中的文档为准。
 
-## 阅读约定
+## 历史资料
 
-版本化发布说明用于解释当时的行为，可能不再与当前代码一致。修改运行
-架构、开发命令、测试范围或已知债务时，应在同一个提交中更新上方对应的
-权威文档。
+- [归档说明](archive/README.md)
+- [更新日志](releases/CHANGELOG.md)
+- [学习中心资料](learning/)
+- [论文资料](paper/)
+
+未列出的旧目录正在迁移，不能作为当前行为、命令或配置的权威依据。

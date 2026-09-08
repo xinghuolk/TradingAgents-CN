@@ -80,6 +80,9 @@
 | 🐳 **Docker版** | 生产环境、跨平台 | ⭐⭐ 中等 | [Docker 部署指南](https://mp.weixin.qq.com/s/JkA0cOu8xJnoY_3LC5oXNw) |
 | 💻 **本地代码版** | 开发者、定制需求 | ⭐⭐⭐ 较难 | [本地安装指南](https://mp.weixin.qq.com/s/cqUGf-sAzcBV19gdI4sYfA) |
 
+当前代码版本请使用[快速开始](docs/current/getting-started.md)、[配置](docs/current/configuration.md)
+和[部署](docs/current/deployment.md)。
+
 ⚠️ **重要提醒**：在分析股票之前，请按相关文档要求，将股票数据同步完成，否则分析结果将会出现数据错误。
 
 
@@ -87,6 +90,12 @@
 #### 📚 使用指南
 
 在使用前，建议先阅读详细的使用指南：
+
+- [当前快速开始](docs/current/getting-started.md)
+- [当前配置](docs/current/configuration.md)
+- [当前部署](docs/current/deployment.md)
+- [当前文档目录](docs/README.md)
+
 - **[0、📘 TradingAgents-CN v1.0.0-preview 快速入门视频](https://www.bilibili.com/video/BV1i2CeBwEP7/?vd_source=5d790a5b8d2f46d2c10fd4e770be1594)**
 
 - **[1、📘 TradingAgents-CN v1.0.0-preview 使用指南](https://mp.weixin.qq.com/s/ppsYiBncynxlsfKFG8uEbw)**
