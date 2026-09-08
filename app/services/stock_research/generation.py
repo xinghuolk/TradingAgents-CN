@@ -195,7 +195,8 @@ class ResearchGenerationService:
     async def submit(
         self, *, user_id: str, target_entry_id: str, draft_kind: str,
         provider: str, model_name: str, reasoning_effort: str | None,
-        references: list[Reference],
+        references: list[Reference] | None = None,
+        context_options: dict | None = None,
     ) -> GenerationTask:
         entry = await self.repository.get_entry(user_id, target_entry_id)
         if entry is None:
@@ -215,32 +216,11 @@ class ResearchGenerationService:
             await self.selection_validator(
                 provider=provider, model_name=model_name, reasoning_effort=reasoning_effort
             )
-        resolved = []
-        for reference in references:
-            document = (await self.references.resolve(user_id, reference)).to_document()
-            document.pop("user_id", None)
-            resolved.append(document)
-        theses = []
-        security_ids = dict.fromkeys(
-            (*entry.security_ids, *((entry.security_id,) if entry.security_id else ()))
+        from app.services.stock_research.context import ResearchContextBuilder
+
+        context, references = await ResearchContextBuilder(self.repository, self.references).build(
+            user_id, entry, references, context_options
         )
-        for security_id in security_ids:
-            workspace = await self.repository.get_workspace(user_id, security_id)
-            if workspace:
-                workspace_document = workspace.to_document()
-                theses.append({key: workspace_document[key] for key in (
-                    "security_id", "body", "assumptions", "risks",
-                    "invalidation_conditions", "open_questions",
-                )})
-        entry_document = entry.to_document()
-        context = {
-            "target": {key: entry_document[key] for key in (
-                "entry_type", "scope", "security_id", "security_ids", "title", "body",
-                "topic", "conclusion", "decision_action", "decision_date",
-                "planned_price", "target_allocation", "horizon", "review_kind", "decision_id",
-            )},
-            "theses": theses, "references": resolved,
-        }
         task = GenerationTask(
             id=str(uuid4()), user_id=user_id, target_entry_id=target_entry_id,
             draft_kind=draft_kind,
@@ -250,6 +230,15 @@ class ResearchGenerationService:
             context_snapshot=deepcopy(context), prompt_version=PROMPT_VERSION,
         )
         return await self.repository.insert_generation_task(task)
+
+    async def preview_context(self, user_id: str, entry_id: str, context_options: dict | None = None) -> dict:
+        from app.services.stock_research.context import ResearchContextBuilder
+
+        entry = await self.repository.get_entry(user_id, entry_id)
+        if entry is None:
+            raise ResearchError("RESEARCH_NOT_FOUND", "research entry not found")
+        context, _ = await ResearchContextBuilder(self.repository, self.references).build(user_id, entry, overrides=context_options)
+        return context
 
     async def get(self, user_id: str, task_id: str) -> GenerationTask:
         task = await self.repository.get_generation_task(user_id, task_id)

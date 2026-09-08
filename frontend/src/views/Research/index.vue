@@ -6,6 +6,7 @@
         <p>按证券整理当前论点、研究记录与持仓关联。</p>
       </div>
       <div class="header-actions">
+        <el-button :icon="Delete" @click="openTrash">回收站</el-button>
         <el-button @click="openReview()">
           <el-icon><EditPen /></el-icon>
           新建复盘
@@ -187,6 +188,48 @@
         :entry="activeReview"
         @saved="reviewSaved"
       />
+      <template #footer>
+        <el-button
+          v-if="activeReview && activeReview.status !== 'archived'"
+          :icon="FolderOpened"
+          :loading="lifecycleBusy"
+          @click="archiveReview"
+          >归档</el-button
+        >
+        <el-button v-if="activeReview" :icon="Delete" :loading="lifecycleBusy" @click="deleteReview"
+          >移入回收站</el-button
+        >
+      </template>
+    </el-dialog>
+    <el-dialog v-model="trashVisible" title="研究回收站" width="min(760px, 94vw)">
+      <el-empty v-if="!trashEntries.length" description="回收站为空" />
+      <div v-for="item in trashEntries" :key="item.id" class="trash-row">
+        <span
+          >{{ item.title || (item.entry_type === 'review' ? '复盘' : item.entry_type) }} ·
+          {{ item.security_id || '组合' }}</span
+        >
+        <div class="header-actions">
+          <el-button :icon="Refresh" :disabled="lifecycleBusy" @click="restoreTrash(item)"
+            >恢复</el-button
+          >
+          <el-button
+            :icon="Delete"
+            type="danger"
+            plain
+            :disabled="lifecycleBusy"
+            @click="permanentlyDeleteTrash(item)"
+            >永久删除</el-button
+          >
+        </div>
+      </div>
+      <el-pagination
+        v-if="trashTotal > 20"
+        v-model:current-page="trashPage"
+        :page-size="20"
+        :total="trashTotal"
+        layout="prev, pager, next"
+        @current-change="loadTrash"
+      />
     </el-dialog>
   </section>
 </template>
@@ -195,8 +238,17 @@
 import { onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { onBeforeRouteLeave, useRouter } from 'vue-router'
 import { useDebounceFn } from '@vueuse/core'
-import { ElMessage } from 'element-plus'
-import { ArrowRight, EditPen, Plus, Refresh, Search, StarFilled } from '@element-plus/icons-vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import {
+  ArrowRight,
+  Delete,
+  EditPen,
+  FolderOpened,
+  Plus,
+  Refresh,
+  Search,
+  StarFilled
+} from '@element-plus/icons-vue'
 import { formatDateTime } from '@/utils/datetime'
 import { createLatestRequestCoordinator } from '@/utils/latestRequest'
 import ReviewEditor from '@/components/Research/ReviewEditor.vue'
@@ -234,6 +286,87 @@ const reviewsPage = ref(1)
 const reviewsStatus = ref<ResearchEntryStatus | ''>('')
 const reviewsLoading = ref(false)
 const reviewsError = ref(false)
+const lifecycleBusy = ref(false)
+const trashVisible = ref(false)
+const trashEntries = ref<ResearchEntry[]>([])
+const trashTotal = ref(0)
+const trashPage = ref(1)
+async function archiveReview() {
+  if (lifecycleBusy.value || !activeReview.value || activeReview.value.status === 'archived') return
+  if (reviewEditor.value && !(await reviewEditor.value.flush())) return
+  lifecycleBusy.value = true
+  try {
+    await stockResearchApi.archiveEntry(activeReview.value.id)
+    reviewDialogVisible.value = false
+    await loadReviews()
+  } catch {
+    ElMessage.error('归档失败')
+  } finally {
+    lifecycleBusy.value = false
+  }
+}
+async function deleteReview() {
+  if (lifecycleBusy.value || !activeReview.value) return
+  if (reviewEditor.value && !(await reviewEditor.value.flush())) return
+  lifecycleBusy.value = true
+  try {
+    await stockResearchApi.deleteEntry(activeReview.value.id)
+    reviewDialogVisible.value = false
+    await loadReviews()
+  } catch {
+    ElMessage.error('删除失败')
+  } finally {
+    lifecycleBusy.value = false
+  }
+}
+async function loadTrash() {
+  const response = await stockResearchApi.listTrash({ page: trashPage.value, page_size: 20 })
+  trashEntries.value = response.data.items
+  trashTotal.value = response.data.total
+  if (!trashEntries.value.length && trashPage.value > 1) {
+    trashPage.value--
+    await loadTrash()
+  }
+}
+async function openTrash() {
+  try {
+    trashPage.value = 1
+    await loadTrash()
+    trashVisible.value = true
+  } catch {
+    ElMessage.error('回收站加载失败')
+  }
+}
+async function restoreTrash(item: ResearchEntry) {
+  if (lifecycleBusy.value) return
+  lifecycleBusy.value = true
+  try {
+    await stockResearchApi.restoreTrashEntry(item.id)
+    await loadTrash()
+    await loadReviews()
+  } catch {
+    ElMessage.error('恢复失败')
+  } finally {
+    lifecycleBusy.value = false
+  }
+}
+async function permanentlyDeleteTrash(item: ResearchEntry) {
+  if (lifecycleBusy.value) return
+  try {
+    await ElMessageBox.confirm('永久删除此研究记录？', '永久删除', {
+      type: 'warning',
+      confirmButtonText: '永久删除',
+      cancelButtonText: '取消'
+    })
+    lifecycleBusy.value = true
+    await stockResearchApi.deleteTrashEntry(item.id)
+    await loadTrash()
+  } catch (error) {
+    if (error !== 'cancel' && error !== 'close') ElMessage.error('永久删除失败')
+  } finally {
+    lifecycleBusy.value = false
+  }
+}
 const coordinateReviewRequest = createLatestRequestCoordinator()
 async function loadReviews() {
   reviewsLoading.value = true
@@ -406,6 +539,18 @@ onMounted(() => {
 .portfolio-reviews h2 {
   font-size: 18px;
   margin: 0 0 16px;
+}
+.trash-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--el-border-color-light);
+}
+.trash-row span {
+  overflow-wrap: anywhere;
 }
 
 .directory-header {

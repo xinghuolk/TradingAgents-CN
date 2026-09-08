@@ -173,7 +173,7 @@ async def test_replace_entry_and_revision_listing_remain_user_scoped(fake_db):
     await repo.insert_entry(entry)
     updated = replace(entry, body="更新")
 
-    assert await repo.replace_entry(updated) == updated
+    assert await repo.patch_entry(entry, {"body": "更新"}) == replace(updated, write_version=1)
     await repo.append_revision("u1", "entry", "e1", {"body": "v1"}, "manual")
     await repo.append_revision("u1", "entry", "e1", {"body": "v2"}, "manual")
 

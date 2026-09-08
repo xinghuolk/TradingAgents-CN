@@ -9,7 +9,7 @@
     :close-on-press-escape="!submitting"
     @update:model-value="close"
   >
-    <el-form label-position="top" :disabled="submitting || activeTask">
+    <el-form label-position="top" :disabled="submitting || activeTask || contextLoading">
       <el-form-item label="提供商">
         <el-select
           v-model="provider"
@@ -77,6 +77,63 @@
           :disabled="submitting || activeTask"
         />
       </el-form-item>
+      <template v-if="entry.entry_type === 'review'">
+        <el-form-item label="上下文范围">
+          <div class="context-options">
+            <el-checkbox
+              v-for="item in contextFields"
+              :key="item.key"
+              v-model="contextOptions[item.key]"
+              @change="loadContext"
+              >{{ item.label }}</el-checkbox
+            >
+          </div>
+        </el-form-item>
+        <div class="context-dates">
+          <el-form-item label="开始日期"
+            ><el-date-picker
+              v-model="contextOptions.date_from"
+              type="date"
+              value-format="YYYY-MM-DD"
+              aria-label="生成开始日期"
+              @change="loadContext"
+          /></el-form-item>
+          <el-form-item label="结束日期"
+            ><el-date-picker
+              v-model="contextOptions.date_through"
+              type="date"
+              value-format="YYYY-MM-DD"
+              aria-label="生成结束日期"
+              @change="loadContext"
+          /></el-form-item>
+        </div>
+        <div v-if="contextPreview" class="context-preview">
+          <p v-if="contextOptions.include_thesis">
+            当前论点：{{
+              contextPreview.theses
+                .map(item => `${item.security_id}${item.available === false ? '（暂无论点）' : ''}`)
+                .join('、') || '暂无论点'
+            }}
+          </p>
+          <p v-if="contextOptions.include_recent_entries">
+            近期记录：{{
+              contextPreview.recent_entries
+                .map(item => item.title || item.security_id)
+                .join('、') || '暂无记录'
+            }}
+          </p>
+          <p
+            v-for="(source, index) in contextPreview.sources.filter(item => !item.available)"
+            :key="index"
+          >
+            {{ sourceLabels[source.kind] || source.kind
+            }}{{ source.security_id ? ` · ${source.security_id}` : '' }}：资料不可用
+          </p>
+        </div>
+      </template>
+      <el-button v-if="contextFailed" :icon="RefreshRight" @click="loadContext"
+        >重试上下文资料</el-button
+      >
     </el-form>
     <p v-if="selectionMessage" class="generation-message" role="status">{{ selectionMessage }}</p>
     <p v-if="selectionError" class="generation-error" role="alert">{{ selectionError }}</p>
@@ -102,7 +159,13 @@
           type="primary"
           :icon="MagicStick"
           :disabled="
-            !selectedModel || !!selectionError || loading || loadFailed || entry.status !== 'draft'
+            !selectedModel ||
+            !!selectionError ||
+            loading ||
+            loadFailed ||
+            contextLoading ||
+            contextFailed ||
+            entry.status !== 'draft'
           "
           :loading="submitting"
           @click="submit"
@@ -120,6 +183,7 @@ import { configApi, type LLMConfig } from '@/api/config'
 import {
   stockResearchApi,
   type GenerationTask,
+  type GenerationContext,
   type ResearchEntry,
   type ResearchReference
 } from '@/api/stockResearch'
@@ -144,6 +208,65 @@ const references = ref<ResearchReference[]>(
     ...item
   }))
 )
+const contextOptions = ref<Record<string, any>>({
+  ...(props.initialTask?.context_snapshot?.options || {})
+})
+const contextPreview = ref<GenerationContext | null>(props.initialTask?.context_snapshot || null)
+const contextLoading = ref(false)
+const contextFailed = ref(false)
+const contextFields = [
+  { key: 'include_market', label: '市场概况' },
+  { key: 'include_real_holdings', label: '真实持仓' },
+  { key: 'include_paper_holdings', label: '模拟持仓' },
+  { key: 'include_trades', label: '期间成交' },
+  { key: 'include_reports', label: '分析报告' },
+  { key: 'include_thesis', label: '当前论点' },
+  { key: 'include_recent_entries', label: '近期笔记与调研' }
+]
+const sourceLabels: Record<string, string> = {
+  market: '市场概况',
+  holdings: '持仓',
+  real_holding: '真实持仓',
+  paper_holding: '模拟持仓',
+  real_trade: '真实成交',
+  paper_trade: '模拟成交',
+  analysis_report: '分析报告',
+  funds: '资金',
+  global_markets: '全球市场',
+  limit_up_concepts: '涨停题材',
+  financial_metrics: '财务指标'
+}
+async function loadContext() {
+  if (activeTask.value || contextLoading.value) return
+  contextLoading.value = true
+  contextFailed.value = false
+  try {
+    if (props.beforeSubmit && !(await props.beforeSubmit())) {
+      contextFailed.value = true
+      return
+    }
+    const response = await stockResearchApi.previewGenerationContext(
+      props.entry.id,
+      contextOptions.value
+    )
+    if (!mounted) return
+    contextPreview.value = response.data
+    contextOptions.value = { ...response.data.options }
+    references.value = response.data.references.map(
+      ({ kind, source_id, account_type, source_date, label }) => ({
+        kind,
+        source_id,
+        account_type,
+        source_date,
+        label
+      })
+    )
+  } catch {
+    if (mounted) contextFailed.value = true
+  } finally {
+    if (mounted) contextLoading.value = false
+  }
+}
 const loading = ref(false)
 const loadFailed = ref(false)
 const submitting = ref(false)
@@ -302,6 +425,8 @@ async function submit() {
     activeTask.value ||
     loading.value ||
     loadFailed.value ||
+    contextLoading.value ||
+    contextFailed.value ||
     !!selectionError.value ||
     !selectedModel.value ||
     props.entry.status !== 'draft'
@@ -327,6 +452,9 @@ async function submit() {
       target_entry_id: props.entry.id,
       draft_kind: props.entry.entry_type,
       ...selection,
+      ...(Object.keys(contextOptions.value).length
+        ? { context_options: { ...contextOptions.value } }
+        : {}),
       references: references.value.map(({ kind, source_id, account_type, source_date, label }) => ({
         kind,
         source_id,
@@ -350,6 +478,7 @@ async function submit() {
 }
 onMounted(() => {
   void loadModels()
+  if (!props.initialTask) void loadContext()
   schedulePoll()
 })
 onBeforeUnmount(() => {
@@ -385,5 +514,31 @@ onBeforeUnmount(() => {
 }
 .generation-actions .el-button + .el-button {
   margin-left: 0;
+}
+.context-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 12px;
+}
+.context-options .el-checkbox {
+  margin-right: 0;
+}
+.context-dates {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+.context-dates :deep(.el-date-editor) {
+  width: 100%;
+}
+.context-preview {
+  color: var(--el-text-color-secondary);
+  overflow-wrap: anywhere;
+}
+@media (max-width: 640px) {
+  .context-dates {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0;
+  }
 }
 </style>

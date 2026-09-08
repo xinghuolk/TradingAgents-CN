@@ -1,4 +1,5 @@
 from datetime import UTC, date, datetime
+from dataclasses import replace
 
 import pytest
 
@@ -7,6 +8,7 @@ from app.services.stock_research.models import (
     EntryPatch,
     EntryQuery,
     NewEntry,
+    Reference,
     ThesisPatch,
     WorkspaceDirectoryFacts,
     WorkspaceQuery,
@@ -134,14 +136,6 @@ class DirectorySourceStub:
     ) -> dict[str, WorkspaceDirectoryFacts]:
         self.calls.append((user_id, security_ids))
         return self.facts
-
-
-@pytest.fixture
-def source_spy():
-    class SourceSpy:
-        calls: list[object] = []
-
-    return SourceSpy()
 
 
 @pytest.mark.asyncio
@@ -378,18 +372,35 @@ async def test_review_does_not_change_thesis_until_explicit_apply(service):
 
 @pytest.mark.asyncio
 async def test_mutations_require_owner_and_delete_does_not_call_sources(
-    service, repo, source_spy
+    service, repo, monkeypatch
 ):
+    from copy import deepcopy
+
+    sources = [repo.db[name] for name in ("analysis_reports", "real_portfolio_events", "paper_trades", "paper_positions")]
+    for source in sources:
+        await source.insert_one({"id": "source", "user_id": "u1", "body": "owned source fact"})
+    before = [deepcopy(source.documents) for source in sources]
+
+    async def forbidden_source_write(*args, **kwargs):
+        raise AssertionError("research lifecycle attempted a source write")
+
+    for source in sources:
+        for method in ("insert_one", "update_one", "find_one_and_update", "delete_one"):
+            monkeypatch.setattr(source, method, forbidden_source_write)
     entry = await service.create_entry(
-        "u1", NewEntry.note("A:600519", "标题", "正文")
+        "u1", replace(NewEntry.note("A:600519", "标题", "正文"), references=(Reference.analysis_report("source"), Reference.real_trade("source"), Reference.paper_trade("source")))
     )
     with pytest.raises(ResearchError, match="not found"):
         await service.archive_entry("u2", entry.id)
 
+    await service.archive_entry("u1", entry.id)
     await service.delete_entry("u1", entry.id)
+    await service.restore_entry("u1", entry.id)
+    await service.delete_entry("u1", entry.id)
+    await service.permanently_delete_entry("u1", entry.id)
 
     assert await repo.get_entry("u1", entry.id) is None
-    assert source_spy.calls == []
+    assert [source.documents for source in sources] == before
 
 
 @pytest.mark.asyncio

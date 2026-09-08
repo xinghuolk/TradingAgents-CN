@@ -40,6 +40,44 @@ NOW = datetime(2026, 9, 8, 9, 30, tzinfo=UTC)
 
 
 @pytest.mark.asyncio
+async def test_manual_entry_versions_and_context_routes_enforce_owner():
+    from tests.unit.stock_research.test_generation import setup_generation
+    from tests.unit.stock_research.test_references import FakeRealPortfolioService
+
+    generation, _, _, service, review = await setup_generation()
+    generation.references.real_portfolio = FakeRealPortfolioService()
+    note = await service.create_entry("u1", NewEntry.note("A:600519", "note", "manual body"))
+    app = create_test_app(service)
+    async def user():
+        return {"id": "u1"}
+    async def references():
+        return generation.references
+    async def generation_dependency():
+        return generation
+    async def other_user():
+        return {"id": "u2"}
+    app.dependency_overrides[get_current_user] = user
+    app.dependency_overrides[stock_research.get_reference_service] = references
+    app.dependency_overrides[stock_research.get_generation_service] = generation_dependency
+    async with create_test_client(app) as client:
+        response = await client.post(f"/api/research/entries/{note.id}/revisions", json={"label": "manual"})
+        assert response.status_code == 200
+        assert response.json()["data"]["snapshot"]["body"] == "manual body"
+        assert "user_id" not in response.json()["data"]["snapshot"]
+        holdings = await client.get("/api/research/references/holdings")
+        assert holdings.status_code == 200
+        assert holdings.json()["data"][0]["security_id"] == "A:600519"
+        preview = await client.post(f"/api/research/entries/{review.id}/generation-context", json={"context_options": {"include_thesis": False, "date_from": "2026-09-01"}})
+        assert preview.status_code == 200
+        assert preview.json()["data"]["theses"] == []
+        assert preview.json()["data"]["options"]["date_from"] == "2026-09-01"
+        app.dependency_overrides[get_current_user] = other_user
+        assert (await client.post(f"/api/research/entries/{note.id}/revisions", json={})).status_code == 404
+        assert (await client.post(f"/api/research/entries/{review.id}/generation-context", json={})).status_code == 404
+        assert (await client.get("/api/research/references/holdings")).json()["data"] == []
+
+
+@pytest.mark.asyncio
 async def test_generation_routes_persist_before_scheduling_and_scope_get(monkeypatch):
     from tests.unit.stock_research.test_generation import setup_generation
 
@@ -174,7 +212,7 @@ async def test_apply_review_endpoint_only_changes_thesis_on_explicit_post():
         assert response.json()["data"]["reason"] == "review_applied_to_thesis"
         after = await client.get("/api/research/workspaces/A:600519")
         assert after.json()["data"]["body"] == "新论点"
-        assert after.json()["data"]["current_revision"] == 1
+        assert after.json()["data"]["current_revision"] == 2
 
 
 @dataclass(frozen=True)

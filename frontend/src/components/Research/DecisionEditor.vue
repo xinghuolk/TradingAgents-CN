@@ -68,6 +68,47 @@
         >创建新决策</el-button
       >
     </div>
+    <section v-if="record?.status === 'confirmed'" class="trade-links">
+      <h3>成交关联</h3>
+      <el-select
+        :model-value="tradeReferences.map(tradeKey)"
+        multiple
+        filterable
+        aria-label="成交关联"
+        :disabled="linksBusy"
+        :loading="linksBusy"
+        @change="selectTradeLinks"
+      >
+        <el-option
+          v-for="item in tradeOptions"
+          :key="tradeKey(item)"
+          :value="tradeKey(item)"
+          :label="`${item.account_type === 'paper' ? '模拟账户' : '真实账户'} · ${item.label || item.source_id}`"
+        />
+      </el-select>
+      <div class="editor-actions">
+        <el-button :icon="Check" :loading="linksBusy" @click="saveTradeLinks"
+          >保存成交关联</el-button
+        >
+        <el-button :icon="Refresh" :disabled="linksBusy" @click="loadTradeLinks"
+          >刷新候选</el-button
+        >
+      </div>
+      <p v-if="linksError" role="alert">{{ linksError }}</p>
+      <div
+        v-for="item in record.references.filter(isTrade)"
+        :key="tradeKey(item)"
+        class="linked-trade"
+      >
+        <span
+          >{{ item.account_type === 'paper' ? '模拟账户' : '真实账户' }} ·
+          {{ item.label || item.source_id }}</span
+        >
+        <el-button text :icon="Close" :disabled="linksBusy" @click="unlinkTrade(item)"
+          >取消关联</el-button
+        >
+      </div>
+    </section>
     <details v-if="record?.thesis_snapshot" class="snapshot">
       <summary>确认时论点快照</summary>
       <ResearchMarkdownEditor :model-value="String(record.thesis_snapshot.body || '')" readonly />
@@ -99,9 +140,9 @@
 </template>
 
 <script setup lang="ts">
-import { computed, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
-import { Check, DocumentAdd, Plus } from '@element-plus/icons-vue'
+import { Check, Close, DocumentAdd, Plus, Refresh } from '@element-plus/icons-vue'
 import ResearchMarkdownEditor from '@/components/Research/ResearchMarkdownEditor.vue'
 import ResearchReferencePicker from '@/components/Research/ResearchReferencePicker.vue'
 import { useResearchAutosave } from '@/composables/useResearchAutosave'
@@ -132,6 +173,87 @@ const form = reactive({
 const actions = { buy: '买入', add: '加仓', reduce: '减仓', sell: '卖出', observe: '继续观察' }
 const busy = ref(false)
 const readonly = computed(() => !!record.value && record.value.status !== 'draft')
+const isTrade = (reference: ResearchReference) =>
+  ['real_trade', 'paper_trade'].includes(reference.kind)
+const tradeKey = (reference: ResearchReference) => `${reference.kind}:${reference.source_id}`
+const tradeReferences = ref<ResearchReference[]>((props.entry?.references || []).filter(isTrade))
+const tradeCandidates = ref<ResearchReference[]>([])
+const tradeOptions = computed(() => [
+  ...new Map(
+    [...tradeReferences.value, ...tradeCandidates.value].map(item => [tradeKey(item), item])
+  ).values()
+])
+const linksBusy = ref(false)
+const linksError = ref('')
+function selectTradeLinks(keys: string[]) {
+  tradeReferences.value = tradeOptions.value.filter(item => keys.includes(tradeKey(item)))
+}
+async function loadTradeLinks() {
+  if (!record.value || record.value.status !== 'confirmed') return
+  linksBusy.value = true
+  try {
+    tradeCandidates.value = (await stockResearchApi.recommendTradeLinks(record.value.id)).data
+    linksError.value = ''
+  } catch {
+    linksError.value = '成交候选加载失败'
+  } finally {
+    linksBusy.value = false
+  }
+}
+function linksSaved(value: ResearchEntry) {
+  record.value = value
+  form.references = [...value.references]
+  tradeReferences.value = value.references.filter(isTrade)
+  linksError.value = ''
+  emit('saved', value)
+}
+async function saveTradeLinks() {
+  if (linksBusy.value || record.value?.status !== 'confirmed') return
+  linksBusy.value = true
+  try {
+    linksSaved(
+      (
+        await stockResearchApi.setDecisionTradeLinks(
+          record.value.id,
+          tradeReferences.value.map(({ kind, source_id, account_type, source_date, label }) => ({
+            kind,
+            source_id,
+            account_type,
+            source_date,
+            label
+          }))
+        )
+      ).data
+    )
+  } catch (error: any) {
+    linksError.value =
+      error?.response?.data?.detail?.code === 'RESEARCH_CONFLICT'
+        ? '该成交已关联其他决策，请调整选择'
+        : '成交关联保存失败'
+  } finally {
+    linksBusy.value = false
+  }
+}
+async function unlinkTrade(reference: ResearchReference) {
+  if (linksBusy.value || record.value?.status !== 'confirmed' || !isTrade(reference)) return
+  linksBusy.value = true
+  try {
+    linksSaved(
+      (
+        await stockResearchApi.deleteDecisionTradeLink(
+          record.value.id,
+          reference.kind as 'real_trade' | 'paper_trade',
+          reference.source_id
+        )
+      ).data
+    )
+  } catch {
+    linksError.value = '取消关联失败'
+  } finally {
+    linksBusy.value = false
+  }
+}
+onMounted(loadTradeLinks)
 const confirmVisible = ref(false)
 const snapshot = ref<ResearchWorkspace | null>(null)
 const snapshotFields = [
@@ -217,6 +339,7 @@ async function confirmDecision() {
     confirmVisible.value = false
     emit('saved', record.value)
     ElMessage.success('决策已确认')
+    await loadTradeLinks()
   } catch {
     ElMessage.error('决策确认失败')
   } finally {
@@ -251,6 +374,32 @@ defineExpose({ flush, dirty })
 }
 .snapshot {
   margin-top: 24px;
+}
+.trade-links {
+  margin-top: 24px;
+  border-top: 1px solid var(--el-border-color-light);
+  padding-top: 16px;
+}
+.trade-links h3 {
+  font-size: 16px;
+  margin: 0 0 12px;
+}
+.trade-links :deep(.el-select) {
+  width: 100%;
+}
+.trade-links p {
+  color: var(--el-color-danger);
+}
+.linked-trade {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.linked-trade span {
+  overflow-wrap: anywhere;
+  min-width: 0;
 }
 dt {
   color: var(--el-text-color-secondary);

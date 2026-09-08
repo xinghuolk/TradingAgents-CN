@@ -126,7 +126,7 @@ async def test_duplicate_run_and_human_edit_preserve_single_original():
     await generator.started.wait()
     assert (await generation.get("u1", task.id)).status == "running"
     await generation.run(task.id, "u1")
-    await repo.replace_entry(replace(entry, body="edited while generating"))
+    entry = await repo.patch_entry(entry, {"body": "edited while generating"})
     generator.release.set()
     await running
     await generation.run(task.id, "u1")
@@ -134,7 +134,7 @@ async def test_duplicate_run_and_human_edit_preserve_single_original():
     assert stored.body == "edited while generating"
     assert len(stored.ai_drafts) == len(generator.calls) == 1
     # A human save based on an older read must not overwrite appended originals.
-    await repo.replace_entry(replace(entry, body="later human edit"))
+    await repo.patch_entry(entry, {"body": "later human edit"})
     assert len((await repo.get_entry("u1", entry.id)).ai_drafts) == 1
 
 
@@ -170,7 +170,7 @@ async def test_deleted_target_fails_without_attachment():
 async def test_formal_or_archived_target_cannot_receive_generated_original(status):
     generation, generator, repo, _, entry = await setup_generation()
     task = await submit(generation, entry)
-    await repo.replace_entry(replace(entry, status=status))
+    await repo.patch_entry(entry, {"status": status})
     with pytest.raises(ResearchError) as error:
         await submit(generation, entry)
     assert error.value.code == "RESEARCH_CONFLICT"

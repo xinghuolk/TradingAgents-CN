@@ -12,7 +12,7 @@
         <el-button :icon="ArrowLeft" :disabled="busy" @click="returnToStock">返回行情</el-button>
         <template v-if="workspace">
           <el-button
-            v-if="section === 'thesis'"
+            v-if="section === 'thesis' || editableEntry"
             :icon="DocumentAdd"
             :disabled="busy"
             @click="saveVersion"
@@ -849,11 +849,17 @@ async function saveVersion() {
       cancelButtonText: '取消',
       inputValidator: value => !value || value.length <= 100 || '标签不超过 100 字'
     })
-    const response = await stockResearchApi.saveWorkspaceVersion(
-      workspace.value.security_id,
-      value || ''
-    )
-    workspace.value.current_revision = response.data.revision
+    if (entry.value) {
+      if (!editableEntry.value) return
+      const response = await stockResearchApi.saveEntryVersion(entry.value.id, value || '')
+      entry.value.current_revision = response.data.revision
+    } else {
+      const response = await stockResearchApi.saveWorkspaceVersion(
+        workspace.value.security_id,
+        value || ''
+      )
+      workspace.value.current_revision = response.data.revision
+    }
     ElMessage.success('版本已保存')
   })
 }

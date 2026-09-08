@@ -319,6 +319,7 @@ class Entry:
     ai_drafts: tuple[dict[str, object], ...] = ()
     source_metadata: dict[str, object] = field(default_factory=dict)
     trade_link_keys: tuple[str, ...] = ()
+    write_version: int = 0
     warnings: tuple[str, ...] = ()
     current_revision: int = 0
     confirmed_at: datetime | None = None
@@ -442,6 +443,7 @@ class Entry:
             "ai_drafts": deepcopy(list(self.ai_drafts)),
             "source_metadata": deepcopy(self.source_metadata),
             "trade_link_keys": list(self.trade_link_keys),
+            "write_version": self.write_version,
             "warnings": list(self.warnings),
             "current_revision": self.current_revision,
             "confirmed_at": _iso_datetime(self.confirmed_at),

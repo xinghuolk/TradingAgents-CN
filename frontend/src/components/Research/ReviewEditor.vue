@@ -49,6 +49,24 @@
           >
         </div>
       </el-form-item>
+      <div class="review-fields">
+        <el-form-item label="开始日期"
+          ><el-date-picker
+            v-model="form.scope_metadata.date_from"
+            type="date"
+            value-format="YYYY-MM-DD"
+            aria-label="开始日期"
+            @change="changed"
+        /></el-form-item>
+        <el-form-item label="结束日期"
+          ><el-date-picker
+            v-model="form.scope_metadata.date_through"
+            type="date"
+            value-format="YYYY-MM-DD"
+            aria-label="结束日期"
+            @change="changed"
+        /></el-form-item>
+      </div>
       <template v-if="form.review_kind === 'decision'">
         <el-form-item label="历史决策（可选）">
           <el-select v-model="form.decision_id" clearable filterable @change="selectDecision">
@@ -197,6 +215,10 @@ const contextOptions = [
   { key: 'include_market', label: '市场概况' },
   { key: 'include_real_holdings', label: '真实持仓' },
   { key: 'include_paper_holdings', label: '模拟持仓' },
+  { key: 'include_thesis', label: '当前论点' },
+  { key: 'include_recent_entries', label: '近期笔记与调研' },
+  { key: 'include_trades', label: '期间成交' },
+  { key: 'include_reports', label: '分析报告' },
   { key: 'include_funds', label: '资金' },
   { key: 'include_global_markets', label: '全球市场' },
   { key: 'include_limit_up_concepts', label: '涨停题材' },
@@ -207,9 +229,10 @@ function defaultContext(scope: ResearchScope, kind: ReviewKind): Record<string, 
   return Object.fromEntries(
     contextOptions.map(item => [
       item.key,
-      scope === 'portfolio' &&
-        kind === 'routine' &&
-        ['include_market', 'include_real_holdings'].includes(item.key)
+      ['include_thesis', 'include_recent_entries', 'include_trades', 'include_reports'].includes(
+        item.key
+      ) ||
+        (kind === 'routine' && ['include_market', 'include_real_holdings'].includes(item.key))
     ])
   )
 }
@@ -226,7 +249,7 @@ const form = reactive({
   scope_metadata: {
     ...defaultContext(initialScope, initialKind),
     ...props.entry?.scope_metadata
-  } as Record<string, boolean>
+  } as Record<string, boolean | string | null>
 })
 const busy = ref(false)
 const editingRevision = ref(false)
@@ -547,11 +570,48 @@ onBeforeUnmount(() => {
 })
 onMounted(async () => {
   try {
-    const response = await stockResearchApi.listWorkspaces({ page_size: 100 })
+    const holdings = (await stockResearchApi.listHoldings()).data
     if (!contextActive) return
-    securities.value = response.data.items
+    const bySecurity = new Map<string, ResearchWorkspaceSummary>()
+    for (const holding of holdings) {
+      const [market, code] = holding.security_id.split(':')
+      const existing =
+        bySecurity.get(holding.security_id) ||
+        ({
+          security_id: holding.security_id,
+          market: market === 'A' ? 'CN' : market,
+          code,
+          name: code,
+          has_real_holding: false,
+          has_paper_holding: false
+        } as ResearchWorkspaceSummary)
+      if (holding.account_type === 'real') existing.has_real_holding = true
+      if (holding.account_type === 'paper') existing.has_paper_holding = true
+      bySecurity.set(holding.security_id, existing)
+    }
+    securities.value = [...bySecurity.values()]
     securitiesState.value = 'ready'
     if (contextDirty.value && record.value?.status === 'draft') changed()
+    try {
+      let page = 1
+      while (contextActive) {
+        const response = await stockResearchApi.listWorkspaces({ page, page_size: 200 })
+        if (!contextActive) return
+        for (const workspace of response.data.items) {
+          const holding = bySecurity.get(workspace.security_id)
+          bySecurity.set(workspace.security_id, {
+            ...workspace,
+            has_real_holding: holding?.has_real_holding || false,
+            has_paper_holding: holding?.has_paper_holding || false
+          })
+        }
+        securities.value = [...bySecurity.values()]
+        if (!response.data.items.length || page * 200 >= response.data.total) break
+        page += 1
+      }
+    } catch {
+      ElMessage.warning('工作区名称加载失败')
+    }
   } catch {
     if (!contextActive) return
     securitiesState.value = 'failed'

@@ -92,6 +92,8 @@ def _evaluate_expression(
         return deepcopy(expression)
     if "$literal" in expression:
         return deepcopy(expression["$literal"])
+    if "$add" in expression:
+        return sum(_evaluate_expression(expression["$add"], document, scoped))
     if "$ifNull" in expression:
         values = expression["$ifNull"]
         assert isinstance(values, list) and len(values) == 2
@@ -164,7 +166,7 @@ class FakeCursor:
 class FakeCollection:
     def __init__(self) -> None:
         self.documents: list[dict[str, object]] = []
-        self.indexes: dict[str, tuple[tuple[str, ...], bool]] = {}
+        self.indexes: dict[str, dict[str, object]] = {}
         self.unique_keys: set[tuple[str, ...]] = set()
 
     async def create_index(
@@ -173,10 +175,10 @@ class FakeCollection:
         *,
         name: str,
         unique: bool = False,
-        **_: object,
+        **options: object,
     ) -> str:
         field_names = tuple(key for key, _direction in keys)
-        self.indexes[name] = (field_names, unique)
+        self.indexes[name] = {"keys": deepcopy(keys), "unique": unique, **deepcopy(options)}
         if unique:
             self.unique_keys.add(field_names)
         return name
@@ -241,6 +243,8 @@ class FakeCollection:
         changed.update(deepcopy(dict(update.get("$set", {}))))
         for key, amount in update.get("$inc", {}).items():
             changed[key] = changed.get(key, 0) + amount  # type: ignore[operator]
+        for key, value in update.get("$max", {}).items():
+            changed[key] = max(changed.get(key, value), value)
         for key in update.get("$unset", {}):
             changed.pop(key, None)
         for key, value in update.get("$push", {}).items():
@@ -306,7 +310,9 @@ class FakeCollection:
         )
         position = self.documents.index(original) if original is not None else None
         before = deepcopy(original)
-        await self.update_one(query, update, upsert=upsert)
+        result = await self.update_one(query, update, upsert=upsert)
+        if not result.matched_count and not upsert:
+            return None
         if return_document == ReturnDocument.AFTER:
             if position is not None:
                 return deepcopy(self.documents[position])

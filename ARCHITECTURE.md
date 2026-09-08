@@ -67,6 +67,25 @@ One trade can link to at most one decision; unlinked trades remain valid referen
 workspace. Stock detail reads only directory summaries until the explicit workspace
 command is used; this read does not create a workspace.
 
+Entry content and lifecycle commands use conditional field updates with a write
+version; stale saves return a conflict and cannot undo confirmation, archive, or
+deletion. Revision pointers advance independently and never replace entry bodies.
+Notes and research documents support labelled manual versions. Review confirmation
+freezes the relevant current theses and creates workspace versions for existing
+workspaces; absent workspaces are explicit in the review snapshot. Global reviews
+remain manageable through directory archive and trash commands even without any
+associated security.
+
+Report ownership is read from `analysis_reports.user_id` when present, otherwise
+from the report's `task_id` and an owned `analysis_tasks` record. Current real and
+paper holding identities are read through `/api/research/references/holdings`,
+independently of whether research workspaces exist. The generation context preview
+and submission share a builder for scope, period, current theses, recent documents,
+selected decisions, holdings, trades, and report summaries. Source failures and
+unavailable market summaries are explicit; preview does not fetch external data.
+The dialog saves pending edits before preview, and task submission freezes the
+selected inputs and necessary display snapshots without copying full source facts.
+
 Research AI drafts use `POST /api/research/generation-tasks` and a user-scoped GET
 by task ID. The service freezes selected reference display snapshots and current
 research inputs, persists `pending`, then schedules an in-process asyncio task.

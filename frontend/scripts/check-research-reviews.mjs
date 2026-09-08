@@ -108,6 +108,9 @@ function setup(name, props = {}, overrides = {}) {
   const events = []
   const mounted = []
   const unmounted = []
+  // Existing race fixtures describe securities with account flags. Translate
+  // them at the source boundary now that holdings no longer depend on workspaces.
+  const { listWorkspaces: holdingFixture, ...otherOverrides } = overrides
   const api = {
     async createEntry(input) {
       calls.push(['create', input])
@@ -141,6 +144,19 @@ function setup(name, props = {}, overrides = {}) {
     async listWorkspaces() {
       return { data: { items: [] } }
     },
+    async listHoldings() {
+      const items = holdingFixture ? (await holdingFixture()).data.items : []
+      return {
+        data: items.flatMap(item => [
+          ...(item.has_real_holding
+            ? [{ security_id: item.security_id, account_type: 'real' }]
+            : []),
+          ...(item.has_paper_holding
+            ? [{ security_id: item.security_id, account_type: 'paper' }]
+            : [])
+        ])
+      }
+    },
     async listRevisions() {
       calls.push(['revisions'])
       return { data: [{ revision: 1 }] }
@@ -152,7 +168,7 @@ function setup(name, props = {}, overrides = {}) {
       calls.push(['apply', id, patch])
       return { data: { revision: 1 } }
     },
-    ...overrides
+    ...otherOverrides
   }
   const { descriptor, errors } = parse(
     readFileSync(new URL(`components/Research/${name}.vue`, root), 'utf8')

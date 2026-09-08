@@ -220,22 +220,50 @@ class StockResearchRepository:
             _raise_trade_link_conflict(error)
         return Entry.from_document(document)
 
-    async def replace_entry(self, entry: Entry) -> Entry:
-        entry = _with_derived_trade_link_keys(entry)
-        entry.validate()
-        document = entry.to_document()
-        # Originals belong to the generation append path, never a human save.
-        document.pop("ai_drafts", None)
+    async def patch_workspace(self, workspace: Workspace, changes: dict) -> Workspace:
+        document = replace(workspace, **changes).to_document()
+        result = await self._collection("workspaces").find_one_and_update(
+            {"user_id": workspace.user_id, "security_id": workspace.security_id},
+            {"$set": {key: document[key] for key in changes}},
+            return_document=ReturnDocument.AFTER,
+        )
+        if result is None:
+            raise ResearchError("RESEARCH_NOT_FOUND", "research workspace not found")
+        return Workspace.from_document(result)
+
+    async def advance_revision(self, user_id: str, target_type: str, target_id: str, revision: int) -> None:
+        identity = "security_id" if target_type == "workspace" else "id"
+        collection = "workspaces" if target_type == "workspace" else "entries"
+        # Only advance the pointer; a delayed snapshot must never restore content
+        # or lifecycle fields, or move a newer pointer backwards.
+        await self._collection(collection).update_one(
+            {"user_id": user_id, identity: target_id},
+            {"$max": {"current_revision": revision}},
+        )
+
+    async def patch_entry(self, expected: Entry, changes: dict) -> Entry:
+        updated = _with_derived_trade_link_keys(replace(expected, **changes))
+        updated.validate()
+        document = updated.to_document()
+        fields = {key: document[key] for key in changes}
+        if "references" in changes or "entry_type" in changes:
+            fields["trade_link_keys"] = document["trade_link_keys"]
         try:
-            result = await self._collection("entries").update_one(
-                {"user_id": entry.user_id, "id": entry.id},
-                {"$set": document},
+            result = await self._collection("entries").find_one_and_update(
+                {
+                    "user_id": expected.user_id, "id": expected.id,
+                    "status": expected.status, "deleted_at": expected.to_document()["deleted_at"],
+                    "entry_type": expected.entry_type,
+                    "write_version": {"$in": [None, 0]} if expected.write_version == 0 else expected.write_version,
+                },
+                {"$set": fields, "$inc": {"write_version": 1}},
+                return_document=ReturnDocument.AFTER,
             )
         except DuplicateKeyError as error:
             _raise_trade_link_conflict(error)
-        if result.matched_count == 0:
-            raise ResearchError("RESEARCH_NOT_FOUND", "research entry not found")
-        return await self.get_entry(entry.user_id, entry.id, include_deleted=True)
+        if result is None:
+            raise ResearchError("RESEARCH_CONFLICT", "research entry changed; reload before saving")
+        return Entry.from_document(result)
 
     async def insert_generation_task(self, task: GenerationTask) -> GenerationTask:
         document = task.to_document()
@@ -307,6 +335,7 @@ class StockResearchRepository:
                     "id": decision_id,
                     "entry_type": "decision",
                     "deleted_at": None,
+                    "archived_at": None,
                 },
                 [
                     {
@@ -344,6 +373,7 @@ class StockResearchRepository:
                             },
                             "trade_link_keys": list(trade_link_keys),
                             "updated_at": now.isoformat(),
+                            "write_version": {"$add": [{"$ifNull": ["$write_version", 0]}, 1]},
                         }
                     }
                 ],
@@ -369,6 +399,7 @@ class StockResearchRepository:
                 "id": decision_id,
                 "entry_type": "decision",
                 "deleted_at": None,
+                "archived_at": None,
             },
             {
                 "$pull": {
@@ -380,6 +411,7 @@ class StockResearchRepository:
                     "trade_link_keys": trade_link_key,
                 },
                 "$set": {"updated_at": now.isoformat()},
+                "$inc": {"write_version": 1},
             },
             return_document=ReturnDocument.AFTER,
         )
@@ -501,7 +533,7 @@ class StockResearchRepository:
         timestamp = now.isoformat()
         await self._collection("entries").update_one(
             {"user_id": user_id, "id": entry_id, "deleted_at": None},
-            {"$set": {"deleted_at": timestamp, "updated_at": timestamp}},
+            {"$set": {"deleted_at": timestamp, "updated_at": timestamp}, "$inc": {"write_version": 1}},
         )
 
     async def list_trash(
@@ -528,7 +560,7 @@ class StockResearchRepository:
     async def restore_entry(self, user_id: str, entry_id: str) -> Entry:
         document = await self._collection("entries").find_one_and_update(
             {"user_id": user_id, "id": entry_id, "deleted_at": {"$ne": None}},
-            {"$set": {"deleted_at": None, "updated_at": datetime.now(UTC).isoformat()}},
+            {"$set": {"deleted_at": None, "updated_at": datetime.now(UTC).isoformat()}, "$inc": {"write_version": 1}},
             return_document=ReturnDocument.AFTER,
         )
         if document is None:

@@ -78,6 +78,8 @@ def run(args, viewport):
                 result = entry
             elif path == "/api/research/entries":
                 result = dict(items=[entry] if entry else [], total=int(bool(entry)), page=1, page_size=20)
+            elif path.endswith("/generation-context"):
+                result = dict(options={}, references=entry.get("references", []), sources=[], theses=[], recent_entries=[])
             elif path.endswith("/references") or path.endswith("/recommendations"):
                 result = references
             elif path.startswith("/api/research/entries/"):
@@ -186,7 +188,7 @@ def run(args, viewport):
                 dict(kind="analysis_report", source_id="report-1", account_type=None, source_date="2026-09-08", label="公司分析"),
             ],
         )
-        assert submitted == [expected]
+        assert submitted == [expected], json.dumps(dict(submitted=submitted, expected=expected), ensure_ascii=False)
         assert [item["source_id"] for item in entry["references"]] == ["trade-1"]
         close()
         count = len(polls)

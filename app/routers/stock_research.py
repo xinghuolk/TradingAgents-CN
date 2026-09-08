@@ -257,7 +257,12 @@ class GenerationTaskRequest(StrictRequest):
     provider: str
     model_name: str
     reasoning_effort: str | None = None
-    references: list[ReferenceRequest] = Field(default_factory=list)
+    references: list[ReferenceRequest] | None = None
+    context_options: dict[str, object] | None = None
+
+
+class GenerationContextRequest(StrictRequest):
+    context_options: dict[str, object] | None = None
 
 
 def get_stock_research_service(
@@ -396,7 +401,8 @@ async def create_generation_task(
     task = await _call_service(service.submit(
         user_id=user_id, target_entry_id=request.target_entry_id, draft_kind=request.draft_kind,
         provider=request.provider, model_name=request.model_name, reasoning_effort=request.reasoning_effort,
-        references=[reference.to_domain() for reference in request.references],
+        references=[reference.to_domain() for reference in request.references] if request.references is not None else None,
+        context_options=request.context_options,
     ))
     running = asyncio.create_task(service.run(task.id, user_id))
     _generation_runs.add(running)
@@ -431,6 +437,37 @@ async def list_reference_candidates(
         )
     )
     return ok([_public_reference(item) for item in result])
+
+
+@router.get("/references/holdings")
+async def list_current_holdings(
+    current_user: dict = Depends(get_current_user),  # noqa: B008
+    service: ReferenceService = Depends(get_reference_service),  # noqa: B008
+):
+    result = await _call_service(service.list_holdings(_user_id(current_user)))
+    return ok([_public_reference(item) for item in result])
+
+
+@router.post("/entries/{entry_id}/generation-context")
+async def preview_generation_context(
+    entry_id: str,
+    payload: GenerationContextRequest,
+    current_user: dict = Depends(get_current_user),  # noqa: B008
+    service: ResearchGenerationService = Depends(get_generation_service),  # noqa: B008
+):
+    result = await _call_service(service.preview_context(_user_id(current_user), entry_id, payload.context_options))
+    return ok(result)
+
+
+@router.post("/entries/{entry_id}/revisions")
+async def save_entry_revision(
+    entry_id: str,
+    payload: SaveRevisionRequest,
+    current_user: dict = Depends(get_current_user),  # noqa: B008
+    service: StockResearchService = Depends(get_stock_research_service),  # noqa: B008
+):
+    result = await _call_service(service.save_entry_version(_user_id(current_user), entry_id, payload.label))
+    return ok(_public_document(result))
 
 
 @router.get("/links/recommendations")

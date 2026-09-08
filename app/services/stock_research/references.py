@@ -22,6 +22,7 @@ from app.services.stock_research.models import (
     Reference,
     ReferenceKind,
     ResearchSecurityId,
+    utc_now,
 )
 from app.services.stock_research.storage import StockResearchRepository
 
@@ -56,6 +57,10 @@ def _in_range(
 
 
 def _public_value(value: object) -> object:
+    if isinstance(value, dict):
+        return {key: _public_value(item) for key, item in value.items() if key != "user_id"}
+    if isinstance(value, (tuple, list)):
+        return [_public_value(item) for item in value]
     if isinstance(value, Decimal):
         return format(value, "f")
     if isinstance(value, (date, datetime)):
@@ -155,6 +160,7 @@ class RealPortfolioReader(Protocol):
 class AnalysisReportAdapter:
     def __init__(self, db) -> None:
         self.collection = db["analysis_reports"]
+        self.tasks = db["analysis_tasks"]
 
     async def list_reports(
         self,
@@ -163,9 +169,15 @@ class AnalysisReportAdapter:
         date_from: date | None,
         date_through: date | None,
     ) -> list[Mapping[str, object]]:
-        documents = await self.collection.find(
-            {"user_id": user_id, "stock_symbol": security.code}
-        ).to_list(length=None)
+        tasks = await self.tasks.find({"user_id": user_id}).to_list(length=None)
+        task_ids = [task["task_id"] for task in tasks if task.get("task_id")]
+        documents = await self.collection.find({
+            "stock_symbol": security.code,
+            "$or": [
+                {"user_id": user_id},
+                {"user_id": None, "task_id": {"$in": task_ids}},
+            ],
+        }).to_list(length=None)
         return [
             document
             for document in documents
@@ -191,14 +203,25 @@ class AnalysisReportAdapter:
         ]
         if ObjectId.is_valid(source_id):
             identities.append({"_id": ObjectId(source_id)})
-        return await self.collection.find_one(
+        owned = await self.collection.find_one(
             {"user_id": user_id, "$or": identities}
         )
+        if owned is not None:
+            return owned
+        document = await self.collection.find_one({"user_id": None, "$or": identities})
+        if document is None or not document.get("task_id"):
+            return None
+        task = await self.tasks.find_one({"task_id": document["task_id"], "user_id": user_id})
+        return document if task is not None else None
 
 
 class PaperTradeAdapter:
     def __init__(self, db) -> None:
         self.collection = db["paper_trades"]
+        self.positions = db["paper_positions"]
+
+    async def list_positions(self, user_id: str) -> list[Mapping[str, object]]:
+        return await self.positions.find({"user_id": user_id}).to_list(length=None)
 
     async def list_trades(
         self,
@@ -243,6 +266,46 @@ class ReferenceService:
         self.real_portfolio = real_portfolio
         self.paper_trades = paper_trades
 
+    async def list_holdings(self, user_id: str) -> list[ReferenceCandidate]:
+        candidates = []
+        try:
+            view = await self.real_portfolio.get_positions(user_id=user_id, as_of=None)
+        except PortfolioError as error:
+            if error.code != "NO_FULL_SNAPSHOT":
+                raise
+            view = None
+        if view is not None:
+            quantities: dict[str, Decimal] = {}
+            for holding in view.holdings:
+                if holding.quantity > 0:
+                    security_id = str(ResearchSecurityId.parse(holding.security.market, holding.security.code))
+                    quantities[security_id] = quantities.get(security_id, Decimal(0)) + holding.quantity
+            for security_id, quantity in quantities.items():
+                candidates.append(ReferenceCandidate(
+                    user_id=user_id, security_id=security_id, kind="holding_date",
+                    source_id=f"real:{security_id}@{view.as_of.isoformat()}", account_type="real",
+                    source_date=view.as_of, label=f"真实持仓 {security_id} · {view.as_of.isoformat()}",
+                    snapshot={"quantity": quantity, "completeness": view.completeness},
+                ))
+        candidates.extend(await self._paper_holdings(user_id))
+        return candidates
+
+    async def _paper_holdings(self, user_id: str) -> list[ReferenceCandidate]:
+        candidates = []
+        as_of = utc_now().date()
+        for position in await self.paper_trades.list_positions(user_id):
+            quantity = Decimal(str(position.get("quantity") or 0))
+            if quantity <= 0:
+                continue
+            security_id = str(ResearchSecurityId.parse(str(position.get("market") or "CN"), str(position["code"])))
+            candidates.append(ReferenceCandidate(
+                user_id=user_id, security_id=security_id, kind="holding_date",
+                source_id=f"paper:{security_id}@{as_of.isoformat()}", account_type="paper",
+                source_date=as_of, label=f"模拟持仓 {security_id} · {as_of.isoformat()}",
+                snapshot={"quantity": quantity, "average_cost": position.get("avg_price")},
+            ))
+        return candidates
+
     async def list_candidates(
         self,
         user_id: str,
@@ -270,6 +333,8 @@ class ReferenceService:
             *await self._holding_candidates(
                 user_id, security, date_from, date_through
             ),
+            *[item for item in await self._paper_holdings(user_id)
+              if item.security_id == str(security) and _in_range(item.source_date, date_from, date_through)],
             *await self._decision_candidates(
                 user_id, security, date_from, date_through
             ),
@@ -569,6 +634,8 @@ class ReferenceService:
                 snapshot={
                     "action": entry.decision_action,
                     "status": entry.status,
+                    "body": entry.body,
+                    "thesis_snapshot": entry.thesis_snapshot,
                 },
             )
             for entry in entries
@@ -581,7 +648,6 @@ class ReferenceService:
         expected_account = {
             "real_trade": "real",
             "paper_trade": "paper",
-            "holding_date": "real",
         }.get(reference.kind)
         if expected_account is not None and reference.account_type != expected_account:
             return None
@@ -633,9 +699,13 @@ class ReferenceService:
                 account_type=None,
                 source_date=entry.decision_date,
                 label=entry.title or f"Decision {entry.decision_action or ''}".strip(),
-                snapshot={"action": entry.decision_action, "status": entry.status},
+                snapshot={"action": entry.decision_action, "status": entry.status, "body": entry.body, "thesis_snapshot": entry.thesis_snapshot},
             )
         if reference.kind == "holding_date":
+            if reference.account_type == "paper":
+                return next((item for item in await self._paper_holdings(user_id) if item.source_id == reference.source_id), None)
+            if reference.account_type != "real":
+                return None
             return await self._resolve_holding(user_id, reference)
         return None
 

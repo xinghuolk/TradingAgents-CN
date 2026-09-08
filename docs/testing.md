@@ -112,6 +112,7 @@ node frontend/scripts/check-research-editing.mjs
 node frontend/scripts/check-research-workspace.mjs
 node frontend/scripts/check-research-reviews.mjs
 node frontend/scripts/check-research-generation.mjs
+node frontend/scripts/check-research-final.mjs
 ```
 
 The review check exercises minimal decision confirmation and its thesis preview,
@@ -160,6 +161,21 @@ pending/running controls, failed-task reopen and exact retry, unavailable models
 and unsupported effort at both viewports. Screenshots and results are written to
 `/tmp/research-generation-reopen` by default.
 
+The final-wave matrix uses the real research FastAPI routes and services with
+in-memory MongoDB and portfolio fixtures, while intercepting all browser API calls:
+
+```bash
+python frontend/scripts/check-research-final-browser.py --base http://127.0.0.1:5199
+```
+
+At both viewports it verifies note/research manual versions and restore, confirmed
+decision add/change/unlink behavior, first-time holdings without workspaces, global
+market-only review archive/delete/trash restore/permanent deletion, and adjustable
+AI review context. Screenshots and error summaries go to `/tmp/research-final-wave`.
+The service regressions additionally cover deterministic stale-write interleavings,
+production-shaped report ownership, more than 100 holdings, thesis confirmation
+snapshots, exact index specifications, and write-rejecting source collections.
+
 `npm --prefix frontend run lint` is non-mutating, and
 `npm --prefix frontend run type-check` only checks types. Both are useful diagnostics
 but currently report existing debt. They must become blocking only after their
@@ -168,6 +184,6 @@ baselines are green.
 ## Verified Baseline
 
 On 2026-09-08, the research-updated complete harness passed on the maintainer's
-development machine. Python compilation succeeded, 449 tests passed,
+development machine. Python compilation succeeded, 469 tests passed,
 and Vite built the production bundle. Three existing Python deprecation warnings and
 existing Vite/Sass bundle warnings remain visible but do not fail the gate.

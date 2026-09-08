@@ -203,6 +203,15 @@ export interface GenerationTask {
   generated_at: string | null
   content: string | null
   error_message: string | null
+  context_snapshot?: GenerationContext
+}
+
+export interface GenerationContext {
+  options: Record<string, unknown>
+  references: Array<ResearchReference & { available?: boolean }>
+  sources: Array<{ kind: string; available: boolean; security_id?: string; reason?: string }>
+  theses: Array<{ security_id: string; available?: boolean }>
+  recent_entries: Array<{ id: string; title: string; security_id: string }>
 }
 
 export interface GenerationTaskInput {
@@ -212,9 +221,22 @@ export interface GenerationTaskInput {
   model_name: string
   reasoning_effort: string | null
   references: ResearchReference[]
+  context_options?: Record<string, unknown>
 }
 
 export const stockResearchApi = {
+  previewGenerationContext: (entryId: string, contextOptions?: Record<string, unknown>) =>
+    ApiClient.post<GenerationContext>(
+      `/api/research/entries/${encodeURIComponent(entryId)}/generation-context`,
+      { context_options: contextOptions }
+    ),
+  listHoldings: () =>
+    ApiClient.get<ResearchReferenceCandidate[]>('/api/research/references/holdings'),
+  saveEntryVersion: (entryId: string, label = '') =>
+    ApiClient.post<ResearchRevision>(
+      `/api/research/entries/${encodeURIComponent(entryId)}/revisions`,
+      { label }
+    ),
   createGenerationTask: (input: GenerationTaskInput) =>
     ApiClient.post<GenerationTask>('/api/research/generation-tasks', input, { retryCount: 0 }),
   getGenerationTask: (taskId: string) =>
