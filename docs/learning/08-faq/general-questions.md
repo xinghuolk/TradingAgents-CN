@@ -85,7 +85,7 @@ TradingAgents-CN是**学习工具**，提供的分析仅供参考，不构成投
 - 📚 SimFin（数据集）
   - 美股财报数据，提供资产负债表/利润表/现金流（见 `dataflows/interface.py`）
 - 📰 新闻聚合（多源）
-  - Tushare 新闻源：sina/eastmoney/10jqka/wallstreetcn/cls/第一财经/金融界/云财经/凤凰财经（见 `docs/features/news/NEWS_SYNC_FEATURE.md`）
+  - Tushare 新闻源：sina/eastmoney/10jqka/wallstreetcn/cls/第一财经/金融界/云财经/凤凰财经
   - AKShare 新闻源：东方财富、CCTV（见 `dataflows/akshare_utils.py`）
   - 自建聚合：Google News、Reddit（见 `dataflows/interface.py` 与 `features/news/news-analysis-system.md`）
 
@@ -568,4 +568,3 @@ TradingAgents-CN是**学习工具**，提供的分析仅供参考，不构成投
 **还有其他问题？**
 
 欢迎在GitHub Issues中提问，或查看完整文档。
-

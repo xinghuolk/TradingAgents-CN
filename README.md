@@ -178,7 +178,7 @@ TradingAgentsCN 已经获得 **13,000+ stars**，但一直由我一个人开发�
 - 📊 **多市场用户** - 测试 A 股、港股、美股数据源
 - 🤖 **多 LLM 用户** - 测试不同 LLM 提供商（OpenAI/Gemini/DeepSeek/通义千问等）
 
-**详细信息**: 查看完整招募公告 → [📢 测试志愿者招募](docs/community/CALL_FOR_TESTERS.md)
+贡献和测试协调通过 GitHub issues 和 discussions 进行。
 
 ## 🤝 贡献指南
 

@@ -1771,7 +1771,7 @@ git commit -m "feat(portfolio): add real portfolio views"
 
 **Files:**
 - Create: `tests/integration/test_real_portfolio_mongo.py`
-- Create: `docs/development/real_portfolio.md`
+- Create: `docs/current/real-portfolio.md`
 
 **Interfaces:**
 - Consumes: completed backend, frontend, default Docker standalone MongoDB, and synthetic broker fixtures.
@@ -1863,7 +1863,7 @@ async def test_real_portfolio_round_trip_on_standalone_mongo(tmp_path):
 
 - [ ] **Step 2: Document the supported personal deployment**
 
-Document these exact operational facts in `docs/development/real_portfolio.md`:
+Document these exact operational facts in `docs/current/real-portfolio.md`:
 
 - feature requires the existing authenticated backend and MongoDB;
 - imports are supported with one backend worker;
@@ -1917,7 +1917,7 @@ Start the backend and frontend with the repository commands. Log in, import the 
 - [ ] **Step 7: Commit integration proof and documentation**
 
 ```bash
-git add tests/integration/test_real_portfolio_mongo.py docs/development/real_portfolio.md
+git add tests/integration/test_real_portfolio_mongo.py docs/current/real-portfolio.md
 git commit -m "test(portfolio): verify standalone mongo workflow"
 ```
 

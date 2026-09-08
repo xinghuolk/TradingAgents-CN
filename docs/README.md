@@ -9,6 +9,7 @@
 - [使用](current/usage.md)
 - [部署](current/deployment.md)
 - [故障排除](current/troubleshooting.md)
+- [真实持仓导入](current/real-portfolio.md)
 
 ## 开发与架构
 
