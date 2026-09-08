@@ -116,6 +116,10 @@ class StockResearchService:
         self, user_id: str, entry_id: str, patch: EntryPatch
     ) -> Entry:
         entry = await self._get_entry(user_id, entry_id)
+        if entry.status == "archived":
+            raise ResearchError(
+                "INVALID_ENTRY", "archived entry cannot be autosaved"
+            )
         if entry.entry_type == "decision" and entry.status == "confirmed":
             raise ResearchError(
                 "INVALID_ENTRY", "formal entry cannot be autosaved"

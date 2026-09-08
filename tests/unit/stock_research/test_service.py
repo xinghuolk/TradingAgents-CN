@@ -131,6 +131,57 @@ async def test_confirmed_review_edit_creates_a_new_formal_revision(service, repo
 
 
 @pytest.mark.asyncio
+async def test_archived_confirmed_decision_cannot_be_autosaved(service, repo):
+    await service.get_or_create_workspace("u1", "CN", "600519", "贵州茅台")
+    decision = await service.create_entry(
+        "u1",
+        NewEntry.decision(
+            "A:600519", "buy", date(2026, 9, 8), body="确认时正文"
+        ),
+    )
+    confirmed = await service.confirm_entry("u1", decision.id)
+    archived = await service.archive_entry("u1", confirmed.id)
+
+    with pytest.raises(ResearchError, match="archived entry"):
+        await service.update_entry_draft(
+            "u1", archived.id, EntryPatch(body="越过正式决策保护")
+        )
+
+    stored = await repo.get_entry("u1", archived.id)
+    assert stored is not None
+    assert (stored.body, stored.status, stored.confirmed_at) == (
+        "确认时正文",
+        "archived",
+        NOW,
+    )
+    assert len(await repo.list_revisions("u1", "entry", archived.id)) == 1
+
+
+@pytest.mark.asyncio
+async def test_archived_confirmed_review_cannot_be_autosaved(service, repo):
+    review = await service.create_entry(
+        "u1", NewEntry.routine_review(scope="portfolio", body="正式复盘")
+    )
+    confirmed = await service.confirm_entry("u1", review.id)
+    archived = await service.archive_entry("u1", confirmed.id)
+
+    with pytest.raises(ResearchError, match="archived entry"):
+        await service.update_entry_draft(
+            "u1", archived.id, EntryPatch(body="无版本覆盖")
+        )
+
+    stored = await repo.get_entry("u1", archived.id)
+    assert stored is not None
+    assert (stored.body, stored.status, stored.confirmed_at) == (
+        "正式复盘",
+        "archived",
+        NOW,
+    )
+    revisions = await repo.list_revisions("u1", "entry", archived.id)
+    assert [revision.snapshot["body"] for revision in revisions] == ["正式复盘"]
+
+
+@pytest.mark.asyncio
 async def test_restore_old_workspace_revision_writes_a_new_latest_revision(service, repo):
     workspace = await service.get_or_create_workspace("u1", "CN", "600519", "贵州茅台")
     await service.save_thesis_draft("u1", workspace.security_id, ThesisPatch(body="v1"))
