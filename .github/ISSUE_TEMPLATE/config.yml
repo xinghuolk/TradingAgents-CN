@@ -1,11 +1,11 @@
 blank_issues_enabled: false
 contact_links:
   - name: 📖 项目文档 / Project Documentation
-    url: https://github.com/hsliuping/TradingAgents-CN/blob/main/README.md
+    url: https://github.com/hsliuping/TradingAgents-CN/blob/main/docs/README.md
     about: 查看完整的项目文档和使用指南 / View complete project documentation and usage guide
   
   - name: 🐳 Docker部署指南 / Docker Deployment Guide
-    url: https://github.com/hsliuping/TradingAgents-CN/blob/main/docs/DOCKER_GUIDE.md
+    url: https://github.com/hsliuping/TradingAgents-CN/blob/main/docs/current/deployment.md
     about: Docker容器化部署的详细指南 / Detailed guide for Docker containerized deployment
   
   - name: 💬 讨论区 / Discussions

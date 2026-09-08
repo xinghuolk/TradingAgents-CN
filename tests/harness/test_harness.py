@@ -33,6 +33,17 @@ def test_iter_current_documents_includes_current_tree(tmp_path: Path) -> None:
     assert Path("docs/current/nested/reference.md") in relative
 
 
+def test_iter_current_documents_includes_active_support_documents() -> None:
+    relative = {
+        path.relative_to(ROOT)
+        for path in harness.iter_current_documents(ROOT)
+    }
+
+    assert Path("README.md") in relative
+    assert Path(".github/ISSUE_TEMPLATE/question.md") in relative
+    assert Path(".github/pull_request_template.md") in relative
+
+
 def _workflow_step_script(workflow: Path, step_name: str) -> str:
     lines = workflow.read_text(encoding="utf-8").splitlines()
     name_line = f"    - name: {step_name}"
@@ -62,6 +73,20 @@ def test_validate_local_links_reports_missing_target(tmp_path: Path) -> None:
     assert validate_local_links(guide, tmp_path) == [
         "docs/guide.md: missing local link target ../ARCHITECTURE.md"
     ]
+
+
+def test_active_support_document_links_resolve() -> None:
+    documents = (
+        ROOT / "README.md",
+        ROOT / ".github" / "ISSUE_TEMPLATE" / "question.md",
+        ROOT / ".github" / "pull_request_template.md",
+    )
+    errors = [
+        error
+        for document in documents
+        for error in validate_local_links(document, ROOT)
+    ]
+    assert errors == []
 
 
 def test_run_checks_stops_after_first_failure(tmp_path: Path) -> None:

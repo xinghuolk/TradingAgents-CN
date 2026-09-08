@@ -283,7 +283,7 @@ class StartupValidator:
                 logger.info("Tip: Configure recommended items for better functionality")
         else:
             logger.info("Configuration validation failed, please check the above items")
-            logger.info("Configuration guide: docs/configuration_guide.md")
+            logger.info("Configuration guide: docs/current/configuration.md")
         logger.info("=" * 70 + "\n")
     
     def raise_if_failed(self):
@@ -303,7 +303,7 @@ class StartupValidator:
             
             raise ConfigurationError(
                 "配置验证失败:\n" + "\n".join(f"  • {msg}" for msg in error_messages) +
-                "\n\n请检查 .env 文件并参考 docs/configuration_guide.md"
+                "\n\n请检查 .env 文件并参考 docs/current/configuration.md"
             )
 
 
@@ -338,4 +338,3 @@ def validate_startup_config() -> ValidationResult:
         raise ConfigurationError(f"OAuth encryption key invalid: {exc}") from exc
 
     return result
-

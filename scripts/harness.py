@@ -28,6 +28,11 @@ CANONICAL_DOCUMENTS = (
     Path("docs/testing.md"),
     Path("docs/technical-debt.md"),
 )
+ACTIVE_SUPPORT_DOCUMENTS = (
+    Path("README.md"),
+    Path(".github/ISSUE_TEMPLATE/question.md"),
+    Path(".github/pull_request_template.md"),
+)
 ARCHIVE_POLICY = Path("docs/archive/README.md")
 MARKDOWN_LINK = re.compile(r"(?<!!)\[[^]]+\]\(([^)]+)\)")
 
@@ -67,6 +72,7 @@ def validate_local_links(document: Path, root: Path) -> list[str]:
 
 def iter_current_documents(root: Path) -> tuple[Path, ...]:
     documents = [root / path for path in CANONICAL_DOCUMENTS]
+    documents.extend(root / path for path in ACTIVE_SUPPORT_DOCUMENTS)
     documents.append(root / ARCHIVE_POLICY)
     current_root = root / "docs" / "current"
     if current_root.is_dir():
