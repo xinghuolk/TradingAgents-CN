@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Awaitable
 from datetime import date
@@ -19,10 +20,15 @@ from app.routers.auth_db import get_current_user
 from app.services.real_portfolio.service import RealPortfolioService
 from app.services.real_portfolio.storage import RealPortfolioRepository
 from app.services.stock_research.errors import ResearchError
+from app.services.stock_research.generation import (
+    ConfiguredResearchTextGenerator,
+    ResearchGenerationService,
+)
 from app.services.stock_research.models import (
     Entry,
     EntryPatch,
     EntryQuery,
+    GenerationTask,
     NewEntry,
     Reference,
     ResearchPage,
@@ -46,6 +52,7 @@ from app.services.stock_research.storage import StockResearchRepository
 
 router = APIRouter(prefix="/research", tags=["research"])
 logger = logging.getLogger(__name__)
+_generation_runs: set[asyncio.Task] = set()
 
 ERROR_STATUS = {
     "RESEARCH_NOT_FOUND": 404,
@@ -55,6 +62,8 @@ ERROR_STATUS = {
     "INVALID_QUERY": 422,
     "INVALID_REVISION": 422,
     "RESEARCH_STORAGE_UNAVAILABLE": 503,
+    "INVALID_GENERATION_MODEL": 422,
+    "INVALID_GENERATION_SETTINGS": 422,
 }
 _T = TypeVar("_T")
 
@@ -242,6 +251,15 @@ class SetDecisionTradeLinksRequest(StrictRequest):
     references: list[ReferenceRequest] = Field(default_factory=list)
 
 
+class GenerationTaskRequest(StrictRequest):
+    target_entry_id: str
+    draft_kind: Literal["note", "research", "decision", "review"]
+    provider: str
+    model_name: str
+    reasoning_effort: str | None = None
+    references: list[ReferenceRequest] = Field(default_factory=list)
+
+
 def get_stock_research_service(
     db=Depends(get_mongo_db),  # noqa: B008 - FastAPI dependency declaration
 ) -> StockResearchService:
@@ -266,6 +284,17 @@ def get_reference_service(
             RealPortfolioRepository(db), Path(settings.TRADINGAGENTS_DATA_DIR)
         ),
         PaperTradeAdapter(db),
+    )
+
+
+def get_generation_service(
+    db=Depends(get_mongo_db),  # noqa: B008
+    references: ReferenceService = Depends(get_reference_service),  # noqa: B008
+) -> ResearchGenerationService:
+    generator = ConfiguredResearchTextGenerator(db)
+    return ResearchGenerationService(
+        StockResearchRepository(db), references, generator,
+        selection_validator=generator.validate_selection,
     )
 
 
@@ -311,7 +340,7 @@ async def _call_service(operation: Awaitable[_T]) -> _T:
 
 
 def _public_document(
-    item: Workspace | ResearchWorkspaceSummary | Entry | Revision,
+    item: Workspace | ResearchWorkspaceSummary | Entry | Revision | GenerationTask,
 ) -> dict[str, object]:
     def sanitize(value: object) -> object:
         if isinstance(value, dict):
@@ -355,6 +384,34 @@ def _public_reference(item: ReferenceCandidate) -> dict[str, object]:
 
 def _user_id(current_user: dict) -> str:
     return str(current_user["id"])
+
+
+@router.post("/generation-tasks", status_code=202)
+async def create_generation_task(
+    request: GenerationTaskRequest,
+    current_user: dict = Depends(get_current_user),  # noqa: B008
+    service: ResearchGenerationService = Depends(get_generation_service),  # noqa: B008
+):
+    user_id = _user_id(current_user)
+    task = await _call_service(service.submit(
+        user_id=user_id, target_entry_id=request.target_entry_id, draft_kind=request.draft_kind,
+        provider=request.provider, model_name=request.model_name, reasoning_effort=request.reasoning_effort,
+        references=[reference.to_domain() for reference in request.references],
+    ))
+    running = asyncio.create_task(service.run(task.id, user_id))
+    _generation_runs.add(running)
+    running.add_done_callback(_generation_runs.discard)
+    return ok(data=_public_document(task))
+
+
+@router.get("/generation-tasks/{task_id}")
+async def get_generation_task(
+    task_id: str,
+    current_user: dict = Depends(get_current_user),  # noqa: B008
+    service: ResearchGenerationService = Depends(get_generation_service),  # noqa: B008
+):
+    task = await _call_service(service.get(_user_id(current_user), task_id))
+    return ok(data=_public_document(task))
 
 
 @router.get("/references")

@@ -12,6 +12,7 @@ from app.services.stock_research.errors import ResearchError
 from app.services.stock_research.models import (
     Entry,
     EntryQuery,
+    GenerationTask,
     Reference,
     ResearchPage,
     ResearchSecurityId,
@@ -223,6 +224,8 @@ class StockResearchRepository:
         entry = _with_derived_trade_link_keys(entry)
         entry.validate()
         document = entry.to_document()
+        # Originals belong to the generation append path, never a human save.
+        document.pop("ai_drafts", None)
         try:
             result = await self._collection("entries").update_one(
                 {"user_id": entry.user_id, "id": entry.id},
@@ -232,7 +235,59 @@ class StockResearchRepository:
             _raise_trade_link_conflict(error)
         if result.matched_count == 0:
             raise ResearchError("RESEARCH_NOT_FOUND", "research entry not found")
-        return Entry.from_document(document)
+        return await self.get_entry(entry.user_id, entry.id, include_deleted=True)
+
+    async def insert_generation_task(self, task: GenerationTask) -> GenerationTask:
+        document = task.to_document()
+        await self._collection("generation_tasks").insert_one(document)
+        return GenerationTask.from_document(document)
+
+    async def get_generation_task(self, user_id: str, task_id: str) -> GenerationTask | None:
+        document = await self._collection("generation_tasks").find_one({"user_id": user_id, "id": task_id})
+        return GenerationTask.from_document(document) if document else None
+
+    async def claim_generation_task(self, user_id: str, task_id: str) -> GenerationTask | None:
+        document = await self._collection("generation_tasks").find_one_and_update(
+            {"user_id": user_id, "id": task_id, "status": "pending"},
+            {"$set": {"status": "running", "updated_at": datetime.now(UTC).isoformat()}},
+            return_document=ReturnDocument.AFTER,
+        )
+        return GenerationTask.from_document(document) if document else None
+
+    async def complete_generation_task(self, task: GenerationTask, content: str, generated_at: datetime) -> None:
+        timestamp = generated_at.isoformat()
+        draft = {
+            "content": content, "provider": task.provider, "model_name": task.model_name,
+            "reasoning_effort": task.reasoning_effort, "generated_at": timestamp,
+            "prompt_version": task.prompt_version, "source_ids": list(task.source_ids),
+            "references": task.context_snapshot["references"], "task_id": task.id,
+        }
+        entries = self._collection("entries")
+        target = {"user_id": task.user_id, "id": task.target_entry_id}
+        result = await entries.update_one(
+            {**target, "deleted_at": None, "status": "draft"}, {"$push": {"ai_drafts": draft}},
+        )
+        if not result.matched_count:
+            raise ResearchError("RESEARCH_CONFLICT", "generation target is no longer editable")
+        try:
+            result = await self._collection("generation_tasks").update_one(
+                {"user_id": task.user_id, "id": task.id, "status": "running"},
+                {"$set": {"status": "completed", "content": content, "generated_at": timestamp, "updated_at": timestamp}},
+            )
+            if not result.matched_count:
+                raise ResearchError("RESEARCH_CONFLICT", "generation task is no longer running")
+        except BaseException:
+            # Two collections on standalone Mongo: undo only this task's append
+            # if completion fails. Process crashes/restart recovery are out of scope.
+            await entries.update_one(target, {"$pull": {"ai_drafts": {"task_id": task.id}}})
+            raise
+
+    async def fail_generation_task(self, user_id: str, task_id: str, error_code: str, error_message: str) -> None:
+        await self._collection("generation_tasks").update_one(
+            {"user_id": user_id, "id": task_id, "status": "running"},
+            {"$set": {"status": "failed", "content": None, "error_code": error_code,
+                      "error_message": error_message, "updated_at": datetime.now(UTC).isoformat()}},
+        )
 
     async def replace_decision_trade_links(
         self,

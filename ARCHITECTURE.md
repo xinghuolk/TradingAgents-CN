@@ -56,6 +56,23 @@ A-share synchronization is scheduled by provider and task type. Hong Kong and US
 market data are intentionally fetched on demand and cached. Worker entry points under
 `app/worker/` execute queued analysis outside request handling.
 
+Research AI drafts use `POST /api/research/generation-tasks` and a user-scoped GET
+by task ID. The service freezes selected reference display snapshots and current
+research inputs, persists `pending`, then schedules an in-process asyncio task.
+Only active draft entries accept generated originals; human bodies are never
+changed by generation. An atomic pending-to-running claim prevents duplicate runs.
+Completion appends the original and marks the task completed; a failed completion
+write compensates by removing that task's append. This iteration does not provide
+cross-collection crash atomicity, restart recovery, or a separate research worker.
+
+Research generation reads the exact enabled model from the latest saved active
+configuration and uses the shared LLM factory, without model fallback. OAuth
+credentials are resolved for the submitting user at invocation time and are never
+stored with tasks. Unsupported reasoning effort fails explicitly. The current
+Codex adapter's effort path requests encrypted reasoning replay, so research drafts
+accept Codex only with no explicit effort until that adapter supports effort alone.
+Prompts and stored results contain public draft text, not internal reasoning.
+
 ## Deployment Boundaries
 
 Docker Compose runs the frontend, backend, MongoDB, and Redis. `Dockerfile.backend`

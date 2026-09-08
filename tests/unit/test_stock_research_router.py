@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import asyncio
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
@@ -36,6 +37,101 @@ from tests.unit.stock_research.fakes import FakeDatabase
 
 
 NOW = datetime(2026, 9, 8, 9, 30, tzinfo=UTC)
+
+
+@pytest.mark.asyncio
+async def test_generation_routes_persist_before_scheduling_and_scope_get(monkeypatch):
+    from tests.unit.stock_research.test_generation import setup_generation
+
+    generation, _, repo, service, entry = await setup_generation("authenticated-user")
+    app = create_test_app(service)
+    dependency = getattr(stock_research, "get_generation_service", lambda: None)
+    async def generation_dependency():
+        return generation
+    app.dependency_overrides[dependency] = generation_dependency
+    scheduled = []
+    create_task = asyncio.create_task
+
+    def schedule(coroutine):
+        documents = repo.db["stock_research_generation_tasks"].documents
+        assert len(documents) == 1
+        assert documents[0]["status"] == "pending"
+        task = create_task(coroutine)
+        scheduled.append(task)
+        return task
+
+    monkeypatch.setattr(asyncio, "create_task", schedule)
+    async with create_test_client(app) as client:
+        response = await client.post("/api/research/generation-tasks", json={
+            "target_entry_id": entry.id, "draft_kind": "review", "provider": "openai",
+            "model_name": "gpt-5", "reasoning_effort": "high", "references": [],
+        })
+        assert response.status_code == 202
+        task = response.json()["data"]
+        assert task["status"] == "pending"
+        assert "user_id" not in task
+        await asyncio.gather(*scheduled)
+        response = await client.get(f"/api/research/generation-tasks/{task['id']}")
+        assert response.json()["data"]["status"] == "completed"
+        async def other_user():
+            return {"id": "other-user"}
+        app.dependency_overrides[get_current_user] = other_user
+        assert (await client.get(f"/api/research/generation-tasks/{task['id']}")).status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_generation_route_failed_task_has_no_generated_content(monkeypatch):
+    from tests.unit.stock_research.test_generation import setup_generation
+
+    generation, generator, _, service, entry = await setup_generation("authenticated-user")
+    generator.error = RuntimeError("api_key=private-provider-key")
+    app = create_test_app(service)
+    async def generation_dependency():
+        return generation
+    app.dependency_overrides[stock_research.get_generation_service] = generation_dependency
+    scheduled = []
+    create_task = asyncio.create_task
+
+    def schedule(coroutine):
+        task = create_task(coroutine)
+        scheduled.append(task)
+        return task
+
+    monkeypatch.setattr(asyncio, "create_task", schedule)
+    async with create_test_client(app) as client:
+        response = await client.post("/api/research/generation-tasks", json={
+            "target_entry_id": entry.id, "draft_kind": "review", "provider": "openai", "model_name": "gpt-5",
+        })
+        assert response.status_code == 202
+        task_id = response.json()["data"]["id"]
+        await asyncio.gather(*scheduled)
+        response = await client.get(f"/api/research/generation-tasks/{task_id}")
+        assert response.json()["data"]["status"] == "failed"
+        assert response.json()["data"]["content"] is None
+        assert "private-provider-key" not in response.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("provider,model", [("provider-secret", "chosen"), ("openai", "model-secret")])
+async def test_generation_route_invalid_model_is_sanitized(provider, model):
+    from tests.unit.stock_research.test_generation import setup_generation, configured_generator
+
+    generation, _, repo, service, entry = await setup_generation("authenticated-user")
+    configured, _, _, calls = await configured_generator()
+    generation.selection_validator = configured.validate_selection
+    app = create_test_app(service)
+    async def generation_dependency():
+        return generation
+    app.dependency_overrides[stock_research.get_generation_service] = generation_dependency
+    async with create_test_client(app) as client:
+        response = await client.post("/api/research/generation-tasks", json={
+            "target_entry_id": entry.id, "draft_kind": "review", "provider": provider, "model_name": model,
+        })
+        assert response.status_code == 422
+        assert response.json()["detail"]["code"] == "INVALID_GENERATION_MODEL"
+        assert "secret" not in response.text
+        assert repo.db["stock_research_generation_tasks"].documents == []
+        assert calls == []
 
 
 @pytest.mark.asyncio

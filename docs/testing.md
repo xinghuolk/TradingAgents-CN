@@ -43,6 +43,14 @@ python -m pytest -c tests/pytest.ini tests/unit/real_portfolio/test_holdings.py 
 python -m pytest -c tests/pytest.ini tests/unit/real_portfolio/test_holdings.py::test_name -q
 ```
 
+Research generation and HTTP contracts use injected generators and in-memory
+storage, including model selection, user OAuth resolution, immutable originals,
+failure compensation, and user-scoped task polling. They do not call a real LLM:
+
+```bash
+python -m pytest -c tests/pytest.ini tests/unit/stock_research/test_generation.py tests/unit/test_stock_research_router.py -q
+```
+
 ## Integration Checks
 
 Tests marked `integration` and checks that start the FastAPI application, connect to
