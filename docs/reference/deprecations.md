@@ -2,7 +2,7 @@
 
 > **更新日期**: 2025-10-05
 > 
-> **相关文档**: `docs/configuration_optimization_plan.md`
+> **当前入口**: `docs/current/configuration.md`
 
 ---
 
@@ -91,9 +91,9 @@ rm config/usage.json
 | 类/方法 | 位置 | 替代方案 |
 |---------|------|----------|
 | `ConfigManager` | `tradingagents/config/config_manager.py` | `app.services.config_service.ConfigService` |
-| `ConfigManager.load_models()` | 同上 | `ConfigService.get_llm_configs()` |
+| `ConfigManager.load_models()` | 同上 | `ConfigService.get_system_config().llm_configs` |
 | `ConfigManager.load_settings()` | 同上 | `ConfigService.get_system_settings()` |
-| `ConfigManager.save_models()` | 同上 | `ConfigService.update_llm_config()` |
+| `ConfigManager.save_models()` | 同上 | `ConfigService.update_llm_config(llm_config)` |
 | `ConfigManager.save_settings()` | 同上 | `ConfigService.update_system_settings()` |
 
 #### 迁移示例
@@ -114,6 +114,7 @@ config_manager.save_models(models)
 **新代码**:
 ```python
 from app.services.config_service import config_service
+from app.models.config import LLMConfig
 
 # 获取配置
 config = await config_service.get_system_config()
@@ -121,11 +122,11 @@ llm_configs = config.llm_configs
 system_settings = config.system_settings
 
 # 更新配置
-await config_service.update_llm_config(
+await config_service.update_llm_config(LLMConfig(
     provider="dashscope",
     model_name="qwen-turbo",
-    updates={"enabled": True}
-)
+    enabled=True,
+))
 ```
 
 ---
@@ -226,9 +227,9 @@ await config_service.update_llm_config(
 
 ## 📚 相关文档
 
-- **配置指南**: `docs/configuration_guide.md`
-- **配置分析**: `docs/configuration_analysis.md`
-- **优化计划**: `docs/configuration_optimization_plan.md`
+- **当前配置指南**: `docs/current/configuration.md`
+- **历史配置分析**: `docs/archive/legacy/operations/configuration/configuration_analysis.md`
+- **历史优化计划**: `docs/archive/legacy/operations/configuration/configuration_optimization_plan.md`
 - **迁移脚本**: `scripts/migrate_config_to_db.py`
 
 ---
@@ -237,9 +238,8 @@ await config_service.update_llm_config(
 
 如果您在迁移过程中遇到问题，请：
 
-1. **查看文档**: `docs/configuration_guide.md`
+1. **查看文档**: `docs/current/configuration.md`
 2. **提交 Issue**: GitHub Issues
-3. **联系支持**: [待补充]
 
 ---
 

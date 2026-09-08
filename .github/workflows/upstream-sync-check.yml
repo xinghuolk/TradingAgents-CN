@@ -126,7 +126,7 @@ jobs:
           ## 🔧 同步步骤
           
           1. 检查当前工作状态
-          2. 运行同步脚本: \`python scripts/sync_upstream.py\`
+          2. 运行同步脚本: \`python scripts/maintenance/sync_upstream.py\`
           3. 解决可能的冲突
           4. 测试功能完整性
           5. 更新相关文档
@@ -135,7 +135,7 @@ jobs:
           
           - [上游仓库](https://github.com/TauricResearch/TradingAgents)
           - [同步策略文档](docs/reference/operations/upstream-sync.md)
-          - [同步脚本](scripts/sync_upstream.py)
+          - [同步脚本](scripts/maintenance/sync_upstream.py)
           
           ---
           

@@ -19,6 +19,9 @@ docker compose logs -f redis
   设置符合网络环境。
 - 前端页面或资源失败：查看 frontend 容器日志；本地源码改动后，按[开发指南](../development.md)
   运行相应验证，并可执行完整前端 bundle 检查。
+- 报告 PDF 或 Word 导出失败：宿主机运行需要安装 Pandoc；PDF 还需要可用的 PDF 引擎
+  （如 wkhtmltopdf 或 LaTeX）。Docker 镜像已经包含项目预期的导出工具，优先对比容器日志
+  和本地环境差异。
 
 修改源码后运行完整的仓库 harness：
 

@@ -259,6 +259,5 @@ with self._lock:
 
 ## 参考资料
 
-- [批量分析问题修复总结](../troubleshooting/batch-analysis-fix-summary.md)
-- [并发安全总结](../troubleshooting/concurrent-safety-summary.md)
-
+- [当前故障排除指南](../../current/troubleshooting.md)
+- [当前使用流程](../../current/usage.md)

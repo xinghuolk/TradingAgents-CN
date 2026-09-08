@@ -10,7 +10,7 @@ category.
 | --- | --- | ---: |
 | Current | `docs/current/` | 6 |
 | Reference | `docs/reference/` | 8 |
-| Archive | `docs/archive/` | 592 |
+| Archive | `docs/archive/` | 593 |
 | Runtime learning and paper | `docs/learning/` and `docs/paper/` | 11 |
 | Retained analysis evidence | `docs/analysis/` | 12 |
 | Unresolved archive local links | Every Markdown document under `docs/archive/` | 351 |
@@ -36,6 +36,6 @@ structured local-link validator, rather than a separate Markdown parser:
 /home/like/mycode/finanice/TradingAgents-CN/.venv/bin/python -c "from scripts.harness import ROOT, validate_local_links; documents = sorted((ROOT / 'docs/archive').rglob('*.md')); errors = [error for document in documents for error in validate_local_links(document, ROOT)]; print(f'{len(errors)} unresolved local links across {len(documents)} archive Markdown documents')"
 ```
 
-On 2026-09-08, it prints `351 unresolved local links across 592 archive Markdown`
+On 2026-09-08, it prints `351 unresolved local links across 593 archive Markdown`
 documents. Archive links are historical evidence and are non-blocking; repair one
 only when its document is promoted or substantively edited.

@@ -8,7 +8,7 @@
 
 **Tech Stack:** Markdown, Python 3.11, pytest, Git, the existing `scripts/harness.py` validation entry point.
 
-**Spec:** `docs/superpowers/specs/2026-09-08-document-archive-design.md`
+**Spec:** `docs/archive/engineering-plans/superpowers/specs/2026-09-08-document-archive-design.md`
 
 ## Global Constraints
 
@@ -591,7 +591,7 @@ counts and complete harness results in the commit body.
 - Produces: a reviewed branch with confirmed factual defects fixed, no expanded
   reference-document gate, and its completed planning records archived.
 
-- [ ] **Step 1: Restore the unfinished active discussion**
+- [x] **Step 1: Restore the unfinished active discussion**
 
 Move this file back because it explicitly says the work is still being discussed:
 
@@ -599,7 +599,7 @@ Move this file back because it explicitly says the work is still being discussed
 git mv docs/archive/engineering-plans/superpowers/specs/2026-09-07-stock-research-review-workspace-discussion.md docs/superpowers/specs/2026-09-07-stock-research-review-workspace-discussion.md
 ```
 
-- [ ] **Step 2: Fix confirmed reference defects without expanding the harness**
+- [x] **Step 2: Fix confirmed reference defects without expanding the harness**
 
 Apply the final-review fixes only to the implicated files:
 
@@ -622,7 +622,7 @@ Apply the final-review fixes only to the implicated files:
 Do not modify `scripts/harness.py` or `tests/harness/test_harness.py` in this task.
 Do not add all of `docs/reference/` to the blocking gate.
 
-- [ ] **Step 3: Remove tracked scratch reports**
+- [x] **Step 3: Remove tracked scratch reports**
 
 Remove the two tracked temporary implementation reports because the durable progress
 record is already in `.superpowers/sdd/2026-09-08-document-archive/progress.md` and
@@ -632,7 +632,7 @@ Git history retains the old commits:
 git rm .superpowers/sdd/2026-09-08-document-archive/task-3-report.md .superpowers/sdd/2026-09-08-document-archive/task-4-report.md
 ```
 
-- [ ] **Step 4: Archive this completed design and plan**
+- [x] **Step 4: Archive this completed design and plan**
 
 After the review fixes above are applied, move the two active 2026-09-08 documents
 into their matching archive directories:
@@ -644,7 +644,7 @@ git mv docs/superpowers/plans/2026-09-08-document-archive.md docs/archive/engine
 
 Update any current link that still points to their old paths.
 
-- [ ] **Step 5: Refresh measured inventory and debt evidence**
+- [x] **Step 5: Refresh measured inventory and debt evidence**
 
 Re-measure counts rather than calculating them by hand. Update
 `docs/archive/inventory.md` and `docs/technical-debt.md` with:
@@ -654,7 +654,7 @@ Re-measure counts rather than calculating them by hand. Update
 - The unresolved archive-link count.
 - The harness-controlled validation result of zero current/support-document errors.
 
-- [ ] **Step 6: Run final verification and commit**
+- [x] **Step 6: Run final verification and commit**
 
 Run:
 

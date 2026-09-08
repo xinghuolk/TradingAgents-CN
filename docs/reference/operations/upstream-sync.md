@@ -68,7 +68,7 @@ git fetch upstream
 git log --oneline HEAD..upstream/main
 
 # 4. 使用自动化脚本同步
-python scripts/sync_upstream.py
+python scripts/maintenance/sync_upstream.py
 
 # 5. 解决冲突（如果有）
 # 手动编辑冲突文件
@@ -76,24 +76,24 @@ git add <resolved_files>
 git commit
 
 # 6. 测试同步结果
-python -m pytest tests/
-python examples/basic_example.py
+python scripts/harness.py
 
-# 7. 推送更新
-git push origin main
+# 7. 查看同步分支差异，确认后再按本地合并流程进入 main
+git status
+git log --oneline --decorate -5
 ```
 
 #### 使用自动化脚本
 
 ```bash
 # 基本同步
-python scripts/sync_upstream.py
+python scripts/maintenance/sync_upstream.py
 
 # 使用rebase策略
-python scripts/sync_upstream.py --strategy rebase
+python scripts/maintenance/sync_upstream.py --strategy rebase
 
 # 自动模式（不询问确认）
-python scripts/sync_upstream.py --auto
+python scripts/maintenance/sync_upstream.py --auto
 ```
 
 ## ⚠️ 冲突处理策略
@@ -165,14 +165,11 @@ git checkout --theirs <conflicted_file>
 
 ### 自动化测试
 ```bash
-# 运行完整测试套件
-python -m pytest tests/ -v
+# 运行项目 harness，覆盖结构、Python 编译、pytest 和前端 bundle
+python scripts/harness.py
 
-# 运行基本功能测试
-python examples/basic_example.py
-
-# 运行性能测试
-python tests/performance_test.py
+# 文档或轻量变更可先运行结构检查
+python scripts/harness.py --structural-only
 ```
 
 ### 手动测试
@@ -221,28 +218,26 @@ git push origin --tags
 
 ### 同步失败回滚
 ```bash
-# 回滚到同步前状态
-git reset --hard v1.0.0-cn-pre-sync
+# 如果同步分支有问题，保留 main 不动并重新创建同步分支
+git switch main
+git branch -D upstream-sync-YYYYMMDD
 
-# 或者回滚到上一个提交
-git reset --hard HEAD~1
-
-# 强制推送（谨慎使用）
-git push origin main --force-with-lease
+# 远端已有同步分支时，只删除同步分支，不强推 main
+git push origin --delete upstream-sync-YYYYMMDD
 ```
 
 ### 紧急热修复
 ```bash
 # 创建热修复分支
-git checkout -b hotfix/urgent-fix
+git switch -c hotfix/urgent-fix
 
 # 应用修复
 # ... 修复代码 ...
 
-# 快速合并
-git checkout main
+# 先运行 harness，再按本地流程合并
+python scripts/harness.py
+git switch main
 git merge hotfix/urgent-fix
-git push origin main
 
 # 删除热修复分支
 git branch -d hotfix/urgent-fix
