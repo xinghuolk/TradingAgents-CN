@@ -273,6 +273,16 @@ class StockResearchRepository:
         )
         return [Revision.from_document(document) for document in documents]
 
+    async def get_revision(self, user_id: str, revision_id: str) -> Revision | None:
+        document = await self._collection("revisions").find_one(
+            {
+                "user_id": user_id,
+                "id": revision_id,
+                "_counter": {"$ne": True},
+            }
+        )
+        return Revision.from_document(document) if document is not None else None
+
     async def soft_delete_entry(
         self, user_id: str, entry_id: str, now: datetime
     ) -> None:

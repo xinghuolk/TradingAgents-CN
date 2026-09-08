@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from dataclasses import dataclass, field, fields
+from dataclasses import dataclass, field, fields, replace
 from datetime import UTC, date, datetime
 from typing import Generic, Literal, Mapping, TypeVar
 from uuid import uuid4
@@ -394,6 +394,175 @@ class Entry:
         values["created_at"] = values.get("created_at") or utc_now()
         values["updated_at"] = values.get("updated_at") or utc_now()
         return cls(**values)  # type: ignore[arg-type]
+
+
+@dataclass(frozen=True, slots=True)
+class ThesisPatch:
+    body: str | None = None
+    assumptions: tuple[str, ...] | None = None
+    risks: tuple[str, ...] | None = None
+    invalidation_conditions: tuple[str, ...] | None = None
+    open_questions: tuple[str, ...] | None = None
+    tags: tuple[str, ...] | None = None
+    external_links: tuple[str, ...] | None = None
+
+    def changes(self) -> dict[str, object]:
+        return {
+            item.name: getattr(self, item.name)
+            for item in fields(self)
+            if getattr(self, item.name) is not None
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class EntryPatch:
+    title: str | None = None
+    body: str | None = None
+    tags: tuple[str, ...] | None = None
+    external_links: tuple[str, ...] | None = None
+    references: tuple[Reference, ...] | None = None
+    topic: str | None = None
+    conclusion: str | None = None
+    decision_action: DecisionAction | None = None
+    decision_date: date | None = None
+    planned_price: str | None = None
+    target_allocation: str | None = None
+    horizon: str | None = None
+    review_kind: ReviewKind | None = None
+    decision_id: str | None = None
+    scope_metadata: dict[str, object] | None = None
+
+    def changes(self) -> dict[str, object]:
+        return {
+            item.name: deepcopy(getattr(self, item.name))
+            for item in fields(self)
+            if getattr(self, item.name) is not None
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class NewEntry:
+    entry_type: EntryType
+    scope: ScopeType
+    security_id: str | None = None
+    security_ids: tuple[str, ...] = ()
+    title: str = ""
+    body: str = ""
+    tags: tuple[str, ...] = ()
+    external_links: tuple[str, ...] = ()
+    references: tuple[Reference, ...] = ()
+    topic: str | None = None
+    conclusion: str | None = None
+    decision_action: DecisionAction | None = None
+    decision_date: date | None = None
+    planned_price: str | None = None
+    target_allocation: str | None = None
+    horizon: str | None = None
+    review_kind: ReviewKind | None = None
+    decision_id: str | None = None
+    scope_metadata: dict[str, object] = field(default_factory=dict)
+
+    @staticmethod
+    def _security_id(value: str) -> str:
+        return str(ResearchSecurityId.from_string(value))
+
+    @classmethod
+    def note(cls, security_id: str, title: str, body: str) -> NewEntry:
+        canonical = cls._security_id(security_id)
+        return cls(
+            entry_type="note",
+            scope="stock",
+            security_id=canonical,
+            security_ids=(canonical,),
+            title=title,
+            body=body,
+        )
+
+    @classmethod
+    def research(
+        cls,
+        security_id: str,
+        title: str,
+        body: str,
+        *,
+        topic: str | None = None,
+    ) -> NewEntry:
+        canonical = cls._security_id(security_id)
+        return cls(
+            entry_type="research",
+            scope="stock",
+            security_id=canonical,
+            security_ids=(canonical,),
+            title=title,
+            body=body,
+            topic=topic,
+        )
+
+    @classmethod
+    def decision(
+        cls,
+        security_id: str,
+        action: DecisionAction,
+        decision_date: date,
+        *,
+        body: str = "",
+    ) -> NewEntry:
+        canonical = cls._security_id(security_id)
+        return cls(
+            entry_type="decision",
+            scope="stock",
+            security_id=canonical,
+            security_ids=(canonical,),
+            body=body,
+            decision_action=action,
+            decision_date=decision_date,
+        )
+
+    @classmethod
+    def routine_review(
+        cls,
+        *,
+        scope: ScopeType,
+        body: str,
+        security_id: str | None = None,
+        security_ids: tuple[str, ...] = (),
+    ) -> NewEntry:
+        canonical_primary = (
+            cls._security_id(security_id) if security_id is not None else None
+        )
+        canonical_ids = tuple(cls._security_id(value) for value in security_ids)
+        if canonical_primary is not None and canonical_primary not in canonical_ids:
+            canonical_ids = (canonical_primary, *canonical_ids)
+        return cls(
+            entry_type="review",
+            scope=scope,
+            security_id=canonical_primary,
+            security_ids=canonical_ids,
+            body=body,
+            review_kind="routine",
+        )
+
+    @classmethod
+    def decision_review(
+        cls,
+        *,
+        scope: ScopeType,
+        body: str,
+        security_id: str | None = None,
+        security_ids: tuple[str, ...] = (),
+        decision_id: str | None = None,
+    ) -> NewEntry:
+        request = cls.routine_review(
+            scope=scope,
+            body=body,
+            security_id=security_id,
+            security_ids=security_ids,
+        )
+        return replace(
+            request,
+            review_kind="decision",
+            decision_id=decision_id,
+        )
 
 
 @dataclass(frozen=True, slots=True)

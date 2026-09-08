@@ -178,6 +178,17 @@ async def test_replace_entry_and_revision_listing_remain_user_scoped(fake_db):
     assert await repo.list_revisions("u2", "entry", "e1") == []
 
 
+@pytest.mark.asyncio
+async def test_revision_lookup_is_user_scoped(fake_db):
+    repo = StockResearchRepository(fake_db)
+    revision = await repo.append_revision(
+        "u1", "workspace", "A:600519", {"body": "v1"}, "manual"
+    )
+
+    assert await repo.get_revision("u1", revision.id) == revision
+    assert await repo.get_revision("u2", revision.id) is None
+
+
 @pytest.mark.parametrize(
     ("raw_security_id", "canonical_security_id"),
     [("CN:600519", "A:600519"), ("us:aapl", "US:AAPL")],
