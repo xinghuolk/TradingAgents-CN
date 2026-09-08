@@ -227,13 +227,19 @@ const contextOptions = [
 const record = ref(props.entry || null)
 function defaultContext(scope: ResearchScope, kind: ReviewKind): Record<string, boolean> {
   return Object.fromEntries(
-    contextOptions.map(item => [
-      item.key,
-      ['include_thesis', 'include_recent_entries', 'include_trades', 'include_reports'].includes(
-        item.key
-      ) ||
-        (kind === 'routine' && ['include_market', 'include_real_holdings'].includes(item.key))
-    ])
+    contextOptions
+      .filter(
+        item =>
+          kind === 'routine' ||
+          !['include_real_holdings', 'include_paper_holdings'].includes(item.key)
+      )
+      .map(item => [
+        item.key,
+        ['include_thesis', 'include_recent_entries', 'include_trades', 'include_reports'].includes(
+          item.key
+        ) ||
+          (kind === 'routine' && ['include_market', 'include_real_holdings'].includes(item.key))
+      ])
   )
 }
 const initialScope = props.entry?.scope || (props.securityId ? 'stock' : 'portfolio')

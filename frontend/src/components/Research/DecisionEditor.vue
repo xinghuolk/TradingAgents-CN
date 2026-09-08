@@ -336,6 +336,7 @@ async function confirmDecision() {
   busy.value = true
   try {
     record.value = (await stockResearchApi.confirmEntry(record.value.id)).data
+    tradeReferences.value = record.value.references.filter(isTrade)
     confirmVisible.value = false
     emit('saved', record.value)
     ElMessage.success('决策已确认')

@@ -129,7 +129,15 @@ function setup(name, props = {}, overrides = {}) {
     },
     async confirmEntry(id) {
       calls.push(['confirm', id])
-      return { data: { id, status: 'confirmed', current_revision: 1, thesis_snapshot: thesis } }
+      return {
+        data: {
+          id,
+          status: 'confirmed',
+          current_revision: 1,
+          thesis_snapshot: thesis,
+          references: []
+        }
+      }
     },
     async getWorkspace() {
       calls.push(['workspace'])
@@ -575,6 +583,52 @@ function setup(name, props = {}, overrides = {}) {
   )
 }
 {
+  const linkedTrade = {
+    kind: 'real_trade',
+    source_id: 'trade-1',
+    account_type: 'real',
+    label: 'Existing trade'
+  }
+  const replacements = []
+  const { app } = setup(
+    'DecisionEditor',
+    { securityId: 'A:600519' },
+    {
+      async confirmEntry(id) {
+        return {
+          data: {
+            id,
+            status: 'confirmed',
+            current_revision: 1,
+            thesis_snapshot: thesis,
+            references: [linkedTrade]
+          }
+        }
+      },
+      async setDecisionTradeLinks(id, references) {
+        replacements.push([id, references])
+        return {
+          data: {
+            id,
+            status: 'confirmed',
+            current_revision: 1,
+            thesis_snapshot: thesis,
+            references
+          }
+        }
+      }
+    }
+  )
+  await app.prepareConfirm()
+  await app.confirmDecision()
+  await app.saveTradeLinks()
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(replacements)),
+    [['new-1', [linkedTrade]]],
+    'confirming then saving retains unchanged trade links in the dedicated replacement payload'
+  )
+}
+{
   const { app, calls } = setup('ReviewEditor', {})
   assert.equal(app.form.review_kind, 'routine')
   assert.equal(app.form.scope, 'portfolio')
@@ -594,6 +648,31 @@ function setup(name, props = {}, overrides = {}) {
     calls.some(call => call[0] === 'apply'),
     false
   )
+}
+{
+  const paperDecision = {
+    id: 'decision-with-paper-trade',
+    security_id: 'A:600519',
+    title: 'Paper decision',
+    references: [{ kind: 'paper_trade', source_id: 'paper-trade-1', account_type: 'paper' }]
+  }
+  const { app, calls } = setup('ReviewEditor', { reviewKind: 'decision' })
+  app.decisions.value = [paperDecision]
+  app.form.decision_id = paperDecision.id
+  app.selectDecision()
+  await app.saveDraft()
+  const creation = calls.find(call => call[0] === 'create')[1]
+  assert.equal(
+    Object.hasOwn(creation.scope_metadata, 'include_real_holdings'),
+    false,
+    'decision-review creation must preserve the backend real-holdings/trades default'
+  )
+  assert.equal(
+    Object.hasOwn(creation.scope_metadata, 'include_paper_holdings'),
+    false,
+    'decision-review creation must preserve paper-holdings inference from the selected decision'
+  )
+  assert.equal(creation.references[1].kind, 'paper_trade')
 }
 {
   const entry = {
