@@ -101,6 +101,25 @@ async def test_note_research_conversion_keeps_identity_and_body(service):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("entry_type,target", [("note", "research"), ("research", "note")])
+async def test_archived_document_cannot_be_converted(service, repo, entry_type, target):
+    entry = await service.create_entry(
+        "u1", NewEntry.note("A:600519", "护城河", "保留正文")
+    )
+    if entry_type == "research":
+        entry = await service.convert_entry("u1", entry.id, "research")
+    archived = await service.archive_entry("u1", entry.id)
+
+    with pytest.raises(ResearchError, match="archived entry"):
+        await service.convert_entry("u1", archived.id, target)
+
+    stored = await repo.get_entry("u1", archived.id)
+    assert (stored.id, stored.entry_type, stored.body, stored.status) == (
+        archived.id, entry_type, "保留正文", "archived"
+    )
+
+
+@pytest.mark.asyncio
 async def test_confirm_decision_freezes_thesis_and_cannot_be_autosaved(service, repo):
     await service.get_or_create_workspace("u1", "CN", "600519", "贵州茅台")
     await service.save_thesis_draft(

@@ -100,7 +100,7 @@
               />
               <template #dropdown
                 ><el-dropdown-menu>
-                  <el-dropdown-item command="convert">{{
+                  <el-dropdown-item v-if="editableEntry" command="convert">{{
                     entry.entry_type === 'note' ? '转为调研' : '转为笔记'
                   }}</el-dropdown-item>
                   <el-dropdown-item v-if="entry.status !== 'archived'" command="archive"
@@ -725,6 +725,7 @@ async function entryAction(command: string) {
   await transition(async () => {
     if (!entry.value) return
     if (command === 'convert') {
+      if (!editableEntry.value) return
       const target = entry.value.entry_type === 'note' ? 'research' : 'note'
       if (target === 'note' && (!entry.value.title.trim() || !entry.value.body.trim())) {
         ElMessage.warning('转为笔记前请填写标题和正文')

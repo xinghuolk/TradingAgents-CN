@@ -12,16 +12,13 @@ const { descriptor, errors } = parse(
   readFileSync(new URL('views/Research/Workspace.vue', root), 'utf8')
 )
 assert.deepEqual(errors, [], 'workspace must parse')
-assert.deepEqual(
-  compileTemplate({
-    source: descriptor.template.content,
-    filename: 'Workspace.vue',
-    id: 'workspace-boundary-check',
-    compilerOptions: { expressionPlugins: ['typescript'] }
-  }).errors,
-  [],
-  'workspace template must compile'
-)
+const template = compileTemplate({
+  source: descriptor.template.content,
+  filename: 'Workspace.vue',
+  id: 'workspace-boundary-check',
+  compilerOptions: { expressionPlugins: ['typescript'] }
+})
+assert.deepEqual(template.errors, [], 'workspace template must compile')
 const compiled = compileScript(descriptor, { id: 'workspace-boundary-check' }).content
 function evaluate(source, dependencies) {
   const exports = {}
@@ -43,6 +40,35 @@ const { useResearchAutosave } = evaluate(
   readFileSync(new URL('composables/useResearchAutosave.ts', root), 'utf8'),
   require
 )
+const { render } = evaluate(template.code, name =>
+  name === 'vue'
+    ? {
+        ...vue,
+        resolveComponent: name => ({ name }),
+        resolveDirective: () => undefined,
+        withDirectives: node => node
+      }
+    : require(name)
+)
+function renderedCommands(app) {
+  const commands = []
+  function visit(node) {
+    if (!node || typeof node !== 'object') return
+    if (Array.isArray(node)) {
+      node.forEach(visit)
+      return
+    }
+    if (node.props?.command && !node.props.disabled) commands.push(node.props.command)
+    if (Array.isArray(node.children)) visit(node.children)
+    else if (node.children && typeof node.children === 'object') {
+      Object.values(node.children)
+        .filter(value => typeof value === 'function')
+        .forEach(slot => visit(slot()))
+    }
+  }
+  visit(render(vue.proxyRefs(app), []))
+  return commands
+}
 const workspace = {
   security_id: 'A:000001',
   market: 'CN',
@@ -186,6 +212,8 @@ for (const market of [null, 'invalid', ['CN', 'US']]) {
   const { app, calls } = setup()
   await app.loadWorkspace()
   await app.openEntry(entry)
+  app.section.value = 'note'
+  assert.ok(renderedCommands(app).includes('convert'), 'active document offers conversion')
   await app.entryAction('convert')
   assert.equal(app.entry.value.id, 'note-1')
   assert.equal(app.entry.value.body, 'preserved body')
@@ -193,6 +221,16 @@ for (const market of [null, 'invalid', ['CN', 'US']]) {
   assert.equal(calls.filter(call => call[0] === 'convert').length, 1)
   await app.entryAction('archive')
   assert.equal(app.editableEntry.value, false, 'archived entries cannot be autosaved')
+  assert.ok(
+    !renderedCommands(app).includes('convert'),
+    'archived document must not offer conversion'
+  )
+  await app.entryAction('convert')
+  assert.equal(
+    calls.filter(call => call[0] === 'convert').length,
+    1,
+    'archived conversion handler cannot send a request'
+  )
   app.autosave.dispose()
 }
 {

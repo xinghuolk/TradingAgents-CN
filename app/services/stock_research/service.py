@@ -217,6 +217,8 @@ class StockResearchService:
         topic: str | None = None,
     ) -> Entry:
         entry = await self._get_entry(user_id, entry_id)
+        if entry.status == "archived":
+            raise ResearchError("INVALID_ENTRY", "archived entry cannot be converted")
         if entry.entry_type not in {"note", "research"} or target not in {
             "note",
             "research",
