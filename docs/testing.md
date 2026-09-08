@@ -56,6 +56,15 @@ is recorded in [technical debt](technical-debt.md).
 
 ## Frontend Checks
 
+Research editing has service-free executable checks using the existing TypeScript
+compiler and Node assertions. They cover autosave ordering/retry, Markdown safety,
+workspace navigation guards, conversion, versions, and trash API calls:
+
+```bash
+node frontend/scripts/check-research-editing.mjs
+node frontend/scripts/check-research-workspace.mjs
+```
+
 The actual deployed bundle uses Vite without the legacy type-check pre-step. With
 frontend dependencies already installed, run the same package script as Docker:
 
