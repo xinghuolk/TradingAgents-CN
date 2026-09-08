@@ -195,7 +195,18 @@ class StockResearchService:
             raise ResearchError(
                 "INVALID_ENTRY", "formal entry cannot be autosaved"
             )
-        updated = replace(entry, **patch.changes(), updated_at=self.clock())
+        changes = patch.changes()
+        if patch.security_ids is not None:
+            if entry.entry_type != "review" or entry.status != "draft":
+                raise ResearchError("INVALID_ENTRY", "only draft review associations can be changed")
+            security_ids = (
+                *((entry.security_id,) if entry.security_id else ()),
+                *patch.security_ids,
+            )
+            changes["security_ids"] = tuple(dict.fromkeys(
+                str(ResearchSecurityId.from_string(value)) for value in security_ids
+            ))
+        updated = replace(entry, **changes, updated_at=self.clock())
         updated.validate()
         if entry.entry_type == "review" and entry.status == "confirmed":
             revision = await self.repository.append_revision(

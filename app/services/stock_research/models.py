@@ -516,6 +516,7 @@ class EntryPatch:
     review_kind: ReviewKind | None = None
     decision_id: str | None = None
     scope_metadata: dict[str, object] | None = None
+    security_ids: tuple[str, ...] | None = None
 
     def changes(self) -> dict[str, object]:
         return {

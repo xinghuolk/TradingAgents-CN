@@ -187,6 +187,7 @@ class CreateEntryRequest(StrictRequest):
 
 
 class EntryPatchRequest(StrictRequest):
+    security_ids: list[str] | None = None
     title: str | None = None
     body: str | None = None
     tags: list[str] | None = None
@@ -205,6 +206,7 @@ class EntryPatchRequest(StrictRequest):
 
     def to_domain(self) -> EntryPatch:
         return EntryPatch(
+            security_ids=tuple(self.security_ids) if self.security_ids is not None else None,
             title=self.title,
             body=self.body,
             tags=tuple(self.tags) if self.tags is not None else None,

@@ -447,7 +447,7 @@ function formalSaved(value: ResearchEntry) {
   entry.value = value
 }
 function reviewApplied(value: ResearchWorkspace) {
-  workspace.value = value
+  if (workspace.value?.security_id === value.security_id) workspace.value = value
 }
 const router = useRouter()
 const code = computed(() => String(route.params.code || ''))

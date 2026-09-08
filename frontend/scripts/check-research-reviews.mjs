@@ -28,6 +28,71 @@ const thesis = {
   risks: ['risk'],
   current_revision: 0
 }
+
+{
+  const { app, calls } = setup('ReviewEditor', {
+    securityId: 'A:600519',
+    entry: {
+      id: 'review-b',
+      status: 'confirmed',
+      security_id: 'HK:00700',
+      scope: 'stock',
+      references: [],
+      scope_metadata: {}
+    }
+  })
+  await app.openDiff()
+  assert.equal(
+    calls.length,
+    0,
+    'a retargeted review cannot open another security thesis from the current stock workspace'
+  )
+  app.diffVisible.value = true
+  await app.applyDiff()
+  assert.equal(calls.length, 0, 'a mismatched review cannot apply even through the command handler')
+}
+
+{
+  const { app, calls } = setup('ReviewEditor', {})
+  app.securities.value = [
+    { security_id: 'A:600519', has_real_holding: true, has_paper_holding: false },
+    { security_id: 'HK:00700', has_real_holding: false, has_paper_holding: true }
+  ]
+  await app.saveDraft()
+  assert.deepEqual(Array.from(calls[0][1].security_ids), ['A:600519'])
+  app.form.scope_metadata.include_real_holdings = false
+  app.form.scope_metadata.include_paper_holdings = true
+  app.contextChanged()
+  await app.saveDraft()
+  const patch = calls.find(call => call[0] === 'patch')[2]
+  assert.deepEqual(
+    patch.security_ids && Array.from(patch.security_ids),
+    ['HK:00700'],
+    'draft context patch carries the new associations'
+  )
+  assert.equal(patch.scope_metadata.include_real_holdings, false)
+  assert.equal(patch.scope_metadata.include_paper_holdings, true)
+}
+{
+  const { app, calls } = setup('ReviewEditor', {
+    entry: {
+      id: 'existing-draft',
+      status: 'draft',
+      scope: 'portfolio',
+      security_ids: ['A:600519'],
+      references: [],
+      scope_metadata: { include_real_holdings: true }
+    }
+  })
+  app.form.body = 'Body edit while context sources are not loaded'
+  app.changed()
+  await app.saveDraft()
+  assert.equal(
+    calls[0][2].security_ids,
+    undefined,
+    'unrelated edits preserve persisted associations while sources load'
+  )
+}
 function setup(name, props = {}, overrides = {}) {
   const calls = []
   const events = []
@@ -164,6 +229,11 @@ function setup(name, props = {}, overrides = {}) {
   assert.equal(calls.length, 0)
   await app.saveRevision()
   assert.equal(calls.filter(call => call[0] === 'patch').length, 1)
+  assert.equal(
+    calls.find(call => call[0] === 'patch')[2].security_ids,
+    undefined,
+    'formal revisions cannot retarget associations'
+  )
   assert.equal(app.record.value.current_revision, 2)
   await app.openDiff()
   assert.equal(

@@ -169,7 +169,7 @@ export interface CreateEntryInput {
 }
 
 export type EntryPatchInput = Partial<
-  Omit<CreateEntryInput, 'entry_type' | 'scope' | 'security_id' | 'security_ids'>
+  Omit<CreateEntryInput, 'entry_type' | 'scope' | 'security_id'>
 >
 
 export interface ReferenceQuery {

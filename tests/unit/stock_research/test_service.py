@@ -20,6 +20,57 @@ NOW = datetime(2026, 9, 8, 9, 30, tzinfo=UTC)
 
 
 @pytest.mark.asyncio
+async def test_draft_review_context_updates_canonical_list_associations(service, repo):
+    review = await service.create_entry("u1", NewEntry.routine_review(
+        scope="portfolio", body="收盘复盘", security_ids=("A:600519",)
+    ))
+    updated = await service.update_entry_draft("u1", review.id, EntryPatch(
+        security_ids=("hk: 00700 ", "HK:00700"),
+        scope_metadata={"include_real_holdings": False, "include_paper_holdings": True},
+    ))
+    assert updated.security_ids == ("HK:00700",)
+    assert updated.security_id is None
+    assert (await service.list_entries("u1", EntryQuery(security_id="A:600519"))).total == 0
+    assert (await service.list_entries("u1", EntryQuery(security_id="HK:00700"))).items == (updated,)
+    assert await repo.list_revisions("u1", "entry", review.id) == []
+    cleared = await service.update_entry_draft("u1", review.id, EntryPatch(security_ids=()))
+    assert cleared.security_ids == ()
+    assert (await service.list_entries("u1", EntryQuery(security_id="HK:00700"))).total == 0
+
+
+@pytest.mark.asyncio
+async def test_stock_review_association_patch_preserves_primary_security(service):
+    review = await service.create_entry("u1", NewEntry.routine_review(
+        scope="stock", security_id="A:600519", body="复盘"
+    ))
+    updated = await service.update_entry_draft("u1", review.id, EntryPatch(security_ids=("hk: 00700 ",)))
+    assert updated.security_id == "A:600519"
+    assert updated.security_ids == ("A:600519", "HK:00700")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["note", "research", "decision", "confirmed_review", "archived_review"])
+async def test_association_patch_is_only_allowed_for_review_drafts(service, repo, kind):
+    if kind == "decision":
+        request = NewEntry.decision("A:600519", "observe", date(2026, 9, 8))
+    elif kind in {"note", "research"}:
+        request = NewEntry(entry_type=kind, scope="stock", security_id="A:600519", title="标题", body="正文")
+    else:
+        request = NewEntry.routine_review(scope="portfolio", body="复盘")
+    entry = await service.create_entry("u1", request)
+    if kind == "confirmed_review":
+        await service.confirm_entry("u1", entry.id)
+    elif kind == "archived_review":
+        await service.archive_entry("u1", entry.id)
+    original = await service.get_entry("u1", entry.id)
+    revisions = await repo.list_revisions("u1", "entry", entry.id)
+    with pytest.raises(ResearchError):
+        await service.update_entry_draft("u1", entry.id, EntryPatch(security_ids=("HK:00700",)))
+    assert await service.get_entry("u1", entry.id) == original
+    assert await repo.list_revisions("u1", "entry", entry.id) == revisions
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("kind", ["routine", "decision"])
 async def test_both_review_kinds_can_be_confirmed_without_decision(service, repo, kind):
     factory = NewEntry.routine_review if kind == "routine" else NewEntry.decision_review

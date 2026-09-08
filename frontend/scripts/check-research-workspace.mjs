@@ -182,6 +182,30 @@ for (const market of [null, 'invalid', ['CN', 'US']]) {
 {
   const { app, calls } = setup()
   await app.loadWorkspace()
+  app.reviewApplied({
+    ...workspace,
+    security_id: 'HK:00700',
+    code: '00700',
+    market: 'HK',
+    body: 'other thesis'
+  })
+  assert.equal(
+    app.workspace.value.security_id,
+    'A:000001',
+    'review responses must not replace the routed workspace identity'
+  )
+  app.updateWorkspaceBody('route thesis')
+  await app.flushChanges()
+  assert.equal(
+    calls.find(call => call[0] === 'save')[1],
+    'A:000001',
+    'subsequent autosave retains the route security'
+  )
+  app.autosave.dispose()
+}
+{
+  const { app, calls } = setup()
+  await app.loadWorkspace()
   app.workspace.value.body = 'latest thesis'
   app.scheduleWorkspace()
   await app.switchSection('note')

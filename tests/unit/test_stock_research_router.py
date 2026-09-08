@@ -39,6 +39,26 @@ NOW = datetime(2026, 9, 8, 9, 30, tzinfo=UTC)
 
 
 @pytest.mark.asyncio
+async def test_draft_review_context_patch_updates_associations_through_http():
+    service = StockResearchService(StockResearchRepository(FakeDatabase()))
+    review = await service.create_entry("authenticated-user", NewEntry.routine_review(
+        scope="portfolio", body="复盘", security_ids=("A:600519",)
+    ))
+    async with create_test_client(create_test_app(service)) as client:
+        response = await client.patch(f"/api/research/entries/{review.id}", json={
+            "security_ids": ["hk: 00700 "],
+            "scope_metadata": {"include_real_holdings": False, "include_paper_holdings": True},
+        })
+        assert response.status_code == 200
+        assert response.json()["data"]["security_ids"] == ["HK:00700"]
+        assert response.json()["data"]["security_id"] is None
+        old_list = await client.get("/api/research/entries?security_id=A:600519")
+        new_list = await client.get("/api/research/entries?security_id=HK:00700")
+        assert old_list.json()["data"]["total"] == 0
+        assert new_list.json()["data"]["items"][0]["id"] == review.id
+
+
+@pytest.mark.asyncio
 async def test_apply_review_endpoint_only_changes_thesis_on_explicit_post():
     service = StockResearchService(StockResearchRepository(FakeDatabase()))
     await service.get_or_create_workspace("authenticated-user", "CN", "600519", "茅台")

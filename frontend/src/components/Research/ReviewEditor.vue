@@ -43,7 +43,8 @@
             v-for="option in contextOptions"
             :key="option.key"
             v-model="form.scope_metadata[option.key]"
-            @change="changed"
+            :disabled="!!record && record.status !== 'draft'"
+            @change="contextChanged"
             >{{ option.label }}</el-checkbox
           >
         </div>
@@ -114,7 +115,7 @@
           >编辑新版本</el-button
         >
         <el-button
-          v-if="record.security_id && !editingRevision"
+          v-if="canApplyToThesis && !editingRevision"
           :icon="Switch"
           :disabled="busy"
           @click="openDiff"
@@ -227,10 +228,17 @@ const busy = ref(false)
 const editingRevision = ref(false)
 const revisionDirty = ref(false)
 const dirtyNew = ref(false)
+const contextDirty = ref(false)
 const readonly = computed(
   () =>
     record.value?.status === 'archived' ||
     (record.value?.status === 'confirmed' && !editingRevision.value)
+)
+const canApplyToThesis = computed(
+  () =>
+    record.value?.status === 'confirmed' &&
+    !!record.value.security_id &&
+    (!props.securityId || record.value.security_id === props.securityId)
 )
 const securities = ref<ResearchWorkspaceSummary[]>([])
 const decisions = ref<ResearchEntry[]>([])
@@ -254,6 +262,12 @@ function input(): EntryPatchInput {
     review_kind: form.review_kind,
     decision_id: form.decision_id || (record.value?.decision_id ? '' : undefined),
     references: form.references.map(item => ({ ...item })),
+    security_ids:
+      !record.value || (record.value.status === 'draft' && contextDirty.value)
+        ? form.scope === 'portfolio'
+          ? [...contextSecurityIds.value]
+          : [form.security_id]
+        : undefined,
     scope_metadata: { ...form.scope_metadata }
   }
 }
@@ -265,6 +279,11 @@ function changed() {
   if (editingRevision.value) revisionDirty.value = true
   else if (record.value) autosave.schedule(input())
   else dirtyNew.value = true
+}
+function contextChanged() {
+  if (record.value && record.value.status !== 'draft') return
+  contextDirty.value = true
+  changed()
 }
 function changeKind() {
   if (record.value) return
@@ -335,7 +354,6 @@ async function save() {
         entry_type: 'review',
         scope: form.scope,
         security_id: form.scope === 'stock' ? form.security_id : undefined,
-        security_ids: form.scope === 'portfolio' ? contextSecurityIds.value : undefined,
         ...input()
       })
     ).data
@@ -437,6 +455,7 @@ const proposedBody = ref('')
 async function openDiff() {
   if (
     busy.value ||
+    !canApplyToThesis.value ||
     record.value?.status !== 'confirmed' ||
     !record.value.security_id ||
     editingRevision.value
@@ -458,6 +477,7 @@ async function applyDiff() {
   if (
     busy.value ||
     !diffVisible.value ||
+    !canApplyToThesis.value ||
     record.value?.status !== 'confirmed' ||
     !record.value.security_id
   )
