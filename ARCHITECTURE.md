@@ -61,8 +61,11 @@ by task ID. The service freezes selected reference display snapshots and current
 research inputs, persists `pending`, then schedules an in-process asyncio task.
 Only active draft entries accept generated originals; human bodies are never
 changed by generation. An atomic pending-to-running claim prevents duplicate runs.
-Completion appends the original and marks the task completed; a failed completion
-write compensates by removing that task's append. This iteration does not provide
+Claim and terminal writes settle before cancellation is propagated; only a run
+that acquired the claim can change its terminal state. Completion appends the
+original and marks the task completed. If a write reports failure after applying,
+the service preserves persisted completion or removes that task's append before
+marking failure. This iteration does not provide
 cross-collection crash atomicity, restart recovery, or a separate research worker.
 
 Research generation reads the exact enabled model from the latest saved active

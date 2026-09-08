@@ -30,6 +30,20 @@ def _error(code: str) -> ResearchError:
     return ResearchError(code, GENERATION_ERRORS[code])
 
 
+async def _settle(operation: Awaitable) -> tuple[asyncio.Future, bool]:
+    """Wait for a write's outcome even when the owning run is cancelled."""
+    pending = asyncio.ensure_future(operation)
+    cancelled = False
+    while not pending.done():
+        try:
+            await asyncio.shield(pending)
+        except asyncio.CancelledError:
+            cancelled = True
+        except Exception:
+            break
+    return pending, cancelled
+
+
 class ResearchTextGenerator(Protocol):
     async def generate(
         self,
@@ -244,32 +258,64 @@ class ResearchGenerationService:
         return task
 
     async def run(self, task_id: str, user_id: str) -> None:
+        claim, cancelled = await _settle(
+            self.repository.claim_generation_task(user_id, task_id)
+        )
         try:
-            task = await self.repository.claim_generation_task(user_id, task_id)
-            if task is None:
-                return
-            system_prompt, user_prompt = build_prompts(
-                task.draft_kind, task.context_snapshot
-            )
-            content = await self.generator.generate(
-                user_id=user_id, provider=task.provider, model_name=task.model_name,
-                reasoning_effort=task.reasoning_effort,
-                system_prompt=system_prompt, user_prompt=user_prompt,
-            )
-            if not isinstance(content, str) or not content.strip():
-                raise _error("GENERATION_FAILED")
-            await self.repository.complete_generation_task(task, content, utc_now())
+            task = claim.result()
         except (Exception, asyncio.CancelledError) as error:
-            code = (
-                error.code
-                if isinstance(error, ResearchError) and error.code in GENERATION_ERRORS
-                else "GENERATION_FAILED"
-            )
+            # An unknown or rejected claim never grants authority to fail a task.
+            task = None
+            cancelled = cancelled or isinstance(error, asyncio.CancelledError)
+            logger.error("Research generation task claim unavailable")
+        if task is None:
+            if cancelled:
+                raise asyncio.CancelledError
+            return
+
+        content = None
+        code = "GENERATION_FAILED"
+        if not cancelled:
             try:
-                await self.repository.fail_generation_task(
-                    user_id, task_id, code, GENERATION_ERRORS[code]
+                system_prompt, user_prompt = build_prompts(
+                    task.draft_kind, task.context_snapshot
                 )
-            except Exception:
-                logger.error("Research generation task storage unavailable")
-            if isinstance(error, asyncio.CancelledError):
-                raise
+                content = await self.generator.generate(
+                    user_id=user_id, provider=task.provider, model_name=task.model_name,
+                    reasoning_effort=task.reasoning_effort,
+                    system_prompt=system_prompt, user_prompt=user_prompt,
+                )
+                if not isinstance(content, str) or not content.strip():
+                    raise _error("GENERATION_FAILED")
+            except (Exception, asyncio.CancelledError) as error:
+                content = None
+                cancelled = isinstance(error, asyncio.CancelledError)
+                if isinstance(error, ResearchError) and error.code in GENERATION_ERRORS:
+                    code = error.code
+
+        terminal, terminal_cancelled = await _settle(
+            self._finish_owned_task(task, content, code)
+        )
+        terminal.result()
+        if cancelled or terminal_cancelled:
+            raise asyncio.CancelledError
+
+    async def _finish_owned_task(
+        self, task: GenerationTask, content: str | None, code: str
+    ) -> None:
+        try:
+            if content is not None:
+                try:
+                    await self.repository.complete_generation_task(task, content, utc_now())
+                    return
+                except Exception as error:
+                    code = (
+                        error.code
+                        if isinstance(error, ResearchError) and error.code in GENERATION_ERRORS
+                        else "GENERATION_FAILED"
+                    )
+            await self.repository.fail_generation_task(
+                task.user_id, task.id, code, GENERATION_ERRORS[code]
+            )
+        except Exception:
+            logger.error("Research generation task storage unavailable")

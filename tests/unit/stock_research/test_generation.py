@@ -195,6 +195,142 @@ async def test_cancelled_generation_marks_failed_without_overwriting_body():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("boundary", ["append", "completed"])
+async def test_cancellation_after_applied_write_keeps_task_and_original_coherent(monkeypatch, boundary):
+    generation, _, repo, _, entry = await setup_generation()
+    task = await submit(generation, entry)
+    applied = asyncio.Event()
+    release = asyncio.Event()
+    collection = repo.db[
+        "stock_research_entries" if boundary == "append" else "stock_research_generation_tasks"
+    ]
+    update_one = collection.update_one
+
+    async def pause_after_write(query, update, **kwargs):
+        result = await update_one(query, update, **kwargs)
+        selected = (
+            "ai_drafts" in update.get("$push", {})
+            if boundary == "append" else update.get("$set", {}).get("status") == "completed"
+        )
+        if selected:
+            applied.set()
+            await release.wait()
+        return result
+
+    monkeypatch.setattr(collection, "update_one", pause_after_write)
+    running = asyncio.create_task(generation.run(task.id, "u1"))
+    await applied.wait()
+    running.cancel()
+    await asyncio.sleep(0)
+    assert not running.done()
+    running.cancel()
+    await asyncio.sleep(0)
+    assert not running.done()
+    release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await running
+    stored = await generation.get("u1", task.id)
+    result = await repo.get_entry("u1", entry.id)
+    assert (stored.status, len(result.ai_drafts)) in {("completed", 1), ("failed", 0)}
+    assert result.body == "human body"
+    await generation.run(task.id, "u1")
+    assert len((await repo.get_entry("u1", entry.id)).ai_drafts) == len(result.ai_drafts)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("boundary,expected", [("append", ("failed", 0)), ("completed", ("completed", 1))])
+async def test_write_error_after_apply_reconciles_persisted_result(monkeypatch, boundary, expected):
+    generation, _, repo, _, entry = await setup_generation()
+    task = await submit(generation, entry)
+    collection = repo.db[
+        "stock_research_entries" if boundary == "append" else "stock_research_generation_tasks"
+    ]
+    update_one = collection.update_one
+
+    async def fail_after_apply(query, update, **kwargs):
+        result = await update_one(query, update, **kwargs)
+        selected = (
+            "ai_drafts" in update.get("$push", {})
+            if boundary == "append" else update.get("$set", {}).get("status") == "completed"
+        )
+        if selected:
+            raise RuntimeError("private storage exception")
+        return result
+
+    monkeypatch.setattr(collection, "update_one", fail_after_apply)
+    await generation.run(task.id, "u1")
+    stored = await generation.get("u1", task.id)
+    result = await repo.get_entry("u1", entry.id)
+    assert (stored.status, len(result.ai_drafts)) == expected
+    assert result.body == "human body"
+    assert "private storage exception" not in str(stored.to_document())
+
+
+@pytest.mark.asyncio
+async def test_cancelled_duplicate_claim_cannot_fail_legitimate_owner(monkeypatch):
+    generation, generator, repo, _, entry = await setup_generation()
+    task = await submit(generation, entry)
+    generator.release.clear()
+    owner = asyncio.create_task(generation.run(task.id, "u1"))
+    await generator.started.wait()
+    claimed = asyncio.Event()
+    release = asyncio.Event()
+    claim = repo.claim_generation_task
+
+    async def pause_unowned_claim(user_id, task_id):
+        result = await claim(user_id, task_id)
+        assert result is None
+        claimed.set()
+        await release.wait()
+        return result
+
+    monkeypatch.setattr(repo, "claim_generation_task", pause_unowned_claim)
+    duplicate = asyncio.create_task(generation.run(task.id, "u1"))
+    await claimed.wait()
+    duplicate.cancel()
+    await asyncio.sleep(0)
+    release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await duplicate
+    try:
+        assert (await generation.get("u1", task.id)).status == "running"
+    finally:
+        generator.release.set()
+        await owner
+    result = await repo.get_entry("u1", entry.id)
+    assert (await generation.get("u1", task.id)).status == "completed"
+    assert len(result.ai_drafts) == len(generator.calls) == 1
+    assert result.body == "human body"
+
+
+@pytest.mark.asyncio
+async def test_cancelled_successful_claim_settles_before_owner_failure(monkeypatch):
+    generation, generator, repo, _, entry = await setup_generation()
+    task = await submit(generation, entry)
+    claimed = asyncio.Event()
+    release = asyncio.Event()
+    claim = repo.claim_generation_task
+
+    async def pause_owned_claim(user_id, task_id):
+        result = await claim(user_id, task_id)
+        claimed.set()
+        await release.wait()
+        return result
+
+    monkeypatch.setattr(repo, "claim_generation_task", pause_owned_claim)
+    running = asyncio.create_task(generation.run(task.id, "u1"))
+    await claimed.wait()
+    running.cancel()
+    await asyncio.sleep(0)
+    release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await running
+    assert (await generation.get("u1", task.id)).status == "failed"
+    assert (await repo.get_entry("u1", entry.id)).ai_drafts == ()
+    assert generator.calls == []
+
+
+@pytest.mark.asyncio
 async def test_completion_storage_failure_removes_only_this_original(monkeypatch):
     generation, _, repo, _, entry = await setup_generation()
     first = await submit(generation, entry)

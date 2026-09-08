@@ -264,21 +264,24 @@ class StockResearchRepository:
         }
         entries = self._collection("entries")
         target = {"user_id": task.user_id, "id": task.target_entry_id}
-        result = await entries.update_one(
-            {**target, "deleted_at": None, "status": "draft"}, {"$push": {"ai_drafts": draft}},
-        )
-        if not result.matched_count:
-            raise ResearchError("RESEARCH_CONFLICT", "generation target is no longer editable")
         try:
+            result = await entries.update_one(
+                {**target, "deleted_at": None, "status": "draft"}, {"$push": {"ai_drafts": draft}},
+            )
+            if not result.matched_count:
+                raise ResearchError("RESEARCH_CONFLICT", "generation target is no longer editable")
             result = await self._collection("generation_tasks").update_one(
                 {"user_id": task.user_id, "id": task.id, "status": "running"},
                 {"$set": {"status": "completed", "content": content, "generated_at": timestamp, "updated_at": timestamp}},
             )
             if not result.matched_count:
                 raise ResearchError("RESEARCH_CONFLICT", "generation task is no longer running")
-        except BaseException:
-            # Two collections on standalone Mongo: undo only this task's append
-            # if completion fails. Process crashes/restart recovery are out of scope.
+        except Exception:
+            # A write can apply before its await raises. Preserve a committed
+            # completion; otherwise undo only this task's append before failure.
+            stored = await self.get_generation_task(task.user_id, task.id)
+            if stored is not None and stored.status == "completed":
+                return
             await entries.update_one(target, {"$pull": {"ai_drafts": {"task_id": task.id}}})
             raise
 
