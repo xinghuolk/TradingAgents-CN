@@ -181,6 +181,7 @@ import { useDebounceFn } from '@vueuse/core'
 import { ElMessage } from 'element-plus'
 import { ArrowRight, EditPen, Plus, Refresh, Search, StarFilled } from '@element-plus/icons-vue'
 import { formatDateTime } from '@/utils/datetime'
+import { createLatestRequestCoordinator } from '@/utils/latestRequest'
 import {
   stockResearchApi,
   type ResearchEntryType,
@@ -218,27 +219,35 @@ const entryTypeLabel: Record<ResearchEntryType, string> = {
   decision: '决策',
   review: '复盘'
 }
+const coordinateWorkspaceRequest = createLatestRequestCoordinator()
 
 async function loadWorkspaces() {
   loading.value = true
-  try {
-    const response = await stockResearchApi.listWorkspaces({
-      market: market.value || undefined,
-      query: searchText.value.trim() || undefined,
-      real_holding: realHoldingOnly.value || undefined,
-      paper_holding: paperHoldingOnly.value || undefined,
-      watchlisted: watchlistedOnly.value || undefined,
-      page: page.value,
-      page_size: pageSize.value
-    })
-    workspaces.value = response.data.items
-    total.value = response.data.total
-  } catch {
-    workspaces.value = []
-    total.value = 0
-  } finally {
-    loading.value = false
-  }
+  await coordinateWorkspaceRequest(
+    () =>
+      stockResearchApi.listWorkspaces({
+        market: market.value || undefined,
+        query: searchText.value.trim() || undefined,
+        real_holding: realHoldingOnly.value || undefined,
+        paper_holding: paperHoldingOnly.value || undefined,
+        watchlisted: watchlistedOnly.value || undefined,
+        page: page.value,
+        page_size: pageSize.value
+      }),
+    {
+      onSuccess(response) {
+        workspaces.value = response.data.items
+        total.value = response.data.total
+      },
+      onError() {
+        workspaces.value = []
+        total.value = 0
+      },
+      onSettled() {
+        loading.value = false
+      }
+    }
+  )
 }
 
 const searchWorkspaces = useDebounceFn(() => {
