@@ -156,12 +156,22 @@ class Workspace:
     created_at: datetime = field(default_factory=utc_now)
     updated_at: datetime = field(default_factory=utc_now)
 
+    def _canonical_security(self) -> ResearchSecurityId:
+        identifier = ResearchSecurityId.from_string(self.security_id)
+        fields_identifier = ResearchSecurityId.parse(self.market, self.code)
+        if identifier != fields_identifier:
+            raise ResearchError(
+                "INVALID_SECURITY", "workspace security fields are inconsistent"
+            )
+        return identifier
+
     def to_document(self) -> dict[str, object]:
+        identifier = self._canonical_security()
         return {
             "user_id": self.user_id,
-            "security_id": self.security_id,
-            "market": self.market,
-            "code": self.code,
+            "security_id": str(identifier),
+            "market": identifier.market,
+            "code": identifier.code,
             "name": self.name,
             "body": self.body,
             "assumptions": list(self.assumptions),
@@ -312,13 +322,21 @@ class Entry:
         return self.warnings
 
     def to_document(self) -> dict[str, object]:
+        security_id = (
+            str(ResearchSecurityId.from_string(self.security_id))
+            if self.security_id is not None
+            else None
+        )
+        security_ids = [
+            str(ResearchSecurityId.from_string(value)) for value in self.security_ids
+        ]
         return {
             "id": self.id,
             "user_id": self.user_id,
             "entry_type": self.entry_type,
             "scope": self.scope,
-            "security_id": self.security_id,
-            "security_ids": list(self.security_ids),
+            "security_id": security_id,
+            "security_ids": security_ids,
             "title": self.title,
             "body": self.body,
             "status": self.status,

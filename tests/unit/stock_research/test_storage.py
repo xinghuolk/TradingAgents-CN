@@ -3,6 +3,7 @@ from datetime import UTC, datetime
 
 import pytest
 
+from app.services.stock_research.errors import ResearchError
 from app.services.stock_research.models import (
     Entry,
     EntryQuery,
@@ -175,3 +176,88 @@ async def test_replace_entry_and_revision_listing_remain_user_scoped(fake_db):
     revisions = await repo.list_revisions("u1", "entry", "e1")
     assert [item.snapshot["body"] for item in revisions] == ["v1", "v2"]
     assert await repo.list_revisions("u2", "entry", "e1") == []
+
+
+@pytest.mark.parametrize(
+    ("raw_security_id", "canonical_security_id"),
+    [("CN:600519", "A:600519"), ("us:aapl", "US:AAPL")],
+)
+@pytest.mark.asyncio
+async def test_entry_persistence_canonicalizes_security_identifiers(
+    fake_db, raw_security_id, canonical_security_id
+):
+    repo = StockResearchRepository(fake_db)
+    entry = Entry(
+        id=f"entry-{canonical_security_id}",
+        user_id="u1",
+        entry_type="note",
+        scope="stock",
+        security_id=raw_security_id,
+        security_ids=(raw_security_id,),
+        title="标题",
+        body="正文",
+        created_at=NOW,
+        updated_at=NOW,
+    )
+
+    stored = await repo.insert_entry(entry)
+    document = fake_db["stock_research_entries"].documents[0]
+
+    assert stored.security_id == canonical_security_id
+    assert stored.security_ids == (canonical_security_id,)
+    assert document["security_id"] == canonical_security_id
+    assert document["security_ids"] == [canonical_security_id]
+
+
+@pytest.mark.parametrize(
+    ("security_id", "market", "code", "canonical"),
+    [
+        ("CN:600519", "CN", "600519", ("A:600519", "A", "600519")),
+        ("us:aapl", "us", "aapl", ("US:AAPL", "US", "AAPL")),
+    ],
+)
+@pytest.mark.asyncio
+async def test_workspace_persistence_canonicalizes_one_security_identity(
+    fake_db, security_id, market, code, canonical
+):
+    repo = StockResearchRepository(fake_db)
+    workspace = Workspace(
+        user_id="u1",
+        security_id=security_id,
+        market=market,
+        code=code,
+        name="测试证券",
+        created_at=NOW,
+        updated_at=NOW,
+    )
+
+    stored = await repo.upsert_workspace(workspace)
+    repeated = await repo.upsert_workspace(workspace)
+    document = fake_db["stock_research_workspaces"].documents[0]
+
+    assert (stored.security_id, stored.market, stored.code) == canonical
+    assert (repeated.security_id, repeated.market, repeated.code) == canonical
+    assert (document["security_id"], document["market"], document["code"]) == canonical
+    assert len(fake_db["stock_research_workspaces"].documents) == 1
+
+
+@pytest.mark.asyncio
+async def test_workspace_rejects_inconsistent_security_fields_before_persistence(
+    fake_db,
+):
+    repo = StockResearchRepository(fake_db)
+
+    with pytest.raises(ResearchError, match="inconsistent"):
+        await repo.upsert_workspace(
+            Workspace(
+                user_id="u1",
+                security_id="A:600519",
+                market="US",
+                code="AAPL",
+                name="冲突记录",
+                created_at=NOW,
+                updated_at=NOW,
+            )
+        )
+
+    assert fake_db["stock_research_workspaces"].documents == []

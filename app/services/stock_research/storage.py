@@ -93,11 +93,11 @@ class StockResearchRepository:
     async def upsert_workspace(self, workspace: Workspace) -> Workspace:
         document = workspace.to_document()
         await self._collection("workspaces").update_one(
-            {"user_id": workspace.user_id, "security_id": workspace.security_id},
+            {"user_id": document["user_id"], "security_id": document["security_id"]},
             {"$set": document},
             upsert=True,
         )
-        return workspace
+        return Workspace.from_document(document)
 
     async def list_workspaces(
         self, user_id: str, query: WorkspaceQuery
@@ -148,18 +148,20 @@ class StockResearchRepository:
 
     async def insert_entry(self, entry: Entry) -> Entry:
         entry.validate()
-        await self._collection("entries").insert_one(entry.to_document())
-        return entry
+        document = entry.to_document()
+        await self._collection("entries").insert_one(document)
+        return Entry.from_document(document)
 
     async def replace_entry(self, entry: Entry) -> Entry:
         entry.validate()
+        document = entry.to_document()
         result = await self._collection("entries").update_one(
             {"user_id": entry.user_id, "id": entry.id},
-            {"$set": entry.to_document()},
+            {"$set": document},
         )
         if result.matched_count == 0:
             raise ResearchError("RESEARCH_NOT_FOUND", "research entry not found")
-        return entry
+        return Entry.from_document(document)
 
     async def list_entries(
         self, user_id: str, query: EntryQuery
