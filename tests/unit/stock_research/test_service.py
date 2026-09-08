@@ -19,6 +19,49 @@ from tests.unit.stock_research.fakes import FakeDatabase
 NOW = datetime(2026, 9, 8, 9, 30, tzinfo=UTC)
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["routine", "decision"])
+async def test_both_review_kinds_can_be_confirmed_without_decision(service, repo, kind):
+    factory = NewEntry.routine_review if kind == "routine" else NewEntry.decision_review
+    review = await service.create_entry("u1", factory(scope="portfolio", body="收盘复盘"))
+    assert review.review_kind == kind
+    assert review.decision_id is None
+    confirmed = await service.confirm_entry("u1", review.id)
+    assert confirmed.current_revision == 1
+    assert len(await repo.list_revisions("u1", "entry", review.id)) == 1
+
+
+@pytest.mark.asyncio
+async def test_archived_review_cannot_be_confirmed_again(service, repo):
+    review = await service.create_entry(
+        "u1", NewEntry.routine_review(scope="portfolio", body="收盘复盘")
+    )
+    await service.archive_entry("u1", review.id)
+    with pytest.raises(ResearchError, match="archived"):
+        await service.confirm_entry("u1", review.id)
+    assert await repo.list_revisions("u1", "entry", review.id) == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["decision", "archived_review"])
+async def test_readonly_formal_records_cannot_be_overwritten_by_restore(service, repo, kind):
+    await service.get_or_create_workspace("u1", "CN", "600519", "贵州茅台")
+    request = (
+        NewEntry.decision("A:600519", "buy", date(2026, 9, 8))
+        if kind == "decision" else NewEntry.routine_review(scope="portfolio", body="复盘")
+    )
+    entry = await service.create_entry("u1", request)
+    confirmed = await service.confirm_entry("u1", entry.id)
+    if kind == "archived_review":
+        await service.archive_entry("u1", entry.id)
+    original = await repo.get_entry("u1", entry.id)
+    revisions = await repo.list_revisions("u1", "entry", entry.id)
+    with pytest.raises(ResearchError, match="read-only"):
+        await service.restore_revision("u1", revisions[0].id)
+    assert await repo.get_entry("u1", entry.id) == original
+    assert len(await repo.list_revisions("u1", "entry", entry.id)) == confirmed.current_revision
+
+
 @pytest.fixture
 def repo() -> StockResearchRepository:
     return StockResearchRepository(FakeDatabase())

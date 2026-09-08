@@ -38,6 +38,29 @@ from tests.unit.stock_research.fakes import FakeDatabase
 NOW = datetime(2026, 9, 8, 9, 30, tzinfo=UTC)
 
 
+@pytest.mark.asyncio
+async def test_apply_review_endpoint_only_changes_thesis_on_explicit_post():
+    service = StockResearchService(StockResearchRepository(FakeDatabase()))
+    await service.get_or_create_workspace("authenticated-user", "CN", "600519", "茅台")
+    await service.save_thesis_draft("authenticated-user", "A:600519", ThesisPatch(body="旧论点"))
+    review = await service.create_entry(
+        "authenticated-user",
+        NewEntry.decision_review(scope="stock", security_id="A:600519", body="复盘"),
+    )
+    await service.confirm_entry("authenticated-user", review.id)
+    async with create_test_client(create_test_app(service)) as client:
+        before = await client.get("/api/research/workspaces/A:600519")
+        assert before.json()["data"]["body"] == "旧论点"
+        response = await client.post(
+            f"/api/research/entries/{review.id}/apply-to-thesis", json={"body": "新论点"}
+        )
+        assert response.status_code == 200
+        assert response.json()["data"]["reason"] == "review_applied_to_thesis"
+        after = await client.get("/api/research/workspaces/A:600519")
+        assert after.json()["data"]["body"] == "新论点"
+        assert after.json()["data"]["current_revision"] == 1
+
+
 @dataclass(frozen=True)
 class ServiceCall:
     operation: str

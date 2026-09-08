@@ -632,6 +632,21 @@ async def confirm_entry(
     return ok(_public_document(result))
 
 
+@router.post("/entries/{entry_id}/apply-to-thesis")
+async def apply_review_to_thesis(
+    entry_id: str,
+    payload: ThesisPatchRequest,
+    current_user: dict = Depends(get_current_user),  # noqa: B008
+    service: StockResearchService = Depends(get_stock_research_service),  # noqa: B008
+):
+    result = await _call_service(
+        service.apply_review_to_thesis(
+            user_id=_user_id(current_user), review_id=entry_id, patch=payload.to_domain()
+        )
+    )
+    return ok(_public_document(result))
+
+
 @router.post("/entries/{entry_id}/archive")
 async def archive_entry(
     entry_id: str,

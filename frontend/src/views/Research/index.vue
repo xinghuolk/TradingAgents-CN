@@ -6,9 +6,9 @@
         <p>按证券整理当前论点、研究记录与持仓关联。</p>
       </div>
       <div class="header-actions">
-        <el-button @click="reviewDialogVisible = true">
+        <el-button @click="openReview()">
           <el-icon><EditPen /></el-icon>
-          新建例行复盘
+          新建复盘
         </el-button>
         <el-button type="primary" @click="workspaceDialogVisible = true">
           <el-icon><Plus /></el-icon>
@@ -156,35 +156,56 @@
       </template>
     </el-dialog>
 
-    <el-dialog v-model="reviewDialogVisible" title="新建例行复盘" width="min(480px, 92vw)">
-      <el-form label-position="top">
-        <el-form-item label="复盘范围">
-          <el-checkbox v-model="reviewScope.include_market">市场概况</el-checkbox>
-          <el-checkbox v-model="reviewScope.include_real_holdings">真实持仓</el-checkbox>
-          <el-checkbox v-model="reviewScope.include_paper_holdings">模拟持仓</el-checkbox>
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="reviewDialogVisible = false">取消</el-button>
-        <el-button type="primary" :loading="creatingReview" @click="createRoutineReview"
-          >创建草稿</el-button
-        >
-      </template>
+    <section class="portfolio-reviews">
+      <h2>组合复盘</h2>
+      <ResearchEntryList
+        :entries="reviews"
+        :loading="reviewsLoading"
+        :error="reviewsError"
+        :disabled="false"
+        :total="reviewsTotal"
+        :page="reviewsPage"
+        :page-size="20"
+        :status="reviewsStatus"
+        @select="openReview"
+        @retry="loadReviews"
+        @page="changeReviewPage"
+        @status="changeReviewStatus"
+      />
+    </section>
+    <el-dialog
+      v-model="reviewDialogVisible"
+      :title="activeReview ? '复盘' : '新建复盘'"
+      width="min(920px, 96vw)"
+      :close-on-click-modal="false"
+      :before-close="closeReview"
+      destroy-on-close
+    >
+      <ReviewEditor
+        v-if="reviewDialogVisible"
+        ref="reviewEditor"
+        :entry="activeReview"
+        @saved="reviewSaved"
+      />
     </el-dialog>
   </section>
 </template>
 
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { onBeforeRouteLeave, useRouter } from 'vue-router'
 import { useDebounceFn } from '@vueuse/core'
 import { ElMessage } from 'element-plus'
 import { ArrowRight, EditPen, Plus, Refresh, Search, StarFilled } from '@element-plus/icons-vue'
 import { formatDateTime } from '@/utils/datetime'
 import { createLatestRequestCoordinator } from '@/utils/latestRequest'
+import ReviewEditor from '@/components/Research/ReviewEditor.vue'
+import ResearchEntryList from '@/components/Research/ResearchEntryList.vue'
 import {
   stockResearchApi,
   type ResearchEntryType,
+  type ResearchEntry,
+  type ResearchEntryStatus,
   type ResearchMarket,
   type ResearchWorkspaceSummary
 } from '@/api/stockResearch'
@@ -204,13 +225,77 @@ const watchlistedOnly = ref(false)
 const workspaceDialogVisible = ref(false)
 const reviewDialogVisible = ref(false)
 const creatingWorkspace = ref(false)
-const creatingReview = ref(false)
 const workspaceForm = reactive({ market: 'CN' as ResearchMarket, code: '', name: '' })
-const reviewScope = reactive({
-  include_market: true,
-  include_real_holdings: true,
-  include_paper_holdings: false
-})
+const activeReview = ref<ResearchEntry | null>(null)
+const reviewEditor = ref<{ flush: () => Promise<boolean>; dirty: boolean } | null>(null)
+const reviews = ref<ResearchEntry[]>([])
+const reviewsTotal = ref(0)
+const reviewsPage = ref(1)
+const reviewsStatus = ref<ResearchEntryStatus | ''>('')
+const reviewsLoading = ref(false)
+const reviewsError = ref(false)
+const coordinateReviewRequest = createLatestRequestCoordinator()
+async function loadReviews() {
+  reviewsLoading.value = true
+  await coordinateReviewRequest(
+    () =>
+      stockResearchApi.listEntries({
+        entry_type: 'review',
+        scope: 'portfolio',
+        status: reviewsStatus.value || undefined,
+        page: reviewsPage.value,
+        page_size: 20
+      }),
+    {
+      onSuccess(response) {
+        reviews.value = response.data.items
+        reviewsTotal.value = response.data.total
+        reviewsError.value = false
+      },
+      onError() {
+        reviewsError.value = true
+      },
+      onSettled() {
+        reviewsLoading.value = false
+      }
+    }
+  )
+}
+function changeReviewPage(value: number) {
+  reviewsPage.value = value
+  void loadReviews()
+}
+function changeReviewStatus(value: ResearchEntryStatus | '') {
+  reviewsStatus.value = value
+  reviewsPage.value = 1
+  void loadReviews()
+}
+async function openReview(entry?: ResearchEntry) {
+  try {
+    activeReview.value = entry ? (await stockResearchApi.getEntry(entry.id)).data : null
+    reviewDialogVisible.value = true
+  } catch {
+    ElMessage.error('复盘加载失败')
+  }
+}
+function reviewSaved(entry: ResearchEntry) {
+  activeReview.value = entry
+  void loadReviews()
+}
+async function closeReview(done: () => void) {
+  if (reviewEditor.value && !(await reviewEditor.value.flush())) return
+  done()
+  await loadReviews()
+}
+onBeforeRouteLeave(async () => !reviewEditor.value || (await reviewEditor.value.flush()))
+function beforeUnload(event: BeforeUnloadEvent) {
+  if (reviewEditor.value?.dirty) {
+    event.preventDefault()
+    event.returnValue = ''
+  }
+}
+window.addEventListener('beforeunload', beforeUnload)
+onBeforeUnmount(() => window.removeEventListener('beforeunload', beforeUnload))
 
 const marketLabel: Record<ResearchMarket, string> = { CN: 'A 股', HK: '港股', US: '美股' }
 const entryTypeLabel: Record<ResearchEntryType, string> = {
@@ -293,23 +378,6 @@ async function createWorkspace() {
   }
 }
 
-async function createRoutineReview() {
-  creatingReview.value = true
-  try {
-    await stockResearchApi.createEntry({
-      entry_type: 'review',
-      scope: 'portfolio',
-      title: `例行复盘 ${new Date().toLocaleDateString('zh-CN')}`,
-      review_kind: 'routine',
-      scope_metadata: { ...reviewScope }
-    })
-    reviewDialogVisible.value = false
-    ElMessage.success('例行复盘草稿已创建')
-  } finally {
-    creatingReview.value = false
-  }
-}
-
 function formatCompactDate(value: string | null) {
   return formatDateTime(value, {
     year: 'numeric',
@@ -320,12 +388,24 @@ function formatCompactDate(value: string | null) {
   })
 }
 
-onMounted(loadWorkspaces)
+onMounted(() => {
+  void loadWorkspaces()
+  void loadReviews()
+})
 </script>
 
 <style scoped lang="scss">
 .research-directory {
   width: 100%;
+}
+.portfolio-reviews {
+  margin-top: 32px;
+  border-top: 1px solid var(--el-border-color-light);
+  padding-top: 20px;
+}
+.portfolio-reviews h2 {
+  font-size: 18px;
+  margin: 0 0 16px;
 }
 
 .directory-header {

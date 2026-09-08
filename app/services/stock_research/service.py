@@ -237,6 +237,8 @@ class StockResearchService:
 
     async def confirm_entry(self, user_id: str, entry_id: str) -> Entry:
         entry = await self._get_entry(user_id, entry_id)
+        if entry.status == "archived":
+            raise ResearchError("INVALID_ENTRY", "archived entry cannot be confirmed")
         if entry.status == "confirmed":
             raise ResearchError("INVALID_ENTRY", "formal entry is already confirmed")
         if entry.entry_type not in {"decision", "review"}:
@@ -296,6 +298,10 @@ class StockResearchService:
             return revision
         if source.target_type == "entry":
             current_entry = await self._get_entry(user_id, source.target_id)
+            if current_entry.status == "archived" or (
+                current_entry.entry_type == "decision" and current_entry.status == "confirmed"
+            ):
+                raise ResearchError("INVALID_ENTRY", "entry is read-only")
             restored_entry = Entry.from_document(source.snapshot)
             restored_entry = replace(
                 restored_entry,

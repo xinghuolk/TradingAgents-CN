@@ -25,7 +25,12 @@
             <template #dropdown
               ><el-dropdown-menu
                 ><el-dropdown-item command="note">笔记</el-dropdown-item
-                ><el-dropdown-item command="research">调研</el-dropdown-item></el-dropdown-menu
+                ><el-dropdown-item command="research">调研</el-dropdown-item
+                ><el-dropdown-item command="decision">决策</el-dropdown-item
+                ><el-dropdown-item command="routine">例行复盘</el-dropdown-item
+                ><el-dropdown-item command="decision-review"
+                  >决策复盘</el-dropdown-item
+                ></el-dropdown-menu
               ></template
             >
           </el-dropdown>
@@ -68,7 +73,7 @@
         <div class="document-heading">
           <div class="document-title">
             <el-button
-              v-if="entry"
+              v-if="entry || pendingEditor"
               :icon="ArrowLeft"
               circle
               title="返回记录列表"
@@ -90,7 +95,7 @@
                 :disabled="busy"
                 @click="openVersions"
             /></el-tooltip>
-            <el-dropdown v-if="entry && documentEntry" :disabled="busy" @command="entryAction">
+            <el-dropdown v-if="entry" :disabled="busy" @command="entryAction">
               <el-button
                 :icon="MoreFilled"
                 circle
@@ -100,7 +105,7 @@
               />
               <template #dropdown
                 ><el-dropdown-menu>
-                  <el-dropdown-item v-if="editableEntry" command="convert">{{
+                  <el-dropdown-item v-if="editableEntry && documentEntry" command="convert">{{
                     entry.entry_type === 'note' ? '转为调研' : '转为笔记'
                   }}</el-dropdown-item>
                   <el-dropdown-item v-if="entry.status !== 'archived'" command="archive"
@@ -155,6 +160,25 @@
             </section>
           </div>
         </fieldset>
+        <DecisionEditor
+          v-else-if="pendingEditor === 'decision' || entry?.entry_type === 'decision'"
+          :key="editorSession"
+          ref="formalEditor"
+          :entry="entry"
+          :security-id="workspace.security_id"
+          @saved="formalSaved"
+          @new="openCreate('decision')"
+        />
+        <ReviewEditor
+          v-else-if="pendingEditor === 'review' || entry?.entry_type === 'review'"
+          :key="editorSession"
+          ref="formalEditor"
+          :entry="entry"
+          :security-id="workspace.security_id"
+          :review-kind="newReviewKind"
+          @saved="formalSaved"
+          @applied="reviewApplied"
+        />
         <template v-else-if="entry">
           <fieldset class="document-fields" :disabled="busy || !editableEntry">
             <el-form label-position="top">
@@ -306,7 +330,11 @@
       </div>
       <template #footer
         ><el-button :disabled="busy" @click="versionsVisible = false">关闭</el-button
-        ><el-button type="primary" :disabled="!selectedRevision || busy" @click="restoreVersion"
+        ><el-button
+          v-if="!entry || (entry.entry_type !== 'decision' && entry.status !== 'archived')"
+          type="primary"
+          :disabled="!selectedRevision || busy"
+          @click="restoreVersion"
           >恢复为新版本</el-button
         ></template
       >
@@ -380,6 +408,8 @@ import {
 } from '@element-plus/icons-vue'
 import ResearchMarkdownEditor from '@/components/Research/ResearchMarkdownEditor.vue'
 import ResearchEntryList from '@/components/Research/ResearchEntryList.vue'
+import DecisionEditor from '@/components/Research/DecisionEditor.vue'
+import ReviewEditor from '@/components/Research/ReviewEditor.vue'
 import { useResearchAutosave } from '@/composables/useResearchAutosave'
 import { formatDateTime } from '@/utils/datetime'
 import {
@@ -393,6 +423,7 @@ import {
   type ResearchReferenceCandidate,
   type ResearchRevision,
   type ResearchWorkspace,
+  type ReviewKind,
   type WorkspacePatchInput
 } from '@/api/stockResearch'
 
@@ -408,6 +439,16 @@ type SaveRequest =
   | { kind: 'workspace'; id: string; patch: WorkspacePatchInput }
   | { kind: 'entry'; id: string; type: ResearchEntryType; patch: EntryPatchInput }
 const route = useRoute()
+const pendingEditor = ref<'decision' | 'review' | null>(null)
+const newReviewKind = ref<ReviewKind>('routine')
+const editorSession = ref(0)
+const formalEditor = ref<{ flush: () => Promise<boolean>; dirty: boolean } | null>(null)
+function formalSaved(value: ResearchEntry) {
+  entry.value = value
+}
+function reviewApplied(value: ResearchWorkspace) {
+  workspace.value = value
+}
 const router = useRouter()
 const code = computed(() => String(route.params.code || ''))
 const market = computed<ResearchMarket | null>(() => {
@@ -524,6 +565,7 @@ function scheduleEntry() {
   })
 }
 async function flushChanges() {
+  if (formalEditor.value && !(await formalEditor.value.flush())) return false
   const saved = await autosave.flush()
   if (!saved)
     ElMessage.warning(noteInvalid.value ? '笔记标题和正文不能为空' : '保存失败，请重试后继续')
@@ -548,6 +590,7 @@ async function loadWorkspace() {
   ++entriesRequest
   workspace.value = null
   entry.value = null
+  pendingEditor.value = null
   section.value = 'thesis'
   entries.value = []
   versionsVisible.value = false
@@ -605,6 +648,7 @@ async function switchSection(value: Section) {
   await transition(async () => {
     section.value = value
     entry.value = null
+    pendingEditor.value = null
     entryPage.value = 1
     entryStatus.value = ''
     entries.value = []
@@ -615,12 +659,15 @@ async function switchSection(value: Section) {
 async function openEntry(value: ResearchEntry) {
   await transition(async () => {
     entry.value = (await stockResearchApi.getEntry(value.id)).data
+    pendingEditor.value = null
+    editorSession.value += 1
     if (entry.value.entry_type === 'research') await loadReferences()
   })
 }
 async function backToList() {
   await transition(async () => {
     entry.value = null
+    pendingEditor.value = null
     await loadEntries()
   })
 }
@@ -651,8 +698,16 @@ function returnToStock() {
 const createVisible = ref(false)
 const createType = ref<'note' | 'research'>('note')
 const createForm = reactive({ title: '', body: '', topic: '' })
-async function openCreate(type: 'note' | 'research') {
+async function openCreate(type: 'note' | 'research' | 'decision' | 'routine' | 'decision-review') {
   await transition(async () => {
+    if (type === 'decision' || type === 'routine' || type === 'decision-review') {
+      pendingEditor.value = type === 'decision' ? 'decision' : 'review'
+      newReviewKind.value = type === 'decision-review' ? 'decision' : 'routine'
+      section.value = pendingEditor.value
+      entry.value = null
+      editorSession.value += 1
+      return
+    }
     createType.value = type
     Object.assign(createForm, { title: '', body: '', topic: '' })
     createVisible.value = true
@@ -671,6 +726,7 @@ async function createEntry() {
       ...createForm
     })
     section.value = createType.value
+    pendingEditor.value = null
     entry.value = response.data
     entryPage.value = 1
     entryStatus.value = ''
@@ -739,6 +795,7 @@ async function entryAction(command: string) {
       ElMessage.success(target === 'research' ? '已转为调研' : '已转为笔记')
     } else if (command === 'archive') {
       entry.value = (await stockResearchApi.archiveEntry(entry.value.id)).data
+      editorSession.value += 1
       ElMessage.success('已归档')
     } else if (command === 'delete') {
       await ElMessageBox.confirm(
@@ -748,6 +805,7 @@ async function entryAction(command: string) {
       )
       await stockResearchApi.deleteEntry(entry.value.id)
       entry.value = null
+      pendingEditor.value = null
       await loadEntries()
       ElMessage.success('已移入回收站')
     }
@@ -799,14 +857,17 @@ async function saveVersion() {
 async function restoreVersion() {
   await transition(async () => {
     if (!selectedRevision.value || !workspace.value) return
+    if (entry.value?.entry_type === 'decision' || entry.value?.status === 'archived') return
     await ElMessageBox.confirm(
       `将版本 ${selectedRevision.value.revision} 恢复为新版本？`,
       '恢复版本',
       { confirmButtonText: '恢复', cancelButtonText: '取消', type: 'warning' }
     )
     await stockResearchApi.restoreRevision(selectedRevision.value.id)
-    if (entry.value) entry.value = (await stockResearchApi.getEntry(entry.value.id)).data
-    else workspace.value = (await stockResearchApi.getWorkspace(workspace.value.security_id)).data
+    if (entry.value) {
+      entry.value = (await stockResearchApi.getEntry(entry.value.id)).data
+      editorSession.value += 1
+    } else workspace.value = (await stockResearchApi.getWorkspace(workspace.value.security_id)).data
     await loadVersions()
     ElMessage.success('已恢复为新版本')
   })
@@ -892,7 +953,7 @@ async function guardNavigation() {
 onBeforeRouteLeave(guardNavigation)
 onBeforeRouteUpdate(guardNavigation)
 function beforeUnload(event: BeforeUnloadEvent) {
-  if (autosave.state.value !== 'saved') {
+  if (autosave.state.value !== 'saved' || formalEditor.value?.dirty) {
     event.preventDefault()
     event.returnValue = ''
   }

@@ -63,7 +63,12 @@ workspace navigation guards, conversion, versions, and trash API calls:
 ```bash
 node frontend/scripts/check-research-editing.mjs
 node frontend/scripts/check-research-workspace.mjs
+node frontend/scripts/check-research-reviews.mjs
 ```
+
+The review check exercises minimal decision confirmation and its thesis preview,
+manual review creation, explicit formal revisions, cancel/apply thesis changes,
+and archived read-only boundaries using compiled Vue component scripts.
 
 The actual deployed bundle uses Vite without the legacy type-check pre-step. With
 frontend dependencies already installed, run the same package script as Docker:

@@ -210,6 +210,11 @@ export const stockResearchApi = {
     }),
   confirmEntry: (entryId: string) =>
     ApiClient.post<ResearchEntry>(`/api/research/entries/${encodeURIComponent(entryId)}/confirm`),
+  applyReviewToThesis: (entryId: string, patch: WorkspacePatchInput) =>
+    ApiClient.post<ResearchRevision>(
+      `/api/research/entries/${encodeURIComponent(entryId)}/apply-to-thesis`,
+      patch
+    ),
   archiveEntry: (entryId: string) =>
     ApiClient.post<ResearchEntry>(`/api/research/entries/${encodeURIComponent(entryId)}/archive`),
   deleteEntry: (entryId: string) =>
