@@ -56,6 +56,17 @@ A-share synchronization is scheduled by provider and task type. Hong Kong and US
 market data are intentionally fetched on demand and cached. Worker entry points under
 `app/worker/` execute queued analysis outside request handling.
 
+Research owns `stock_research_workspaces`, `stock_research_entries`,
+`stock_research_revisions`, and `stock_research_generation_tasks`. These collections
+own thesis documents, manual entries, revisions, and links; analysis reports, real
+portfolio facts, paper trades, and watchlists are read-only sources. References are
+user-scoped display snapshots with source IDs. Research deletion never cascades to
+source data, and real-account and paper-account facts remain separately labelled.
+One trade can link to at most one decision; unlinked trades remain valid references.
+`/research` is a searchable directory, and `/research/:code?market=...` is a document
+workspace. Stock detail reads only directory summaries until the explicit workspace
+command is used; this read does not create a workspace.
+
 Research AI drafts use `POST /api/research/generation-tasks` and a user-scoped GET
 by task ID. The service freezes selected reference display snapshots and current
 research inputs, persists `pending`, then schedules an in-process asyncio task.
@@ -75,6 +86,13 @@ stored with tasks. Unsupported reasoning effort fails explicitly. The current
 Codex adapter's effort path requests encrypted reasoning replay, so research drafts
 accept Codex only with no explicit effort until that adapter supports effort alone.
 Prompts and stored results contain public draft text, not internal reasoning.
+The generation dialog uses the existing configured-model API and validates the
+user's local last selection against enabled models. It never substitutes a model.
+Only an open dialog polls, with one two-second timer and a 150-request bound;
+terminal states, close, and unmount stop polling. A failed task is retried by an
+explicit new submission. Originals retain model, effort, time, prompt, task, and
+reference metadata independently of human text. Adopting an original requires a
+confirmation and copies only its content into the human editor.
 
 ## Deployment Boundaries
 

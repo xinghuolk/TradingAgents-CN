@@ -6,8 +6,10 @@
         <div class="code">{{ code }}</div>
         <div class="name">{{ stockName || '-' }}</div>
         <el-tag size="small">{{ market || '-' }}</el-tag>
+        <span class="research-summary" role="status">{{ researchSummaryText }}</span>
       </div>
       <div class="actions">
+        <el-button :icon="Reading" :disabled="!researchMarket" @click="openResearch">研究工作区</el-button>
         <el-tooltip v-if="market === 'HK' || market === 'CN' || market === 'A'" content="查看真实持仓">
           <el-button :icon="Wallet" aria-label="查看真实持仓" @click="openRealHolding" />
         </el-tooltip>
@@ -365,6 +367,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { TrendCharts, Star, Refresh, Link, Document, Clock, Reading, CreditCard, Delete, Wallet } from '@element-plus/icons-vue'
 import { marked } from 'marked'
 import { stocksApi } from '@/api/stocks'
+import { stockResearchApi, type ResearchMarket, type ResearchWorkspaceSummary } from '@/api/stockResearch'
 import { analysisApi } from '@/api/analysis'
 import { ApiClient } from '@/api/request'
 import { stockSyncApi } from '@/api/stockSync'
@@ -422,6 +425,44 @@ const symbol = computed(() => code.value.split('.')[0])  // 提取6位代码
 const stockName = ref('')
 const market = ref('')
 const isFav = ref(false)
+const researchMarket = computed<ResearchMarket | null>(() => {
+  const value = route.query.market || market.value
+  return value === 'A' || value === 'CN' ? 'CN' : value === 'HK' || value === 'US' ? value : null
+})
+const researchSummary = ref<ResearchWorkspaceSummary | null>(null)
+const researchSummaryState = ref<'loading' | 'ready' | 'failed'>('loading')
+const researchSummaryText = computed(() => {
+  if (researchSummaryState.value === 'loading') return '研究摘要加载中'
+  if (researchSummaryState.value === 'failed') return '研究摘要暂不可用'
+  const summary = researchSummary.value
+  if (!summary) return '尚未建立研究'
+  const latest = summary.latest_entry_at && Date.parse(summary.latest_entry_at) > Date.parse(summary.updated_at)
+    ? summary.latest_entry_at : summary.updated_at
+  return `最近研究：${formatDateTime(latest, { second: undefined }).replace(/\//g, '-')}`
+})
+let researchSummaryRequest = 0
+async function loadResearchSummary() {
+  const request = ++researchSummaryRequest
+  researchSummary.value = null
+  if (!researchMarket.value) { researchSummaryState.value = 'ready'; return }
+  researchSummaryState.value = 'loading'
+  const currentMarket = researchMarket.value
+  const currentCode = code.value
+  try {
+    const response = await stockResearchApi.listWorkspaces({ market: currentMarket, query: currentCode, page_size: 100 })
+    if (request !== researchSummaryRequest) return
+    researchSummary.value = response.data.items.find(item => item.market === currentMarket && item.code === currentCode) || null
+    researchSummaryState.value = 'ready'
+  } catch {
+    if (request === researchSummaryRequest) researchSummaryState.value = 'failed'
+  }
+}
+function openResearch() {
+  if (!researchMarket.value) return
+  void router.push({ name: 'ResearchWorkspace', params: { code: code.value }, query: { market: researchMarket.value, name: stockName.value || code.value } })
+}
+watch(() => [code.value, researchMarket.value], loadResearchSummary, { immediate: true })
+onUnmounted(() => { ++researchSummaryRequest })
 
 // ECharts K线配置
 const kOption = ref<EChartsOption>({
@@ -1197,6 +1238,7 @@ function exportReport() {
 }
 
 .header { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; }
+.research-summary { font-size: 12px; color: var(--el-text-color-secondary); overflow-wrap: anywhere; }
 .title { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .code { font-size: 22px; font-weight: 700; }
 .name { font-size: 18px; color: var(--el-text-color-regular); }

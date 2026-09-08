@@ -209,6 +209,9 @@
               :state="autosave.state.value"
               :disabled="busy"
               :readonly="!editableEntry"
+              :generation-entry="entry"
+              :before-generate="flushChanges"
+              @generated="entry && (entry.ai_drafts = [...entry.ai_drafts, $event])"
               @update:model-value="updateEntryBody"
               @retry="retrySave"
             />

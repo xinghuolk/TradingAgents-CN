@@ -118,4 +118,8 @@ watch(() => [props.securityId, props.securityIds, props.decisionId], load, {
   width: 100%;
   min-width: 0;
 }
+/* Keep the filter input in flow on blur so following commands do not move mid-click. */
+.reference-picker :deep(.el-select__input-wrapper.is-hidden) {
+  position: static;
+}
 </style>

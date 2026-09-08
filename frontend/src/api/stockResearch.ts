@@ -82,7 +82,7 @@ export interface ResearchEntry {
   review_kind: ReviewKind | null
   decision_id: string | null
   scope_metadata: Record<string, unknown>
-  ai_drafts: Array<Record<string, unknown>>
+  ai_drafts: ResearchAIDraft[]
   source_metadata: Record<string, unknown>
   warnings: string[]
   current_revision: number
@@ -178,7 +178,51 @@ export interface ReferenceQuery {
   date_through?: string
 }
 
+export interface ResearchAIDraft {
+  content: string
+  provider: string
+  model_name: string
+  reasoning_effort: string | null
+  generated_at: string | null
+  prompt_version: string
+  task_id: string
+  source_ids: string[]
+  references: Array<ResearchReference & { available?: boolean }>
+}
+
+export interface GenerationTask {
+  id: string
+  target_entry_id: string
+  status: 'pending' | 'running' | 'completed' | 'failed'
+  provider: string
+  model_name: string
+  reasoning_effort: string | null
+  prompt_version: string
+  source_ids: string[]
+  references: ResearchReference[]
+  generated_at: string | null
+  content: string | null
+  error_message: string | null
+}
+
+export interface GenerationTaskInput {
+  target_entry_id: string
+  draft_kind: ResearchEntryType
+  provider: string
+  model_name: string
+  reasoning_effort: string | null
+  references: ResearchReference[]
+}
+
 export const stockResearchApi = {
+  createGenerationTask: (input: GenerationTaskInput) =>
+    ApiClient.post<GenerationTask>('/api/research/generation-tasks', input, { retryCount: 0 }),
+  getGenerationTask: (taskId: string) =>
+    ApiClient.get<GenerationTask>(
+      `/api/research/generation-tasks/${encodeURIComponent(taskId)}`,
+      undefined,
+      { retryCount: 0 }
+    ),
   listWorkspaces: (query: WorkspaceQuery = {}) =>
     ApiClient.get<ResearchPage<ResearchWorkspaceSummary>>('/api/research/workspaces', query),
   createWorkspace: (input: CreateWorkspaceInput) =>

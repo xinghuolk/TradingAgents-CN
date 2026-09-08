@@ -50,6 +50,10 @@
       :readonly="readonly"
       :disabled="busy"
       label="决策正文"
+      :generation-entry="record"
+      :generation-references="form.references"
+      :before-generate="flush"
+      @generated="record && (record.ai_drafts = [...record.ai_drafts, $event])"
       @update:model-value="changed"
       @retry="flush"
     />
