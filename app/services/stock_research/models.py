@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from copy import deepcopy
 from dataclasses import dataclass, field, fields, replace
 from datetime import UTC, date, datetime
@@ -126,6 +127,23 @@ class Reference:
             "source_date": _iso_date(self.source_date),
             "label": self.label,
         }
+
+    def trade_link_key(self) -> str:
+        expected_account = {
+            "real_trade": "real",
+            "paper_trade": "paper",
+        }.get(self.kind)
+        if (
+            expected_account is None
+            or self.account_type != expected_account
+            or not self.source_id.strip()
+        ):
+            raise ResearchError("INVALID_ENTRY", "trade reference is invalid")
+        return json.dumps(
+            [self.kind, self.account_type, self.source_id],
+            ensure_ascii=True,
+            separators=(",", ":"),
+        )
 
     @classmethod
     def from_document(cls, document: Mapping[str, object]) -> Reference:

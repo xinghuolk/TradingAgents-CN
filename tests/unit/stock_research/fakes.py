@@ -57,6 +57,79 @@ def matches(document: Mapping[str, object], query: Mapping[str, object]) -> bool
     return True
 
 
+def _nested_value(value: object, path: str) -> object:
+    current = value
+    for part in path.split("."):
+        if not isinstance(current, Mapping):
+            return None
+        current = current.get(part)
+    return current
+
+
+def _evaluate_expression(
+    expression: object,
+    document: Mapping[str, object],
+    variables: Mapping[str, object] | None = None,
+) -> object:
+    scoped = variables or {}
+    if isinstance(expression, str):
+        if expression.startswith("$$"):
+            variable_path = expression[2:].split(".", maxsplit=1)
+            value = scoped.get(variable_path[0])
+            return (
+                _nested_value(value, variable_path[1])
+                if len(variable_path) == 2
+                else value
+            )
+        if expression.startswith("$"):
+            return _nested_value(document, expression[1:])
+        return expression
+    if isinstance(expression, list):
+        return [
+            _evaluate_expression(item, document, scoped) for item in expression
+        ]
+    if not isinstance(expression, Mapping):
+        return deepcopy(expression)
+    if "$ifNull" in expression:
+        values = expression["$ifNull"]
+        assert isinstance(values, list) and len(values) == 2
+        first = _evaluate_expression(values[0], document, scoped)
+        return (
+            first
+            if first is not None
+            else _evaluate_expression(values[1], document, scoped)
+        )
+    if "$concatArrays" in expression:
+        values = _evaluate_expression(expression["$concatArrays"], document, scoped)
+        assert isinstance(values, list)
+        return [item for items in values for item in items]
+    if "$filter" in expression:
+        configuration = expression["$filter"]
+        assert isinstance(configuration, Mapping)
+        values = _evaluate_expression(configuration["input"], document, scoped)
+        assert isinstance(values, list)
+        variable = str(configuration.get("as", "this"))
+        return [
+            item
+            for item in values
+            if _evaluate_expression(
+                configuration["cond"], document, {**scoped, variable: item}
+            )
+        ]
+    if "$in" in expression:
+        values = _evaluate_expression(expression["$in"], document, scoped)
+        assert isinstance(values, list) and len(values) == 2
+        return values[0] in values[1]
+    if "$not" in expression:
+        values = _evaluate_expression(expression["$not"], document, scoped)
+        assert isinstance(values, list) and len(values) == 1
+        return not values[0]
+    return {
+        key: _evaluate_expression(value, document, scoped)
+        for key, value in expression.items()
+    }
+
+
 class FakeCursor:
     def __init__(self, documents: list[dict[str, object]]) -> None:
         self.documents = deepcopy(documents)
@@ -147,11 +220,20 @@ class FakeCollection:
     def _updated_document(
         self,
         original: Mapping[str, object],
-        update: Mapping[str, Mapping[str, object]],
+        update: Mapping[str, Mapping[str, object]] | list[Mapping[str, object]],
         *,
         inserted: bool,
     ) -> dict[str, object]:
         changed = deepcopy(dict(original))
+        if isinstance(update, list):
+            for stage in update:
+                assert set(stage) == {"$set"}
+                source = deepcopy(changed)
+                assignments = stage["$set"]
+                assert isinstance(assignments, Mapping)
+                for key, expression in assignments.items():
+                    changed[key] = _evaluate_expression(expression, source)
+            return changed
         if inserted:
             changed.update(deepcopy(dict(update.get("$setOnInsert", {}))))
         changed.update(deepcopy(dict(update.get("$set", {}))))
@@ -166,12 +248,23 @@ class FakeCollection:
             changed.setdefault(key, [])
             if value not in changed[key]:  # type: ignore[operator]
                 changed[key].append(deepcopy(value))  # type: ignore[union-attr]
+        for key, value in update.get("$pull", {}).items():
+            changed.setdefault(key, [])
+            changed[key] = [  # type: ignore[index]
+                item
+                for item in changed[key]  # type: ignore[union-attr]
+                if not (
+                    matches(item, value)
+                    if isinstance(item, Mapping) and isinstance(value, Mapping)
+                    else item == value
+                )
+            ]
         return changed
 
     async def update_one(
         self,
         query: Mapping[str, object],
-        update: Mapping[str, Mapping[str, object]],
+        update: Mapping[str, Mapping[str, object]] | list[Mapping[str, object]],
         upsert: bool = False,
     ) -> SimpleNamespace:
         original = next(
@@ -200,7 +293,7 @@ class FakeCollection:
     async def find_one_and_update(
         self,
         query: Mapping[str, object],
-        update: Mapping[str, Mapping[str, object]],
+        update: Mapping[str, Mapping[str, object]] | list[Mapping[str, object]],
         *,
         upsert: bool = False,
         return_document: ReturnDocument = ReturnDocument.BEFORE,

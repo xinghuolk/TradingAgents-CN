@@ -1,15 +1,18 @@
 from __future__ import annotations
 
 import re
+from dataclasses import replace
 from datetime import UTC, datetime
 from uuid import uuid4
 
 from pymongo import ASCENDING, DESCENDING, ReturnDocument
+from pymongo.errors import DuplicateKeyError
 
 from app.services.stock_research.errors import ResearchError
 from app.services.stock_research.models import (
     Entry,
     EntryQuery,
+    Reference,
     ResearchPage,
     ResearchSecurityId,
     Revision,
@@ -35,6 +38,35 @@ def _validate_pagination(page: int, page_size: int) -> None:
             "INVALID_QUERY",
             f"pagination requires page >= 1 and page_size <= {MAX_PAGE_SIZE}",
         )
+
+
+def _decision_trade_link_keys(references: tuple[Reference, ...]) -> tuple[str, ...]:
+    return tuple(
+        dict.fromkeys(
+            reference.trade_link_key()
+            for reference in references
+            if reference.kind in {"real_trade", "paper_trade"}
+        )
+    )
+
+
+def _with_derived_trade_link_keys(entry: Entry) -> Entry:
+    keys = (
+        _decision_trade_link_keys(entry.references)
+        if entry.entry_type == "decision"
+        else ()
+    )
+    return replace(entry, trade_link_keys=keys)
+
+
+def _raise_trade_link_conflict(error: DuplicateKeyError) -> None:
+    details = error.details or {}
+    key_pattern = details.get("keyPattern", {})
+    if "trade_link_keys" in key_pattern or "trade_link_keys" in str(error):
+        raise ResearchError(
+            "RESEARCH_CONFLICT", "trade is already linked to another decision"
+        ) from None
+    raise error
 
 
 class StockResearchRepository:
@@ -165,19 +197,117 @@ class StockResearchRepository:
         return Entry.from_document(document) if document is not None else None
 
     async def insert_entry(self, entry: Entry) -> Entry:
+        entry = _with_derived_trade_link_keys(entry)
         entry.validate()
         document = entry.to_document()
-        await self._collection("entries").insert_one(document)
+        try:
+            await self._collection("entries").insert_one(document)
+        except DuplicateKeyError as error:
+            _raise_trade_link_conflict(error)
         return Entry.from_document(document)
 
     async def replace_entry(self, entry: Entry) -> Entry:
+        entry = _with_derived_trade_link_keys(entry)
         entry.validate()
         document = entry.to_document()
-        result = await self._collection("entries").update_one(
-            {"user_id": entry.user_id, "id": entry.id},
-            {"$set": document},
-        )
+        try:
+            result = await self._collection("entries").update_one(
+                {"user_id": entry.user_id, "id": entry.id},
+                {"$set": document},
+            )
+        except DuplicateKeyError as error:
+            _raise_trade_link_conflict(error)
         if result.matched_count == 0:
+            raise ResearchError("RESEARCH_NOT_FOUND", "research entry not found")
+        return Entry.from_document(document)
+
+    async def replace_decision_trade_links(
+        self,
+        user_id: str,
+        decision_id: str,
+        references: tuple[Reference, ...],
+        now: datetime,
+    ) -> Entry:
+        trade_link_keys = _decision_trade_link_keys(references)
+        try:
+            document = await self._collection("entries").find_one_and_update(
+                {
+                    "user_id": user_id,
+                    "id": decision_id,
+                    "entry_type": "decision",
+                    "deleted_at": None,
+                },
+                [
+                    {
+                        "$set": {
+                            "references": {
+                                "$concatArrays": [
+                                    {
+                                        "$filter": {
+                                            "input": {
+                                                "$ifNull": ["$references", []]
+                                            },
+                                            "as": "reference",
+                                            "cond": {
+                                                "$not": [
+                                                    {
+                                                        "$in": [
+                                                            "$$reference.kind",
+                                                            [
+                                                                "real_trade",
+                                                                "paper_trade",
+                                                            ],
+                                                        ]
+                                                    }
+                                                ]
+                                            },
+                                        }
+                                    },
+                                    [item.to_document() for item in references],
+                                ]
+                            },
+                            "trade_link_keys": list(trade_link_keys),
+                            "updated_at": now.isoformat(),
+                        }
+                    }
+                ],
+                return_document=ReturnDocument.AFTER,
+            )
+        except DuplicateKeyError as error:
+            _raise_trade_link_conflict(error)
+        if document is None:
+            raise ResearchError("RESEARCH_NOT_FOUND", "research entry not found")
+        return Entry.from_document(document)
+
+    async def remove_decision_trade_link(
+        self,
+        user_id: str,
+        decision_id: str,
+        reference: Reference,
+        now: datetime,
+    ) -> Entry:
+        trade_link_key = reference.trade_link_key()
+        document = await self._collection("entries").find_one_and_update(
+            {
+                "user_id": user_id,
+                "id": decision_id,
+                "entry_type": "decision",
+                "deleted_at": None,
+            },
+            {
+                "$pull": {
+                    "references": {
+                        "kind": reference.kind,
+                        "source_id": reference.source_id,
+                        "account_type": reference.account_type,
+                    },
+                    "trade_link_keys": trade_link_key,
+                },
+                "$set": {"updated_at": now.isoformat()},
+            },
+            return_document=ReturnDocument.AFTER,
+        )
+        if document is None:
             raise ResearchError("RESEARCH_NOT_FOUND", "research entry not found")
         return Entry.from_document(document)
 

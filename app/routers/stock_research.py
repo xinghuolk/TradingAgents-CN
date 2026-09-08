@@ -400,20 +400,16 @@ async def delete_decision_trade_link(
     service: StockResearchService = Depends(get_stock_research_service),  # noqa: B008
 ):
     user_id = _user_id(current_user)
-    current = await _call_service(
-        service.get_decision_trade_links(user_id=user_id, decision_id=decision_id)
+    reference = (
+        Reference.real_trade(source_id)
+        if kind == "real_trade"
+        else Reference.paper_trade(source_id)
     )
     result = await _call_service(
-        service.set_decision_trade_links(
+        service.delete_decision_trade_link(
             user_id=user_id,
             decision_id=decision_id,
-            references=[
-                reference
-                for reference in current
-                if not (
-                    reference.kind == kind and reference.source_id == source_id
-                )
-            ],
+            reference=reference,
         )
     )
     return ok(_public_document(result))

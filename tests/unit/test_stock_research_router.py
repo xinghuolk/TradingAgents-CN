@@ -76,6 +76,7 @@ class ServiceSpy:
             "list_candidates": [reference_candidate()],
             "recommend_trade_links": [reference_candidate(kind="paper_trade")],
             "set_decision_trade_links": entry(entry_type="decision"),
+            "delete_decision_trade_link": entry(entry_type="decision"),
             "get_decision_trade_links": [
                 Reference.real_trade("real-1"),
                 Reference.paper_trade("paper-1"),
@@ -456,17 +457,12 @@ async def test_reference_and_link_routes_use_authenticated_scope() -> None:
             },
         ),
         ServiceCall(
-            "get_decision_trade_links",
-            (),
-            {"user_id": "authenticated-user", "decision_id": "d1"},
-        ),
-        ServiceCall(
-            "set_decision_trade_links",
+            "delete_decision_trade_link",
             (),
             {
                 "user_id": "authenticated-user",
                 "decision_id": "d1",
-                "references": [Reference.paper_trade("paper-1")],
+                "reference": Reference.real_trade("real-1"),
             },
         ),
     ]

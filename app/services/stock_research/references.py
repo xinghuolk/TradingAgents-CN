@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 from typing import Mapping, Protocol
@@ -540,15 +540,23 @@ class ReferenceService:
         date_from: date | None,
         date_through: date | None,
     ) -> list[ReferenceCandidate]:
-        page = await self.repository.list_entries(
-            user_id,
-            EntryQuery(
-                security_id=str(security),
-                entry_type="decision",
-                page=1,
-                page_size=SOURCE_PAGE_SIZE,
-            ),
+        query = EntryQuery(
+            security_id=str(security),
+            entry_type="decision",
+            page=1,
+            page_size=SOURCE_PAGE_SIZE,
         )
+        page = await self.repository.list_entries(user_id, query)
+        entries = list(page.items)
+        page_number = 2
+        while len(entries) < page.total:
+            next_page = await self.repository.list_entries(
+                user_id, replace(query, page=page_number)
+            )
+            if not next_page.items:
+                break
+            entries.extend(next_page.items)
+            page_number += 1
         return [
             ReferenceCandidate(
                 user_id=user_id,
@@ -563,7 +571,7 @@ class ReferenceService:
                     "status": entry.status,
                 },
             )
-            for entry in page.items
+            for entry in entries
             if _in_range(entry.decision_date, date_from, date_through)
         ]
 

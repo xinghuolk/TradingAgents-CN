@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import UTC, date, datetime
 from decimal import Decimal
 
@@ -13,7 +14,7 @@ from app.services.real_portfolio.models import (
     TradeItem,
 )
 from app.services.stock_research.errors import ResearchError
-from app.services.stock_research.models import Entry, Reference
+from app.services.stock_research.models import Entry, EntryPatch, NewEntry, Reference
 from app.services.stock_research.references import (
     AnalysisReportAdapter,
     PaperTradeAdapter,
@@ -296,6 +297,29 @@ async def test_trade_recommendations_are_bounded_and_nearest_first(
 
 
 @pytest.mark.asyncio
+async def test_candidates_include_an_interval_decision_beyond_the_first_page(
+    reference_service: ReferenceService,
+) -> None:
+    for number in range(201):
+        await reference_service.repository.insert_entry(
+            replace(
+                decision("u1", f"d{number:03d}"),
+                decision_date=(
+                    date(2026, 9, 1) if number == 0 else date(2026, 1, 1)
+                ),
+            )
+        )
+
+    items = await reference_service.list_candidates(
+        "u1", "A:600519", date(2026, 9, 1), date(2026, 9, 1)
+    )
+
+    assert "d000" in {
+        item.source_id for item in items if item.kind == "decision"
+    }
+
+
+@pytest.mark.asyncio
 async def test_one_trade_links_to_at_most_one_decision_and_unlink_releases_it() -> None:
     db = FakeDatabase()
     repository = StockResearchRepository(db)
@@ -328,3 +352,217 @@ async def test_one_trade_links_to_at_most_one_decision_and_unlink_releases_it() 
             "u1", "d2", [Reference.real_trade("t1")]
         )
     ).id == "d2"
+
+
+@pytest.mark.asyncio
+async def test_generic_decision_creation_reserves_trade_reference_keys() -> None:
+    repository = StockResearchRepository(FakeDatabase())
+    await repository.ensure_indexes()
+    identifiers = iter(("d1", "d2"))
+    service = StockResearchService(
+        repository, clock=lambda: NOW, id_factory=lambda: next(identifiers)
+    )
+    request = replace(
+        NewEntry.decision("A:600519", "buy", date(2026, 9, 8)),
+        references=(Reference.real_trade("t1"),),
+    )
+
+    first = await service.create_entry("u1", request)
+
+    assert first.trade_link_keys
+    with pytest.raises(ResearchError, match="already linked"):
+        await service.create_entry("u1", request)
+
+
+@pytest.mark.asyncio
+async def test_generic_reference_edit_rejects_duplicates_and_releases_stale_keys(
+) -> None:
+    repository = StockResearchRepository(FakeDatabase())
+    await repository.ensure_indexes()
+    identifiers = iter(("d1", "d2"))
+    service = StockResearchService(
+        repository, clock=lambda: NOW, id_factory=lambda: next(identifiers)
+    )
+    first = await service.create_entry(
+        "u1",
+        replace(
+            NewEntry.decision("A:600519", "buy", date(2026, 9, 8)),
+            references=(Reference.real_trade("t1"),),
+        ),
+    )
+    second = await service.create_entry(
+        "u1",
+        replace(
+            NewEntry.decision("A:600519", "buy", date(2026, 9, 9)),
+            references=(Reference.real_trade("t2"),),
+        ),
+    )
+
+    with pytest.raises(ResearchError, match="already linked"):
+        await service.update_entry_draft(
+            "u1", second.id, EntryPatch(references=(Reference.real_trade("t1"),))
+        )
+
+    edited = await service.update_entry_draft(
+        "u1", first.id, EntryPatch(references=())
+    )
+    reclaimed = await service.update_entry_draft(
+        "u1", second.id, EntryPatch(references=(Reference.real_trade("t1"),))
+    )
+
+    assert edited.trade_link_keys == ()
+    assert [reference.source_id for reference in reclaimed.references] == ["t1"]
+
+
+@pytest.mark.asyncio
+async def test_link_replacement_preserves_a_concurrent_unrelated_entry_edit() -> None:
+    class InterleavingRepository(StockResearchRepository):
+        async def _concurrent_edit(self, user_id: str, decision_id: str) -> None:
+            document = await self._collection("entries").find_one(
+                {"user_id": user_id, "id": decision_id}
+            )
+            assert document is not None
+            await self._collection("entries").update_one(
+                {"user_id": user_id, "id": decision_id},
+                {
+                    "$set": {
+                        "body": "concurrent body",
+                        "references": [
+                            *document["references"],
+                            Reference.analysis_report(
+                                "concurrent-report"
+                            ).to_document(),
+                        ],
+                    }
+                },
+            )
+
+        async def replace_entry(self, entry: Entry) -> Entry:
+            await self._concurrent_edit(entry.user_id, entry.id)
+            return await super().replace_entry(entry)
+
+        async def replace_decision_trade_links(
+            self,
+            user_id: str,
+            decision_id: str,
+            references: tuple[Reference, ...],
+            now: datetime,
+        ) -> Entry:
+            await self._concurrent_edit(user_id, decision_id)
+            return await super().replace_decision_trade_links(
+                user_id, decision_id, references, now
+            )
+
+    repository = InterleavingRepository(FakeDatabase())
+    await repository.ensure_indexes()
+    await repository.insert_entry(decision("u1", "d1"))
+    service = StockResearchService(repository, clock=lambda: NOW)
+
+    linked = await service.set_decision_trade_links(
+        "u1", "d1", [Reference.real_trade("t1")]
+    )
+
+    assert linked.body == "concurrent body"
+    assert [(item.kind, item.source_id) for item in linked.references] == [
+        ("analysis_report", "concurrent-report"),
+        ("real_trade", "t1"),
+    ]
+    assert (await service.get_entry("u1", "d1")).body == "concurrent body"
+
+
+@pytest.mark.asyncio
+async def test_link_replacement_does_not_resurrect_concurrently_deleted_entry(
+) -> None:
+    class ConcurrentDeleteRepository(StockResearchRepository):
+        async def _concurrent_delete(self, user_id: str, decision_id: str) -> None:
+            await self._collection("entries").update_one(
+                {"user_id": user_id, "id": decision_id},
+                {"$set": {"deleted_at": NOW.isoformat()}},
+            )
+
+        async def replace_entry(self, entry: Entry) -> Entry:
+            await self._concurrent_delete(entry.user_id, entry.id)
+            return await super().replace_entry(entry)
+
+        async def replace_decision_trade_links(
+            self,
+            user_id: str,
+            decision_id: str,
+            references: tuple[Reference, ...],
+            now: datetime,
+        ) -> Entry:
+            await self._concurrent_delete(user_id, decision_id)
+            return await super().replace_decision_trade_links(
+                user_id, decision_id, references, now
+            )
+
+    repository = ConcurrentDeleteRepository(FakeDatabase())
+    await repository.ensure_indexes()
+    await repository.insert_entry(decision("u1", "d1"))
+    service = StockResearchService(repository, clock=lambda: NOW)
+
+    with pytest.raises(ResearchError, match="not found"):
+        await service.set_decision_trade_links(
+            "u1", "d1", [Reference.real_trade("t1")]
+        )
+
+    deleted = await service.get_entry("u1", "d1", include_deleted=True)
+    assert deleted.deleted_at == NOW
+
+
+@pytest.mark.asyncio
+async def test_targeted_unlink_does_not_resurrect_a_concurrently_removed_link() -> None:
+    class InterleavingUnlinkRepository(StockResearchRepository):
+        async def remove_decision_trade_link(
+            self,
+            user_id: str,
+            decision_id: str,
+            reference: Reference,
+            now: datetime,
+        ) -> Entry:
+            document = await self._collection("entries").find_one(
+                {"user_id": user_id, "id": decision_id}
+            )
+            assert document is not None
+            other_key = Reference.paper_trade("t2").trade_link_key()
+            await self._collection("entries").update_one(
+                {"user_id": user_id, "id": decision_id},
+                {
+                    "$set": {
+                        "references": [
+                            item
+                            for item in document["references"]
+                            if item["source_id"] != "t2"
+                        ],
+                        "trade_link_keys": [
+                            key
+                            for key in document["trade_link_keys"]
+                            if key != other_key
+                        ],
+                        "body": "concurrent body",
+                    }
+                },
+            )
+            return await super().remove_decision_trade_link(
+                user_id, decision_id, reference, now
+            )
+
+    repository = InterleavingUnlinkRepository(FakeDatabase())
+    await repository.ensure_indexes()
+    await repository.insert_entry(
+        replace(
+            decision("u1", "d1"),
+            references=(
+                Reference.real_trade("t1"),
+                Reference.paper_trade("t2"),
+            ),
+        )
+    )
+    service = StockResearchService(repository, clock=lambda: NOW)
+
+    unlinked = await service.delete_decision_trade_link(
+        "u1", "d1", Reference.real_trade("t1")
+    )
+
+    assert unlinked.body == "concurrent body"
+    assert await service.get_decision_trade_links("u1", "d1") == []
