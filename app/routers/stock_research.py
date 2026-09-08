@@ -31,7 +31,9 @@ from app.services.stock_research.models import (
     ThesisPatch,
     Workspace,
     WorkspaceQuery,
+    ResearchWorkspaceSummary,
 )
+from app.services.stock_research.directory import ResearchDirectorySourceAdapter
 from app.services.stock_research.references import (
     AnalysisReportAdapter,
     PaperTradeAdapter,
@@ -241,7 +243,15 @@ class SetDecisionTradeLinksRequest(StrictRequest):
 def get_stock_research_service(
     db=Depends(get_mongo_db),  # noqa: B008 - FastAPI dependency declaration
 ) -> StockResearchService:
-    return StockResearchService(StockResearchRepository(db))
+    return StockResearchService(
+        StockResearchRepository(db),
+        directory_source=ResearchDirectorySourceAdapter(
+            db,
+            RealPortfolioService(
+                RealPortfolioRepository(db), Path(settings.TRADINGAGENTS_DATA_DIR)
+            ),
+        ),
+    )
 
 
 def get_reference_service(
@@ -298,7 +308,9 @@ async def _call_service(operation: Awaitable[_T]) -> _T:
         raise _internal_error() from None
 
 
-def _public_document(item: Workspace | Entry | Revision) -> dict[str, object]:
+def _public_document(
+    item: Workspace | ResearchWorkspaceSummary | Entry | Revision,
+) -> dict[str, object]:
     def sanitize(value: object) -> object:
         if isinstance(value, dict):
             return {
@@ -322,7 +334,9 @@ def _public_document(item: Workspace | Entry | Revision) -> dict[str, object]:
     }
 
 
-def _page(page: ResearchPage[Workspace] | ResearchPage[Entry]) -> dict[str, object]:
+def _page(
+    page: ResearchPage[ResearchWorkspaceSummary] | ResearchPage[Entry],
+) -> dict[str, object]:
     return {
         "items": [_public_document(item) for item in page.items],
         "page": page.page,

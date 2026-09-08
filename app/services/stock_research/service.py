@@ -17,8 +17,14 @@ from app.services.stock_research.models import (
     Revision,
     ThesisPatch,
     Workspace,
+    WorkspaceDirectoryFacts,
     WorkspaceQuery,
+    ResearchWorkspaceSummary,
     utc_now,
+)
+from app.services.stock_research.directory import (
+    EmptyWorkspaceDirectorySource,
+    WorkspaceDirectorySource,
 )
 from app.services.stock_research.storage import StockResearchRepository
 
@@ -28,10 +34,12 @@ class StockResearchService:
         self,
         repository: StockResearchRepository,
         *,
+        directory_source: WorkspaceDirectorySource | None = None,
         clock: Callable[[], datetime] = utc_now,
         id_factory: Callable[[], str] = lambda: uuid4().hex,
     ) -> None:
         self.repository = repository
+        self.directory_source = directory_source or EmptyWorkspaceDirectorySource()
         self.clock = clock
         self.id_factory = id_factory
 
@@ -43,8 +51,47 @@ class StockResearchService:
 
     async def list_workspaces(
         self, user_id: str, query: WorkspaceQuery
-    ) -> ResearchPage[Workspace]:
-        return await self.repository.list_workspaces(user_id, query)
+    ) -> ResearchPage[ResearchWorkspaceSummary]:
+        workspaces = await self.repository.list_workspace_candidates(user_id, query)
+        facts_by_security = await self.directory_source.get_workspace_facts(
+            user_id, tuple(workspace.security_id for workspace in workspaces)
+        )
+        summaries = []
+        for workspace in workspaces:
+            facts = facts_by_security.get(
+                workspace.security_id, WorkspaceDirectoryFacts()
+            )
+            summary = ResearchWorkspaceSummary.from_workspace(
+                workspace,
+                latest_entry_type=facts.latest_entry_type,
+                latest_entry_at=facts.latest_entry_at,
+                has_real_holding=facts.has_real_holding,
+                has_paper_holding=facts.has_paper_holding,
+                watchlisted=facts.watchlisted,
+            )
+            if (
+                query.real_holding is not None
+                and summary.has_real_holding != query.real_holding
+            ):
+                continue
+            if (
+                query.paper_holding is not None
+                and summary.has_paper_holding != query.paper_holding
+            ):
+                continue
+            if (
+                query.watchlisted is not None
+                and summary.watchlisted != query.watchlisted
+            ):
+                continue
+            summaries.append(summary)
+        start = (query.page - 1) * query.page_size
+        return ResearchPage(
+            tuple(summaries[start : start + query.page_size]),
+            query.page,
+            query.page_size,
+            len(summaries),
+        )
 
     async def get_or_create_workspace(
         self, user_id: str, market: str, code: str, name: str

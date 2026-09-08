@@ -8,6 +8,7 @@ from app.services.stock_research.models import (
     EntryQuery,
     NewEntry,
     ThesisPatch,
+    WorkspaceDirectoryFacts,
     WorkspaceQuery,
 )
 from app.services.stock_research.service import StockResearchService
@@ -27,6 +28,18 @@ def repo() -> StockResearchRepository:
 def service(repo) -> StockResearchService:
     identifiers = iter(f"entry-{number}" for number in range(1, 20))
     return StockResearchService(repo, clock=lambda: NOW, id_factory=lambda: next(identifiers))
+
+
+class DirectorySourceStub:
+    def __init__(self, facts: dict[str, WorkspaceDirectoryFacts]) -> None:
+        self.facts = facts
+        self.calls: list[tuple[str, tuple[str, ...]]] = []
+
+    async def get_workspace_facts(
+        self, user_id: str, security_ids: tuple[str, ...]
+    ) -> dict[str, WorkspaceDirectoryFacts]:
+        self.calls.append((user_id, security_ids))
+        return self.facts
 
 
 @pytest.fixture
@@ -321,7 +334,7 @@ async def test_read_workflows_delegate_to_user_scoped_repository_queries(service
     trash = await service.list_trash("u1", page=1, page_size=10)
 
     assert [item.security_id for item in workspaces.items] == [workspace.security_id]
-    assert workspaces.items[0].current_revision == 1
+    assert workspaces.items[0].thesis_summary == ""
     assert entries.items == ()
     deleted = await service.get_entry("u1", entry.id, include_deleted=True)
     assert deleted.id == entry.id
@@ -329,6 +342,42 @@ async def test_read_workflows_delegate_to_user_scoped_repository_queries(service
     assert revisions == [revision]
     assert await service.get_revision("u1", revision.id) == revision
     assert [item.id for item in trash.items] == [entry.id]
+
+
+@pytest.mark.asyncio
+async def test_workspace_directory_enriches_filters_and_paginates_derived_facts(repo):
+    service = StockResearchService(
+        repo,
+        directory_source=DirectorySourceStub(
+            {
+                "A:600519": WorkspaceDirectoryFacts(
+                    latest_entry_type="decision",
+                    latest_entry_at=NOW,
+                    has_real_holding=True,
+                    watchlisted=True,
+                ),
+                "HK:00700": WorkspaceDirectoryFacts(has_paper_holding=True),
+            }
+        ),
+    )
+    await service.get_or_create_workspace("u1", "CN", "600519", "贵州茅台")
+    await service.save_thesis_draft(
+        "u1", "A:600519", ThesisPatch(body="  核心论点\n第二行  ")
+    )
+    await service.get_or_create_workspace("u1", "HK", "00700", "腾讯控股")
+
+    page = await service.list_workspaces(
+        "u1",
+        WorkspaceQuery(real_holding=True, watchlisted=True, page=1, page_size=1),
+    )
+
+    assert page.total == 1
+    assert page.items[0].security_id == "A:600519"
+    assert page.items[0].thesis_summary == "核心论点 第二行"
+    assert page.items[0].latest_entry_type == "decision"
+    assert page.items[0].has_real_holding is True
+    assert page.items[0].has_paper_holding is False
+    assert page.items[0].watchlisted is True
 
 
 @pytest.mark.asyncio

@@ -225,6 +225,73 @@ class Workspace:
 
 
 @dataclass(frozen=True, slots=True)
+class WorkspaceDirectoryFacts:
+    latest_entry_type: EntryType | None = None
+    latest_entry_at: datetime | None = None
+    has_real_holding: bool = False
+    has_paper_holding: bool = False
+    watchlisted: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class ResearchWorkspaceSummary:
+    user_id: str
+    security_id: str
+    market: StoredMarket
+    code: str
+    name: str
+    thesis_summary: str
+    updated_at: datetime
+    latest_entry_type: EntryType | None = None
+    latest_entry_at: datetime | None = None
+    has_real_holding: bool = False
+    has_paper_holding: bool = False
+    watchlisted: bool = False
+
+    @classmethod
+    def from_workspace(
+        cls,
+        workspace: Workspace,
+        *,
+        latest_entry_type: EntryType | None = None,
+        latest_entry_at: datetime | None = None,
+        has_real_holding: bool = False,
+        has_paper_holding: bool = False,
+        watchlisted: bool = False,
+    ) -> ResearchWorkspaceSummary:
+        return cls(
+            user_id=workspace.user_id,
+            security_id=workspace.security_id,
+            market=workspace.market,
+            code=workspace.code,
+            name=workspace.name,
+            thesis_summary=" ".join(workspace.body.split()),
+            updated_at=workspace.updated_at,
+            latest_entry_type=latest_entry_type,
+            latest_entry_at=latest_entry_at,
+            has_real_holding=has_real_holding,
+            has_paper_holding=has_paper_holding,
+            watchlisted=watchlisted,
+        )
+
+    def to_document(self) -> dict[str, object]:
+        return {
+            "user_id": self.user_id,
+            "security_id": self.security_id,
+            "market": self.market,
+            "code": self.code,
+            "name": self.name,
+            "thesis_summary": self.thesis_summary,
+            "updated_at": _iso_datetime(self.updated_at),
+            "latest_entry_type": self.latest_entry_type,
+            "latest_entry_at": _iso_datetime(self.latest_entry_at),
+            "has_real_holding": self.has_real_holding,
+            "has_paper_holding": self.has_paper_holding,
+            "watchlisted": self.watchlisted,
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class Entry:
     id: str
     user_id: str

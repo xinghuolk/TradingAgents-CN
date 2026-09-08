@@ -42,6 +42,11 @@
       <template #title>我的自选股</template>
     </el-menu-item>
 
+    <el-menu-item index="/research">
+      <el-icon><Notebook /></el-icon>
+      <template #title>研究与复盘</template>
+    </el-menu-item>
+
     <el-sub-menu index="/portfolio">
       <template #title>
         <el-icon><Wallet /></el-icon>
@@ -52,7 +57,6 @@
       <el-menu-item index="/portfolio/real-transactions">真实成交记录</el-menu-item>
       <el-menu-item index="/portfolio/imports">导入记录</el-menu-item>
     </el-sub-menu>
-
 
     <!-- 分析报告已移至“股票分析”子菜单，保留注释便于追踪 -->
     <!--
@@ -118,13 +122,14 @@ import {
   /* Document 移除：不再使用顶级分析报告菜单图标 */
   Setting,
   InfoFilled,
-  Wallet
+  Wallet,
+  Notebook
 } from '@element-plus/icons-vue'
 
 const route = useRoute()
 const appStore = useAppStore()
 
-const activeMenu = computed(() => route.path)
+const activeMenu = computed(() => (route.path.startsWith('/research/') ? '/research' : route.path))
 </script>
 
 <style lang="scss" scoped>

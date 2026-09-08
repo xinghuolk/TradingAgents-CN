@@ -26,6 +26,7 @@ from app.services.stock_research.models import (
     Revision,
     ThesisPatch,
     Workspace,
+    ResearchWorkspaceSummary,
     WorkspaceQuery,
 )
 from app.services.stock_research.references import ReferenceCandidate
@@ -58,7 +59,21 @@ class ServiceSpy:
             "get_or_create_workspace": workspace(),
             "save_thesis_draft": workspace(body="updated thesis"),
             "save_workspace_version": revision(),
-            "list_workspaces": ResearchPage((workspace(),), 2, 10, 11),
+            "list_workspaces": ResearchPage(
+                (
+                    ResearchWorkspaceSummary.from_workspace(
+                        workspace(),
+                        latest_entry_type="decision",
+                        latest_entry_at=NOW,
+                        has_real_holding=True,
+                        has_paper_holding=False,
+                        watchlisted=True,
+                    ),
+                ),
+                2,
+                10,
+                11,
+            ),
             "get_entry": entry(),
             "create_entry": entry(),
             "update_entry_draft": entry(body="updated entry"),
@@ -365,6 +380,11 @@ async def test_workspace_list_translates_filters_and_serializes_page() -> None:
     assert response.status_code == 200
     assert response.json()["data"]["total"] == 11
     assert response.json()["data"]["items"][0]["updated_at"] == NOW.isoformat()
+    assert response.json()["data"]["items"][0]["thesis_summary"] == "current thesis"
+    assert response.json()["data"]["items"][0]["latest_entry_type"] == "decision"
+    assert response.json()["data"]["items"][0]["has_real_holding"] is True
+    assert response.json()["data"]["items"][0]["has_paper_holding"] is False
+    assert response.json()["data"]["items"][0]["watchlisted"] is True
     assert "user_id" not in response.json()["data"]["items"][0]
     assert service_spy.calls == [
         ServiceCall(

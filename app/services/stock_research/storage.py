@@ -153,20 +153,7 @@ class StockResearchRepository:
         self, user_id: str, query: WorkspaceQuery
     ) -> ResearchPage[Workspace]:
         _validate_pagination(query.page, query.page_size)
-        mongo_query: dict[str, object] = {"user_id": user_id}
-        if query.market is not None:
-            mongo_query["market"] = _canonical_market(query.market)
-        for name in ("real_holding", "paper_holding", "watchlisted"):
-            value = getattr(query, name)
-            if value is not None:
-                mongo_query[f"has_{name}" if name != "watchlisted" else name] = value
-        if query.query and query.query.strip():
-            pattern = re.escape(query.query.strip())
-            mongo_query["$or"] = [
-                {"code": {"$regex": pattern, "$options": "i"}},
-                {"name": {"$regex": pattern, "$options": "i"}},
-                {"body": {"$regex": pattern, "$options": "i"}},
-            ]
+        mongo_query = self._workspace_query(user_id, query)
         collection = self._collection("workspaces")
         total = await collection.count_documents(mongo_query)
         documents = (
@@ -182,6 +169,32 @@ class StockResearchRepository:
             query.page_size,
             total,
         )
+
+    async def list_workspace_candidates(
+        self, user_id: str, query: WorkspaceQuery
+    ) -> tuple[Workspace, ...]:
+        _validate_pagination(query.page, query.page_size)
+        documents = (
+            await self._collection("workspaces")
+            .find(self._workspace_query(user_id, query))
+            .sort([("updated_at", DESCENDING), ("security_id", ASCENDING)])
+            .to_list(length=None)
+        )
+        return tuple(Workspace.from_document(document) for document in documents)
+
+    @staticmethod
+    def _workspace_query(user_id: str, query: WorkspaceQuery) -> dict[str, object]:
+        mongo_query: dict[str, object] = {"user_id": user_id}
+        if query.market is not None:
+            mongo_query["market"] = _canonical_market(query.market)
+        if query.query and query.query.strip():
+            pattern = re.escape(query.query.strip())
+            mongo_query["$or"] = [
+                {"code": {"$regex": pattern, "$options": "i"}},
+                {"name": {"$regex": pattern, "$options": "i"}},
+                {"body": {"$regex": pattern, "$options": "i"}},
+            ]
+        return mongo_query
 
     async def get_entry(
         self,
