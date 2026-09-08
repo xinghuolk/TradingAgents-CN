@@ -11,6 +11,7 @@ from app.services.stock_research.models import (
     Entry,
     EntryQuery,
     ResearchPage,
+    ResearchSecurityId,
     Revision,
     Workspace,
     WorkspaceQuery,
@@ -18,6 +19,14 @@ from app.services.stock_research.models import (
 
 
 MAX_PAGE_SIZE = 200
+
+
+def _canonical_security_id(security_id: str) -> str:
+    return str(ResearchSecurityId.from_string(security_id))
+
+
+def _canonical_market(market: str) -> str:
+    return ResearchSecurityId.parse(market, "_").market
 
 
 def _validate_pagination(page: int, page_size: int) -> None:
@@ -86,7 +95,10 @@ class StockResearchRepository:
         self, user_id: str, security_id: str
     ) -> Workspace | None:
         document = await self._collection("workspaces").find_one(
-            {"user_id": user_id, "security_id": security_id}
+            {
+                "user_id": user_id,
+                "security_id": _canonical_security_id(security_id),
+            }
         )
         return Workspace.from_document(document) if document is not None else None
 
@@ -105,7 +117,7 @@ class StockResearchRepository:
         _validate_pagination(query.page, query.page_size)
         mongo_query: dict[str, object] = {"user_id": user_id}
         if query.market is not None:
-            mongo_query["market"] = query.market
+            mongo_query["market"] = _canonical_market(query.market)
         for name in ("real_holding", "paper_holding", "watchlisted"):
             value = getattr(query, name)
             if value is not None:
@@ -169,7 +181,7 @@ class StockResearchRepository:
         _validate_pagination(query.page, query.page_size)
         mongo_query: dict[str, object] = {"user_id": user_id, "deleted_at": None}
         if query.security_id is not None:
-            mongo_query["security_ids"] = query.security_id
+            mongo_query["security_ids"] = _canonical_security_id(query.security_id)
         if query.entry_type is not None:
             mongo_query["entry_type"] = query.entry_type
         if query.scope is not None:

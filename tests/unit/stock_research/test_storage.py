@@ -261,3 +261,127 @@ async def test_workspace_rejects_inconsistent_security_fields_before_persistence
         )
 
     assert fake_db["stock_research_workspaces"].documents == []
+
+
+@pytest.mark.parametrize(
+    ("security_id", "market", "code", "lookup", "canonical"),
+    [
+        ("CN:600519", "CN", "600519", "CN:600519", "A:600519"),
+        ("us:aapl", "us", "aapl", "us:aapl", "US:AAPL"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_get_workspace_accepts_security_aliases(
+    fake_db, security_id, market, code, lookup, canonical
+):
+    repo = StockResearchRepository(fake_db)
+    await repo.upsert_workspace(
+        Workspace(
+            user_id="u1",
+            security_id=security_id,
+            market=market,
+            code=code,
+            name="测试证券",
+            created_at=NOW,
+            updated_at=NOW,
+        )
+    )
+
+    found = await repo.get_workspace("u1", lookup)
+
+    assert found is not None
+    assert found.security_id == canonical
+
+
+@pytest.mark.parametrize(
+    ("stored_security_id", "query_security_id", "canonical"),
+    [
+        ("CN:600519", "CN:600519", "A:600519"),
+        ("us:aapl", "us:aapl", "US:AAPL"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_list_entries_accepts_security_aliases(
+    fake_db, stored_security_id, query_security_id, canonical
+):
+    repo = StockResearchRepository(fake_db)
+    entry = Entry(
+        id=f"entry-{canonical}",
+        user_id="u1",
+        entry_type="note",
+        scope="stock",
+        security_id=stored_security_id,
+        security_ids=(stored_security_id,),
+        title="标题",
+        body="正文",
+        created_at=NOW,
+        updated_at=NOW,
+    )
+    await repo.insert_entry(entry)
+
+    page = await repo.list_entries(
+        "u1", EntryQuery(security_id=query_security_id, page=1, page_size=20)
+    )
+
+    assert page.total == 1
+    assert page.items[0].security_id == canonical
+
+
+@pytest.mark.parametrize(
+    ("market_alias", "canonical_security_id"),
+    [
+        ("CN", "A:600519"),
+        ("cn", "A:600519"),
+        ("A", "A:600519"),
+        ("a", "A:600519"),
+        ("US", "US:AAPL"),
+        ("us", "US:AAPL"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_list_workspaces_accepts_market_aliases_without_crossing_users(
+    fake_db, market_alias, canonical_security_id
+):
+    repo = StockResearchRepository(fake_db)
+    await repo.upsert_workspace(
+        Workspace(
+            user_id="u1",
+            security_id="A:600519",
+            market="A",
+            code="600519",
+            name="贵州茅台",
+            created_at=NOW,
+            updated_at=NOW,
+        )
+    )
+    await repo.upsert_workspace(
+        Workspace(
+            user_id="u1",
+            security_id="US:AAPL",
+            market="US",
+            code="AAPL",
+            name="Apple",
+            created_at=NOW,
+            updated_at=NOW,
+        )
+    )
+    await repo.upsert_workspace(
+        Workspace(
+            user_id="u2",
+            security_id=canonical_security_id,
+            market=canonical_security_id.split(":", maxsplit=1)[0],
+            code=canonical_security_id.split(":", maxsplit=1)[1],
+            name="其他用户",
+            created_at=NOW,
+            updated_at=NOW,
+        )
+    )
+
+    page = await repo.list_workspaces(
+        "u1", WorkspaceQuery(market=market_alias, page=1, page_size=20)
+    )
+
+    assert page.total == 1
+    assert [workspace.security_id for workspace in page.items] == [
+        canonical_security_id
+    ]
