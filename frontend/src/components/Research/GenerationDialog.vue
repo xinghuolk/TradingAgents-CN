@@ -17,11 +17,23 @@
           :loading="loading"
           @change="changeProvider"
         >
+          <el-option
+            v-if="provider && !providers.includes(provider)"
+            :value="provider"
+            :label="provider"
+            disabled
+          />
           <el-option v-for="item in providers" :key="item" :value="item" :label="item" />
         </el-select>
       </el-form-item>
       <el-form-item label="模型">
         <el-select v-model="modelName" aria-label="模型" @change="changeModel">
+          <el-option
+            v-if="modelName && !selectedModel"
+            :value="modelName"
+            :label="`${modelName}（不可用）`"
+            disabled
+          />
           <el-option
             v-for="item in providerModels"
             :key="item.model_name"
@@ -38,10 +50,16 @@
         <el-select
           v-model="effort"
           aria-label="推理强度"
-          :disabled="!effortSupported"
+          :disabled="submitting || activeTask || (!effortSupported && !effort)"
           :placeholder="effortSupported ? '默认' : '当前模型不支持单独设置'"
         >
           <el-option value="" :label="effortSupported ? '默认' : '当前模型不支持单独设置'" />
+          <el-option
+            v-if="effort && !effortOptions.some(item => item.value === effort)"
+            :value="effort"
+            :label="`${effort}（不再支持）`"
+            disabled
+          />
           <el-option
             v-for="item in effortOptions"
             :key="item.value"
@@ -61,6 +79,7 @@
       </el-form-item>
     </el-form>
     <p v-if="selectionMessage" class="generation-message" role="status">{{ selectionMessage }}</p>
+    <p v-if="selectionError" class="generation-error" role="alert">{{ selectionError }}</p>
     <div v-if="loadFailed" role="alert">
       模型配置加载失败
       <el-button text :icon="RefreshRight" @click="loadModels">重试模型配置</el-button>
@@ -82,7 +101,9 @@
           v-if="!activeTask"
           type="primary"
           :icon="MagicStick"
-          :disabled="!selectedModel || loading || loadFailed || entry.status !== 'draft'"
+          :disabled="
+            !selectedModel || !!selectionError || loading || loadFailed || entry.status !== 'draft'
+          "
           :loading="submitting"
           @click="submit"
           >{{ task?.status === 'failed' || submitFailed ? '重新生成' : '生成草稿' }}</el-button
@@ -115,10 +136,14 @@ const emit = defineEmits<{
   task: [task: GenerationTask]
 }>()
 const models = ref<LLMConfig[]>([])
-const provider = ref('')
-const modelName = ref('')
-const effort = ref('')
-const references = ref<ResearchReference[]>(props.entry.references.map(item => ({ ...item })))
+const provider = ref(props.initialTask?.provider || '')
+const modelName = ref(props.initialTask?.model_name || '')
+const effort = ref(props.initialTask?.reasoning_effort || '')
+const references = ref<ResearchReference[]>(
+  (props.initialTask ? props.initialTask.references : props.entry.references).map(item => ({
+    ...item
+  }))
+)
 const loading = ref(false)
 const loadFailed = ref(false)
 const submitting = ref(false)
@@ -149,6 +174,13 @@ const effortOptions = computed(() =>
       ]
     : []
 )
+const selectionError = computed(() => {
+  if (loading.value || loadFailed.value) return ''
+  if (modelName.value && !selectedModel.value) return '所选模型已不可用，请重新选择模型'
+  if (effort.value && !effortOptions.value.some(item => item.value === effort.value))
+    return '所选推理强度已不受当前模型支持，请重新选择推理强度'
+  return ''
+})
 const statusLabels = {
   pending: '等待生成',
   running: '正在生成',
@@ -176,6 +208,7 @@ async function loadModels() {
     const configured = await configApi.getLLMConfigs()
     if (!mounted) return
     models.value = configured.filter(item => item.enabled)
+    if (props.initialTask) return
     let saved: { provider?: string; model_name?: string; reasoning_effort?: string } = {}
     try {
       saved = JSON.parse(localStorage.getItem(preferenceKey()) || '{}')
@@ -267,6 +300,9 @@ async function submit() {
   if (
     submitting.value ||
     activeTask.value ||
+    loading.value ||
+    loadFailed.value ||
+    !!selectionError.value ||
     !selectedModel.value ||
     props.entry.status !== 'draft'
   )
@@ -280,7 +316,7 @@ async function submit() {
     const selection = {
       provider: provider.value,
       model_name: modelName.value,
-      reasoning_effort: effortSupported.value ? effort.value || null : null
+      reasoning_effort: effort.value || null
     }
     try {
       localStorage.setItem(preferenceKey(), JSON.stringify(selection))

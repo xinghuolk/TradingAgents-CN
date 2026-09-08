@@ -111,12 +111,18 @@ workspace navigation guards, conversion, versions, and trash API calls:
 node frontend/scripts/check-research-editing.mjs
 node frontend/scripts/check-research-workspace.mjs
 node frontend/scripts/check-research-reviews.mjs
+node frontend/scripts/check-research-generation.mjs
 ```
 
 The review check exercises minimal decision confirmation and its thesis preview,
 manual review creation, explicit formal revisions, cancel/apply thesis changes,
 archived read-only boundaries, routed security identity, and draft context association
 updates using compiled Vue component scripts.
+
+The generation check restores pending/running/failed task inputs independently of
+entry references and local preferences, verifies exact failed-task retry payloads,
+and blocks unavailable models or unsupported remembered effort until explicit
+reselection. Fresh dialogs retain validated preferences and entry references.
 
 The actual deployed bundle uses Vite without the legacy type-check pre-step. With
 frontend dependencies already installed, run the same package script as Docker:
@@ -140,6 +146,19 @@ confirmation, review diff, and AI metadata screenshots, console/page errors, and
 horizontal overflow/control overlap checks at both sizes. No live database or
 provider is used in this matrix. On hosts with exhausted file watchers, launch Vite
 with `CHOKIDAR_USEPOLLING=1`.
+
+The focused generation reopen regression is checked in. With native Python
+Playwright and Chromium available, start Vite on port 5199 and run:
+
+```bash
+python frontend/scripts/check-research-generation-browser.py --base http://127.0.0.1:5199
+```
+
+Use `--chromium /path/to/chromium` to reuse an existing browser executable. The
+script intercepts all API calls and checks generation-only references, frozen
+pending/running controls, failed-task reopen and exact retry, unavailable models,
+and unsupported effort at both viewports. Screenshots and results are written to
+`/tmp/research-generation-reopen` by default.
 
 `npm --prefix frontend run lint` is non-mutating, and
 `npm --prefix frontend run type-check` only checks types. Both are useful diagnostics
