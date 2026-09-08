@@ -134,7 +134,7 @@ jobs:
           ## 📞 相关链接
           
           - [上游仓库](https://github.com/TauricResearch/TradingAgents)
-          - [同步策略文档](docs/maintenance/upstream-sync.md)
+          - [同步策略文档](docs/reference/operations/upstream-sync.md)
           - [同步脚本](scripts/sync_upstream.py)
           
           ---

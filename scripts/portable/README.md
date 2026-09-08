@@ -19,7 +19,7 @@ Copy-Item scripts/portable/stop_all.ps1 release/TradingAgentsCN-portable/stop_al
 Copy-Item scripts/portable/stop_all_services.bat release/TradingAgentsCN-portable/停止所有服务.bat
 
 # Copy documentation
-Copy-Item docs/deployment/stop-services-guide.md release/TradingAgentsCN-portable/停止服务说明.md
+Copy-Item docs/reference/operations/portable-stop-services.md release/TradingAgentsCN-portable/停止服务说明.md
 ```
 
 ## Usage in Portable Version
@@ -91,7 +91,7 @@ The script cleans up:
 
 ## Documentation
 
-See [docs/deployment/stop-services-guide.md](../../docs/deployment/stop-services-guide.md) for detailed usage guide.
+See [docs/reference/operations/portable-stop-services.md](../../docs/reference/operations/portable-stop-services.md) for detailed usage guide.
 
 ## Related Scripts
 
@@ -108,4 +108,3 @@ See [docs/deployment/stop-services-guide.md](../../docs/deployment/stop-services
 ---
 
 **Last Updated**: 2025-11-05
-

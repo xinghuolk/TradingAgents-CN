@@ -195,7 +195,7 @@ async def main():
     logger.info("   - examples/crawlers/social_media_crawler.py")
     logger.info("   - examples/crawlers/internal_message_crawler.py")
     logger.info("   - examples/crawlers/message_crawler_scheduler.py")
-    logger.info("   - docs/guides/message_data_system/README.md")
+    logger.info("   - docs/reference/api/message-data.md")
 
 
 if __name__ == "__main__":
