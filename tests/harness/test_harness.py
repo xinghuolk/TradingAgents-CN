@@ -3,6 +3,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import scripts.harness as harness
+
 from scripts.harness import (
     Check,
     run_checks,
@@ -12,6 +14,23 @@ from scripts.harness import (
 
 
 ROOT = Path(__file__).resolve().parents[2]
+
+
+def test_iter_current_documents_includes_current_tree(tmp_path: Path) -> None:
+    current = tmp_path / "docs" / "current"
+    current.mkdir(parents=True)
+    (current / "getting-started.md").write_text("# Start\n", encoding="utf-8")
+    (current / "nested").mkdir()
+    (current / "nested" / "reference.md").write_text("# Ref\n", encoding="utf-8")
+
+    relative = {
+        path.relative_to(tmp_path)
+        for path in harness.iter_current_documents(tmp_path)
+        if path.exists()
+    }
+
+    assert Path("docs/current/getting-started.md") in relative
+    assert Path("docs/current/nested/reference.md") in relative
 
 
 def _workflow_step_script(workflow: Path, step_name: str) -> str:

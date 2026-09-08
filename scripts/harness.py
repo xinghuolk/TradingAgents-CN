@@ -28,6 +28,7 @@ CANONICAL_DOCUMENTS = (
     Path("docs/testing.md"),
     Path("docs/technical-debt.md"),
 )
+ARCHIVE_POLICY = Path("docs/archive/README.md")
 MARKDOWN_LINK = re.compile(r"(?<!!)\[[^]]+\]\(([^)]+)\)")
 
 
@@ -64,11 +65,20 @@ def validate_local_links(document: Path, root: Path) -> list[str]:
     return errors
 
 
+def iter_current_documents(root: Path) -> tuple[Path, ...]:
+    documents = [root / path for path in CANONICAL_DOCUMENTS]
+    documents.append(root / ARCHIVE_POLICY)
+    current_root = root / "docs" / "current"
+    if current_root.is_dir():
+        documents.extend(sorted(current_root.rglob("*.md")))
+    return tuple(dict.fromkeys(documents))
+
+
 def validate_repository(root: Path) -> list[str]:
     """Validate the small repository knowledge map, not historical archives."""
     errors: list[str] = []
-    for relative_path in CANONICAL_DOCUMENTS:
-        document = root / relative_path
+    for document in iter_current_documents(root):
+        relative_path = document.relative_to(root)
         if not document.is_file():
             errors.append(f"{relative_path}: required repository document is missing")
             continue
