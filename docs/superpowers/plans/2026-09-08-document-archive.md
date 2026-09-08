@@ -569,31 +569,116 @@ succeeds, `git diff --check` is empty, and only this task's intended files are s
 Commit as `docs(archive): record the consolidated documentation inventory` with exact
 counts and complete harness results in the commit body.
 
-### Task 10: Independent review and final cleanup
+### Task 10: Lightweight final review fix wave
 
 **Files:**
-- Move after review: the current design and plan from `docs/superpowers/` into `docs/archive/engineering-plans/superpowers/`
-- Modify if review requires: only files implicated by valid Critical or Important findings
+- Move: `docs/archive/engineering-plans/superpowers/specs/2026-09-07-stock-research-review-workspace-discussion.md` back to `docs/superpowers/specs/`
+- Move after cleanup: `docs/superpowers/specs/2026-09-08-document-archive-design.md` to `docs/archive/engineering-plans/superpowers/specs/`
+- Move after cleanup: `docs/superpowers/plans/2026-09-08-document-archive.md` to `docs/archive/engineering-plans/superpowers/plans/`
+- Modify: `docs/reference/api/batch-analysis-limits.md`
+- Modify: `docs/reference/operations/upstream-sync.md`
+- Modify: `.github/workflows/upstream-sync-check.yml`
+- Modify: `docs/reference/deprecations.md`
+- Modify: `docs/current/usage.md` or `docs/current/troubleshooting.md`
+- Modify: `docs/archive/inventory.md`
+- Modify: `docs/technical-debt.md`
+- Delete: `.superpowers/sdd/2026-09-08-document-archive/task-3-report.md`
+- Delete: `.superpowers/sdd/2026-09-08-document-archive/task-4-report.md`
 
 **Interfaces:**
-- Consumes: the complete branch diff from `2cf34100` to the branch HEAD.
-- Produces: a reviewed branch with its own completed planning records archived.
+- Consumes: the completed whole-branch review for `2cf34100..d41fdc64`, current code
+  behavior, and the user's ruling that this is a personal-use cleanup.
+- Produces: a reviewed branch with confirmed factual defects fixed, no expanded
+  reference-document gate, and its completed planning records archived.
 
-- [ ] **Step 1: Review the full diff**
+- [ ] **Step 1: Restore the unfinished active discussion**
 
-Review for accidental loss of current instructions, unresolved active links, broken
-frontend Markdown imports, incorrect source-to-target moves, and unnecessary
-governance for a personal project. Critical and Important findings must be fixed;
-Minor findings are fixed only when they materially improve correctness or navigation.
+Move this file back because it explicitly says the work is still being discussed:
 
-- [ ] **Step 2: Archive this completed design and plan**
+```bash
+git mv docs/archive/engineering-plans/superpowers/specs/2026-09-07-stock-research-review-workspace-discussion.md docs/superpowers/specs/2026-09-07-stock-research-review-workspace-discussion.md
+```
 
-After all implementation tasks pass, move the two 2026-09-08 documents into their
-matching archive `specs/` and `plans/` directories. Update any current link that still
-points to their old locations.
+- [ ] **Step 2: Fix confirmed reference defects without expanding the harness**
 
-- [ ] **Step 3: Run final verification and commit**
+Apply the final-review fixes only to the implicated files:
 
-Run the full harness, `git diff --check`, and a clean-status check. Commit as
-`docs(archive): close documentation consolidation review`, recording review findings
-and verification results in the body.
+- In `docs/reference/api/batch-analysis-limits.md`, repair the two broken
+  troubleshooting links so they point at existing current troubleshooting guidance.
+- In `docs/reference/operations/upstream-sync.md`, replace `scripts/sync_upstream.py`
+  with `scripts/maintenance/sync_upstream.py`; remove commands for nonexistent
+  `examples/basic_example.py`; describe the existing branch, review, and harness
+  workflow instead of unsupported broad test commands.
+- In `.github/workflows/upstream-sync-check.yml`, align the workflow's documented
+  script path or comments with `scripts/maintenance/sync_upstream.py`.
+- In `docs/reference/deprecations.md`, replace the nonexistent
+  `ConfigService.get_llm_configs()` example with the actual
+  `ConfigService.update_llm_config(config: LLMConfig)` usage from
+  `app/services/config_service.py`.
+- In `docs/current/usage.md` or `docs/current/troubleshooting.md`, add the PDF export
+  prerequisite note: Pandoc plus a PDF engine are required outside Docker, while the
+  Docker image already supplies the expected export tools.
+
+Do not modify `scripts/harness.py` or `tests/harness/test_harness.py` in this task.
+Do not add all of `docs/reference/` to the blocking gate.
+
+- [ ] **Step 3: Remove tracked scratch reports**
+
+Remove the two tracked temporary implementation reports because the durable progress
+record is already in `.superpowers/sdd/2026-09-08-document-archive/progress.md` and
+Git history retains the old commits:
+
+```bash
+git rm .superpowers/sdd/2026-09-08-document-archive/task-3-report.md .superpowers/sdd/2026-09-08-document-archive/task-4-report.md
+```
+
+- [ ] **Step 4: Archive this completed design and plan**
+
+After the review fixes above are applied, move the two active 2026-09-08 documents
+into their matching archive directories:
+
+```bash
+git mv docs/superpowers/specs/2026-09-08-document-archive-design.md docs/archive/engineering-plans/superpowers/specs/2026-09-08-document-archive-design.md
+git mv docs/superpowers/plans/2026-09-08-document-archive.md docs/archive/engineering-plans/superpowers/plans/2026-09-08-document-archive.md
+```
+
+Update any current link that still points to their old paths.
+
+- [ ] **Step 5: Refresh measured inventory and debt evidence**
+
+Re-measure counts rather than calculating them by hand. Update
+`docs/archive/inventory.md` and `docs/technical-debt.md` with:
+
+- Markdown counts for `docs/current/`, `docs/reference/`, `docs/archive/`,
+  `docs/learning/` plus `docs/paper/`, and `docs/analysis/`.
+- The unresolved archive-link count.
+- The harness-controlled validation result of zero current/support-document errors.
+
+- [ ] **Step 6: Run final verification and commit**
+
+Run:
+
+```bash
+/home/like/mycode/finanice/TradingAgents-CN/.venv/bin/python scripts/harness.py
+git diff --check
+git status --short
+```
+
+Expected: repository structure succeeds, Python compilation succeeds, the pytest
+suite passes, the Vite production bundle succeeds, whitespace checks are clean, and
+only this task's intended files are changed.
+
+Commit:
+
+```bash
+git commit -m "docs(archive): close documentation consolidation review" -m "Implementation:
+- restore one still-active discussion from the archive
+- fix confirmed reference documentation defects from the final branch review
+- document PDF export prerequisites in current guidance
+- archive the completed documentation consolidation plan and refresh measured inventory
+
+Verification:
+- python scripts/harness.py
+- git diff --check
+- git status --short"
+```
