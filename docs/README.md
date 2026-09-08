@@ -19,7 +19,10 @@
 
 ## 稳定参考
 
-稳定参考文档会在迁移完成后列在这里；当前请以“使用与运维”和“开发与架构”中的文档为准。
+- [分析师数据配置](reference/agents/configuration.md)
+- [LLM 适配器模板](reference/llm/adapter_template.py)
+- [LLM 与财报提取器集成](reference/llm/financial-report-extractor.md)
+- [废弃通知](reference/deprecations.md)
 
 ## 历史资料
 

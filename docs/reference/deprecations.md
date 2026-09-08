@@ -91,10 +91,10 @@ rm config/usage.json
 | 类/方法 | 位置 | 替代方案 |
 |---------|------|----------|
 | `ConfigManager` | `tradingagents/config/config_manager.py` | `app.services.config_service.ConfigService` |
-| `ConfigManager.get_models()` | 同上 | `ConfigService.get_llm_configs()` |
-| `ConfigManager.get_settings()` | 同上 | `ConfigService.get_system_settings()` |
-| `ConfigManager.update_model()` | 同上 | `ConfigService.update_llm_config()` |
-| `ConfigManager.update_settings()` | 同上 | `ConfigService.update_system_settings()` |
+| `ConfigManager.load_models()` | 同上 | `ConfigService.get_llm_configs()` |
+| `ConfigManager.load_settings()` | 同上 | `ConfigService.get_system_settings()` |
+| `ConfigManager.save_models()` | 同上 | `ConfigService.update_llm_config()` |
+| `ConfigManager.save_settings()` | 同上 | `ConfigService.update_system_settings()` |
 
 #### 迁移示例
 
@@ -104,11 +104,11 @@ from tradingagents.config.config_manager import ConfigManager
 
 # 获取配置
 config_manager = ConfigManager()
-models = config_manager.get_models()
-settings = config_manager.get_settings()
+models = config_manager.load_models()
+settings = config_manager.load_settings()
 
 # 更新配置
-config_manager.update_model("dashscope", "qwen-turbo", {"enabled": True})
+config_manager.save_models(models)
 ```
 
 **新代码**:
@@ -203,7 +203,7 @@ await config_service.update_llm_config(
    
    python scripts/migrate_config_to_db.py
    
-   详细信息: docs/DEPRECATION_NOTICE.md
+   详细信息: docs/reference/deprecations.md
 ```
 
 ### Web 界面提示
@@ -257,4 +257,3 @@ await config_service.update_llm_config(
 **感谢您的理解和配合！** 🙏
 
 新的配置系统将为您带来更好的体验和更强大的功能。
-
