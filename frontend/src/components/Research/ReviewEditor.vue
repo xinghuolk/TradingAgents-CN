@@ -242,6 +242,10 @@ const canApplyToThesis = computed(
 )
 const securities = ref<ResearchWorkspaceSummary[]>([])
 const securitiesState = ref<'loading' | 'ready' | 'failed'>('loading')
+let settleSources!: () => void
+const sourcesSettled = new Promise<void>(resolve => {
+  settleSources = resolve
+})
 const associationsReady = computed(
   () =>
     form.scope === 'stock' ||
@@ -280,8 +284,21 @@ function input(): EntryPatchInput {
   }
 }
 const autosave = useResearchAutosave<EntryPatchInput>(async patch => {
-  if (record.value?.status === 'draft') await stockResearchApi.patchEntry(record.value.id, patch)
+  if (!contextActive || record.value?.status !== 'draft') return
+  const id = record.value.id
+  await stockResearchApi.patchEntry(id, patch)
+  if (contextActive && record.value?.id === id && patch.security_ids !== undefined)
+    record.value.security_ids = [...patch.security_ids]
 })
+async function syncDraftAssociations() {
+  if (!contextActive || record.value?.status !== 'draft') return false
+  if (!associationsReady.value) return true
+  const ids = form.scope === 'portfolio' ? [...contextSecurityIds.value] : [form.security_id]
+  const stored = record.value.security_ids || []
+  if (ids.length === stored.length && ids.every((id, index) => id === stored[index])) return true
+  autosave.schedule({ security_ids: ids })
+  return autosave.flush()
+}
 function changed() {
   if (readonly.value) return
   if (editingRevision.value) revisionDirty.value = true
@@ -350,25 +367,35 @@ async function loadDecisions() {
     decisionsFailed.value = true
   }
 }
-async function save() {
-  if (record.value?.status === 'archived') return false
+let pendingSave: Promise<boolean> | undefined
+function save(): Promise<boolean> {
+  if (pendingSave) return pendingSave
+  pendingSave = persistDraft().finally(() => {
+    pendingSave = undefined
+  })
+  return pendingSave
+}
+async function persistDraft() {
+  if (!contextActive || record.value?.status === 'archived') return false
   if (!record.value) {
     if (form.scope === 'stock' && !form.security_id) {
       ElMessage.warning('请选择证券')
       return false
     }
-    record.value = (
-      await stockResearchApi.createEntry({
-        entry_type: 'review',
-        scope: form.scope,
-        security_id: form.scope === 'stock' ? form.security_id : undefined,
-        ...input()
-      })
-    ).data
+    const response = await stockResearchApi.createEntry({
+      entry_type: 'review',
+      scope: form.scope,
+      security_id: form.scope === 'stock' ? form.security_id : undefined,
+      ...input()
+    })
+    if (!contextActive) return false
+    record.value = response.data
+    contextDirty.value = true
     dirtyNew.value = false
     emit('saved', record.value)
   }
-  return autosave.flush()
+  if (!(await autosave.flush()) || !contextActive) return false
+  return contextDirty.value ? syncDraftAssociations() : true
 }
 async function flush() {
   if (busy.value) return false
@@ -399,8 +426,12 @@ async function confirmReview() {
     return
   busy.value = true
   try {
+    if (!associationsReady.value && securitiesState.value === 'loading') await sourcesSettled
+    if (!contextActive) return
     if (!(await save()) || !record.value) return
+    if (!(await syncDraftAssociations()) || !contextActive) return
     record.value = (await stockResearchApi.confirmEntry(record.value.id)).data
+    if (!contextActive) return
     emit('saved', record.value)
     await loadVersions()
     ElMessage.success('复盘已确认')
@@ -508,6 +539,7 @@ async function applyDiff() {
 let contextActive = true
 onBeforeUnmount(() => {
   contextActive = false
+  settleSources()
 })
 onMounted(async () => {
   try {
@@ -520,6 +552,8 @@ onMounted(async () => {
     if (!contextActive) return
     securitiesState.value = 'failed'
     ElMessage.warning('证券范围加载失败')
+  } finally {
+    settleSources()
   }
   await loadDecisions()
 })

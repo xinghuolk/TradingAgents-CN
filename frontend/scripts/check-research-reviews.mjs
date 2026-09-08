@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { runInNewContext } from 'node:vm'
+import { setImmediate } from 'node:timers'
 import { parse, compileScript, compileTemplate } from '@vue/compiler-sfc'
 import ts from 'typescript'
 import * as vue from 'vue'
@@ -137,6 +138,9 @@ function setup(name, props = {}, overrides = {}) {
     async listEntries() {
       return { data: { items: [], total: 0 } }
     },
+    async listWorkspaces() {
+      return { data: { items: [] } }
+    },
     async listRevisions() {
       calls.push(['revisions'])
       return { data: [{ revision: 1 }] }
@@ -173,13 +177,224 @@ function setup(name, props = {}, overrides = {}) {
     if (dep.startsWith('@/components/') || dep.startsWith('./')) return {}
     return require(dep)
   })
+  const app = module.default.setup(props, { expose() {}, emit: (...args) => events.push(args) })
+  const mounting = Promise.all(mounted.map(callback => callback()))
   return {
-    app: module.default.setup(props, { expose() {}, emit: (...args) => events.push(args) }),
+    app,
     calls,
     events,
-    mount: () => Promise.all(mounted.map(callback => callback())),
+    mount: () => mounting,
     unmount: () => unmounted.forEach(callback => callback())
   }
+}
+{
+  let resolveCreate
+  let createCount = 0
+  const { app } = setup(
+    'ReviewEditor',
+    {},
+    {
+      createEntry: () => {
+        createCount += 1
+        return new Promise(resolve => {
+          resolveCreate = resolve
+        })
+      }
+    }
+  )
+  app.form.title = 'Unsaved draft'
+  app.changed()
+  const firstFlush = app.flush()
+  const secondFlush = app.flush()
+  assert.equal(createCount, 1, 'concurrent navigation flushes must share one draft creation')
+  resolveCreate({ data: { id: 'shared-create', status: 'draft', security_ids: [] } })
+  assert.deepEqual(await Promise.all([firstFlush, secondFlush]), [true, true])
+}
+{
+  let resolveSources
+  let resolveCreate
+  let createPayload
+  let createCount = 0
+  const { app, calls, mount } = setup(
+    'ReviewEditor',
+    {},
+    {
+      listWorkspaces: () =>
+        new Promise(resolve => {
+          resolveSources = resolve
+        }),
+      createEntry: payload => {
+        createCount += 1
+        createPayload = payload
+        return new Promise(resolve => {
+          resolveCreate = resolve
+        })
+      }
+    }
+  )
+  const saving = app.saveDraft()
+  await app.saveDraft()
+  assert.equal(createCount, 1, 'repeated save commands cannot create duplicate drafts')
+  resolveSources({
+    data: { items: [{ security_id: 'A:600519', has_real_holding: true, has_paper_holding: false }] }
+  })
+  await mount()
+  resolveCreate({
+    data: { ...createPayload, id: 'created-during-load', status: 'draft', security_ids: [] }
+  })
+  await saving
+  assert.equal(
+    calls.filter(call => call[0] === 'patch').length,
+    1,
+    'creation finishing after sources resolve must repair captured associations exactly once'
+  )
+  assert.deepEqual(Array.from(calls[0][2].security_ids), ['A:600519'])
+  await app.confirmReview()
+  assert.equal(
+    calls.filter(call => call[0] === 'patch').length,
+    1,
+    'confirmation must not duplicate an already persisted association patch'
+  )
+  assert.equal(calls.filter(call => call[0] === 'confirm').length, 1)
+}
+{
+  let resolveSources
+  const { app, calls } = setup(
+    'ReviewEditor',
+    {
+      entry: {
+        id: 'confirm-pending',
+        status: 'draft',
+        scope: 'portfolio',
+        security_ids: ['A:600519'],
+        references: [],
+        scope_metadata: { include_real_holdings: false, include_paper_holdings: true }
+      }
+    },
+    {
+      listWorkspaces: () =>
+        new Promise(resolve => {
+          resolveSources = resolve
+        })
+    }
+  )
+  const confirming = app.confirmReview()
+  await app.confirmReview()
+  await new Promise(resolve => setImmediate(resolve))
+  assert.equal(
+    calls.filter(call => call[0] === 'confirm').length,
+    0,
+    'confirmation must wait for selected holdings to finish loading'
+  )
+  resolveSources({
+    data: { items: [{ security_id: 'HK:00700', has_real_holding: false, has_paper_holding: true }] }
+  })
+  await confirming
+  assert.equal(calls[0][0], 'patch', 'resolved association IDs must be written before confirm')
+  assert.deepEqual(Array.from(calls[0][2].security_ids), ['HK:00700'])
+  assert.equal(calls[1][0], 'confirm', 'persist the exact associations before formal confirmation')
+  assert.equal(calls.filter(call => call[0] === 'confirm').length, 1)
+}
+{
+  let rejectSources
+  const { app, calls } = setup(
+    'ReviewEditor',
+    {
+      entry: {
+        id: 'confirm-unavailable',
+        status: 'draft',
+        scope: 'portfolio',
+        security_ids: ['A:600519'],
+        references: [],
+        scope_metadata: { include_real_holdings: true }
+      }
+    },
+    {
+      listWorkspaces: () =>
+        new Promise((resolve, reject) => {
+          rejectSources = reject
+        })
+    }
+  )
+  const confirming = app.confirmReview()
+  rejectSources(new Error('unavailable'))
+  await confirming
+  assert.equal(app.securitiesState.value, 'failed')
+  assert.equal(
+    calls.filter(call => call[0] === 'patch').length,
+    0,
+    'failed sources must preserve the existing IDs during confirmation'
+  )
+  assert.equal(
+    calls.filter(call => call[0] === 'confirm').length,
+    1,
+    'unavailable optional sources do not block confirmation'
+  )
+}
+{
+  let resolveSources
+  let resolveCreate
+  const { app, calls, events, mount, unmount } = setup(
+    'ReviewEditor',
+    {},
+    {
+      listWorkspaces: () =>
+        new Promise(resolve => {
+          resolveSources = resolve
+        }),
+      createEntry: () =>
+        new Promise(resolve => {
+          resolveCreate = resolve
+        })
+    }
+  )
+  const saving = app.saveDraft()
+  unmount()
+  resolveSources({ data: { items: [{ security_id: 'A:600519', has_real_holding: true }] } })
+  resolveCreate({ data: { id: 'created-after-leaving', status: 'draft', security_ids: [] } })
+  await Promise.all([saving, mount()])
+  assert.equal(
+    calls.length,
+    0,
+    'creation completion after unmount cannot send follow-up patches or confirmations'
+  )
+  assert.equal(
+    events.length,
+    0,
+    'creation completion after unmount cannot retarget the parent editor'
+  )
+}
+{
+  let resolveSources
+  const { app, calls, mount, unmount } = setup(
+    'ReviewEditor',
+    {
+      entry: {
+        id: 'leave-while-confirming',
+        status: 'draft',
+        scope: 'portfolio',
+        security_ids: ['A:600519'],
+        references: [],
+        scope_metadata: { include_real_holdings: true }
+      }
+    },
+    {
+      listWorkspaces: () =>
+        new Promise(resolve => {
+          resolveSources = resolve
+        })
+    }
+  )
+  const confirming = app.confirmReview()
+  unmount()
+  await confirming
+  resolveSources({ data: { items: [] } })
+  await mount()
+  assert.equal(
+    calls.length,
+    0,
+    'unmount cancels a confirmation waiting on sources without further writes'
+  )
 }
 {
   let resolveSources
