@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+from copy import deepcopy
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from pathlib import Path
@@ -27,6 +28,9 @@ from app.services.stock_research.models import (
     Workspace,
     WorkspaceQuery,
 )
+from app.services.stock_research.service import StockResearchService
+from app.services.stock_research.storage import StockResearchRepository
+from tests.unit.stock_research.fakes import FakeDatabase
 
 
 NOW = datetime(2026, 9, 8, 9, 30, tzinfo=UTC)
@@ -146,11 +150,13 @@ def revision(*, reason: str = "manual", number: int = 1) -> Revision:
     )
 
 
-def create_test_app(service: ServiceSpy, *, authenticated: bool = True) -> FastAPI:
+def create_test_app(
+    service: ServiceSpy | StockResearchService, *, authenticated: bool = True
+) -> FastAPI:
     application = FastAPI()
     application.include_router(stock_research.router, prefix="/api")
 
-    async def service_dependency() -> ServiceSpy:
+    async def service_dependency() -> ServiceSpy | StockResearchService:
         return service
 
     application.dependency_overrides[
@@ -201,6 +207,28 @@ async def test_invalid_entry_is_sanitized() -> None:
         }
     }
     assert "secret" not in response.text
+
+
+async def test_invalid_entry_security_keeps_structured_domain_error() -> None:
+    service = StockResearchService(StockResearchRepository(FakeDatabase()))
+    async with create_test_client(create_test_app(service)) as client:
+        response = await client.post(
+            "/api/research/entries",
+            json={
+                "entry_type": "note",
+                "security_id": "not-a-security-id",
+                "title": "Invalid security",
+                "body": "Body",
+            },
+        )
+
+    assert response.status_code == 422
+    assert response.json() == {
+        "detail": {
+            "code": "INVALID_SECURITY",
+            "message": "market and code are invalid",
+        }
+    }
 
 
 async def test_request_body_cannot_override_authenticated_user() -> None:
@@ -483,6 +511,74 @@ async def test_entry_list_and_mutations_translate_the_complete_contract() -> Non
     ]
 
 
+async def test_created_stock_entry_is_returned_by_its_primary_security_filter() -> None:
+    service = StockResearchService(
+        StockResearchRepository(FakeDatabase()),
+        clock=lambda: NOW,
+        id_factory=lambda: "entry-primary",
+    )
+    async with create_test_client(create_test_app(service)) as client:
+        created = await client.post(
+            "/api/research/entries",
+            json={
+                "entry_type": "note",
+                "security_id": "CN:600519",
+                "title": "Primary security",
+                "body": "Created without an explicit security_ids list.",
+            },
+        )
+        listed = await client.get(
+            "/api/research/entries", params={"security_id": "A:600519"}
+        )
+
+    assert created.status_code == listed.status_code == 200
+    assert listed.json()["data"]["total"] == 1
+    assert [item["id"] for item in listed.json()["data"]["items"]] == [
+        "entry-primary"
+    ]
+    assert created.json()["data"]["security_id"] == "A:600519"
+    assert created.json()["data"]["security_ids"] == ["A:600519"]
+
+
+async def test_created_portfolio_review_preserves_canonical_unique_securities() -> None:
+    service = StockResearchService(
+        StockResearchRepository(FakeDatabase()),
+        clock=lambda: NOW,
+        id_factory=lambda: "entry-portfolio",
+    )
+    async with create_test_client(create_test_app(service)) as client:
+        created = await client.post(
+            "/api/research/entries",
+            json={
+                "entry_type": "review",
+                "scope": "portfolio",
+                "security_id": "CN:600519",
+                "security_ids": [
+                    "A:600519",
+                    "us:aapl",
+                    "US:AAPL",
+                    "HK:0700",
+                ],
+                "body": "Portfolio review",
+                "review_kind": "routine",
+            },
+        )
+        listed = await client.get(
+            "/api/research/entries", params={"security_id": "us:aapl"}
+        )
+
+    assert created.status_code == listed.status_code == 200
+    assert created.json()["data"]["security_id"] == "A:600519"
+    assert created.json()["data"]["security_ids"] == [
+        "A:600519",
+        "US:AAPL",
+        "HK:0700",
+    ]
+    assert [item["id"] for item in listed.json()["data"]["items"]] == [
+        "entry-portfolio"
+    ]
+
+
 async def test_revision_and_trash_routes_translate_and_serialize() -> None:
     service_spy = ServiceSpy()
     async with create_test_client(create_test_app(service_spy)) as client:
@@ -556,6 +652,59 @@ async def test_revision_and_trash_routes_translate_and_serialize() -> None:
             {"user_id": "authenticated-user", "entry_id": "entry-1"},
         ),
     ]
+
+
+async def test_revision_routes_recursively_sanitize_snapshots_without_mutation() -> None:
+    stored_snapshot = {
+        "user_id": "revision-owner",
+        "market": "A",
+        "thesis_snapshot": {
+            "user_id": "workspace-owner",
+            "market": "A",
+            "evidence": [
+                {
+                    "user_id": "source-owner",
+                    "market": "A",
+                    "signal": "A",
+                }
+            ],
+        },
+    }
+    expected_stored_snapshot = deepcopy(stored_snapshot)
+    stored_revision = Revision(
+        id="nested-revision",
+        user_id="private-user",
+        target_type="entry",
+        target_id="entry-1",
+        revision=1,
+        snapshot=stored_snapshot,
+        reason="decision_confirmed",
+        created_at=NOW,
+    )
+    service_spy = ServiceSpy()
+    service_spy.results["list_revisions"] = [stored_revision]
+    service_spy.results["get_revision"] = stored_revision
+
+    async with create_test_client(create_test_app(service_spy)) as client:
+        listed = await client.get(
+            "/api/research/revisions",
+            params={"target_type": "entry", "target_id": "entry-1"},
+        )
+        fetched = await client.get("/api/research/revisions/nested-revision")
+
+    assert listed.status_code == fetched.status_code == 200
+    for public_revision in (listed.json()["data"][0], fetched.json()["data"]):
+        assert "user_id" not in public_revision
+        assert "user_id" not in public_revision["snapshot"]
+        assert public_revision["snapshot"]["market"] == "CN"
+        thesis_snapshot = public_revision["snapshot"]["thesis_snapshot"]
+        assert "user_id" not in thesis_snapshot
+        assert thesis_snapshot["market"] == "CN"
+        assert "user_id" not in thesis_snapshot["evidence"][0]
+        assert thesis_snapshot["evidence"][0]["market"] == "CN"
+        assert thesis_snapshot["evidence"][0]["signal"] == "A"
+
+    assert stored_revision.snapshot == expected_stored_snapshot
 
 
 @pytest.mark.parametrize(

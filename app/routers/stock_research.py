@@ -22,6 +22,7 @@ from app.services.stock_research.models import (
     NewEntry,
     Reference,
     ResearchPage,
+    ResearchSecurityId,
     Revision,
     ThesisPatch,
     Workspace,
@@ -130,11 +131,31 @@ class CreateEntryRequest(StrictRequest):
     scope_metadata: dict[str, object] = Field(default_factory=dict)
 
     def to_domain(self) -> NewEntry:
+        canonical_security_id = (
+            str(ResearchSecurityId.from_string(self.security_id))
+            if self.security_id is not None
+            else None
+        )
+        canonical_security_ids = tuple(
+            dict.fromkeys(
+                (
+                    *(
+                        (canonical_security_id,)
+                        if canonical_security_id is not None
+                        else ()
+                    ),
+                    *(
+                        str(ResearchSecurityId.from_string(security_id))
+                        for security_id in self.security_ids
+                    ),
+                )
+            )
+        )
         return NewEntry(
             entry_type=self.entry_type,
             scope=self.scope,
-            security_id=self.security_id,
-            security_ids=tuple(self.security_ids),
+            security_id=canonical_security_id,
+            security_ids=canonical_security_ids,
             title=self.title,
             body=self.body,
             tags=tuple(self.tags),
@@ -251,17 +272,27 @@ async def _call_service(operation: Awaitable[_T]) -> _T:
 
 
 def _public_document(item: Workspace | Entry | Revision) -> dict[str, object]:
+    def sanitize(value: object) -> object:
+        if isinstance(value, dict):
+            return {
+                key: (
+                    "CN"
+                    if key == "market" and nested == "A"
+                    else sanitize(nested)
+                )
+                for key, nested in value.items()
+                if key != "user_id"
+            }
+        if isinstance(value, list):
+            return [sanitize(nested) for nested in value]
+        return value
+
     document = item.to_document()
-    document.pop("user_id", None)
-    if isinstance(item, Workspace) and document["market"] == "A":
-        document["market"] = "CN"
-    for field_name in ("thesis_snapshot", "snapshot"):
-        nested = document.get(field_name)
-        if isinstance(nested, dict):
-            nested.pop("user_id", None)
-            if nested.get("market") == "A":
-                nested["market"] = "CN"
-    return document
+    return {
+        key: "CN" if key == "market" and value == "A" else sanitize(value)
+        for key, value in document.items()
+        if key != "user_id"
+    }
 
 
 def _page(page: ResearchPage[Workspace] | ResearchPage[Entry]) -> dict[str, object]:
@@ -409,9 +440,13 @@ async def create_entry(
     current_user: dict = Depends(get_current_user),  # noqa: B008
     service: StockResearchService = Depends(get_stock_research_service),  # noqa: B008
 ):
+    try:
+        request = payload.to_domain()
+    except ResearchError as error:
+        raise _research_error(error) from None
     result = await _call_service(
         service.create_entry(
-            user_id=_user_id(current_user), request=payload.to_domain()
+            user_id=_user_id(current_user), request=request
         )
     )
     return ok(_public_document(result))
