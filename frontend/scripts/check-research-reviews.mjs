@@ -675,6 +675,32 @@ function setup(name, props = {}, overrides = {}) {
   assert.equal(creation.references[1].kind, 'paper_trade')
 }
 {
+  const paperDecision = {
+    id: 'paper-default-decision',
+    security_id: 'A:600519',
+    title: 'Paper default',
+    references: [{ kind: 'paper_trade', source_id: 'paper-trade-2', account_type: 'paper' }]
+  }
+  const { app, calls } = setup('ReviewEditor', { reviewKind: 'decision' })
+  assert.equal(app.contextValue('include_real_holdings'), true)
+  assert.equal(app.contextValue('include_paper_holdings'), false)
+  app.decisions.value = [paperDecision]
+  app.form.decision_id = paperDecision.id
+  app.selectDecision()
+  assert.equal(app.contextValue('include_real_holdings'), true)
+  assert.equal(app.contextValue('include_paper_holdings'), true)
+  await app.saveDraft()
+  const creation = calls.find(call => call[0] === 'create')[1]
+  assert.equal(Object.hasOwn(creation.scope_metadata, 'include_real_holdings'), false)
+  assert.equal(Object.hasOwn(creation.scope_metadata, 'include_paper_holdings'), false)
+  app.setContextValue('include_real_holdings', false)
+  assert.equal(app.contextValue('include_real_holdings'), false)
+  await app.saveDraft()
+  const override = calls.find(call => call[0] === 'patch')[2]
+  assert.equal(override.scope_metadata.include_real_holdings, false)
+  assert.equal(Object.hasOwn(override.scope_metadata, 'include_paper_holdings'), false)
+}
+{
   const entry = {
     id: 'review-1',
     status: 'confirmed',

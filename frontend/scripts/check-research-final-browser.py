@@ -180,22 +180,39 @@ def run(args, viewport):
                 stored = call(service.get_entry("u1", note["id"]))
                 assert stored.body == kind + " v1"
 
-            decision = call(service.create_entry("u1", NewEntry.decision("A:600519", "buy", date(2026, 9, 8), body="Immutable decision")))
-            confirmed = call(service.confirm_entry("u1", decision.id))
+            decision = call(service.create_entry("u1", NewEntry(
+                entry_type="decision", scope="stock", security_id="A:600519",
+                security_ids=("A:600519",), title="Linked draft decision",
+                body="Immutable decision", decision_action="buy", decision_date=date(2026, 9, 8),
+                references=(Reference.real_trade("real-u1", "Existing real"), Reference.paper_trade("paper-one", "Existing paper")),
+            )))
             page.reload()
             page.wait_for_load_state("networkidle")
             page.get_by_role("navigation", name="研究章节").get_by_role("button", name="决策", exact=True).click()
-            page.locator(".entry-row").filter(has_text="Immutable decision").click()
+            page.locator(".entry-row").filter(has_text="Linked draft decision").click()
+            button("确认决策").click()
+            dialog("确认决策").get_by_role("button", name="确认并记录", exact=True).click()
             expect(page.locator(".decision-editor .markdown-editor textarea")).to_have_count(0)
-            choose(page.locator(".trade-links .el-select"), "真实账户 · Real buy")
-            choose(page.locator(".trade-links .el-select"), "模拟账户 · Paper buy")
+            expect(page.locator(".linked-trade")).to_have_count(2)
             button("保存成交关联").click()
             expect(page.locator(".linked-trade")).to_have_count(2)
             shot("confirmed-decision-links")
-            page.locator(".linked-trade").filter(has_text="模拟账户").get_by_role("button", name="取消关联", exact=True).click()
-            expect(page.locator(".linked-trade")).to_have_count(1)
             stored = call(service.get_entry("u1", decision.id))
-            assert stored.body == confirmed.body and stored.thesis_snapshot == confirmed.thesis_snapshot
+            assert {item.kind for item in stored.references if item.account_type in {"real", "paper"}} == {"real_trade", "paper_trade"}
+
+            button("新建").click()
+            page.get_by_role("menuitem", name="决策复盘", exact=True).click()
+            current = page.locator(".review-editor")
+            expect(current.get_by_role("checkbox", name="真实持仓", exact=True)).to_be_checked()
+            expect(current.get_by_role("checkbox", name="模拟持仓", exact=True)).not_to_be_checked()
+            choose(current.locator(".el-form-item").filter(has_text="历史决策").locator(".el-select"), "2026-09-08 · Linked draft decision")
+            expect(current.get_by_role("checkbox", name="模拟持仓", exact=True)).to_be_checked()
+            title_input(current).fill("Decision review defaults")
+            current.get_by_role("button", name="保存草稿", exact=True).click()
+            stored_review = next(item for item in repo.db["stock_research_entries"].documents if item["title"] == "Decision review defaults")
+            assert "include_real_holdings" not in stored_review["scope_metadata"]
+            assert "include_paper_holdings" not in stored_review["scope_metadata"]
+            shot("decision-review-defaults")
 
             button("新建").click()
             page.get_by_role("menuitem", name="例行复盘", exact=True).click()
@@ -212,7 +229,7 @@ def run(args, viewport):
 
             assert not errors, errors
             assert not console_errors, console_errors
-            result = dict(viewport=viewport, page_errors=errors, console_errors=console_errors, api_requests=len(requests), scenarios=["manual note/research version restore", "confirmed trade links", "first-time holding associations", "global market-only archive/trash/restore/delete", "adjustable review AI context"])
+            result = dict(viewport=viewport, page_errors=errors, console_errors=console_errors, api_requests=len(requests), scenarios=["manual note/research version restore", "confirmed decision links", "decision-review effective defaults", "first-time holding associations", "global market-only archive/trash/restore/delete", "adjustable review AI context"])
             (args.output / f"result-{suffix}.json").write_text(json.dumps(result, ensure_ascii=False, indent=2))
             print("PASS", json.dumps(result, ensure_ascii=False), flush=True)
             browser.close()
@@ -224,7 +241,11 @@ if __name__ == "__main__":
     parser.add_argument("--base", default="http://127.0.0.1:5199")
     parser.add_argument("--chromium", default="/home/like/.cache/ms-playwright/chromium-1228/chrome-linux64/chrome")
     parser.add_argument("--output", type=Path, default=Path("/tmp/research-final-wave"))
+    parser.add_argument("--viewport", choices=("desktop", "mobile"))
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
-    for viewport in [dict(width=1440, height=900), dict(width=390, height=844)]:
+    viewports = [dict(width=1440, height=900), dict(width=390, height=844)]
+    if args.viewport:
+        viewports = [viewport for viewport in viewports if (viewport["width"] == 1440) == (args.viewport == "desktop")]
+    for viewport in viewports:
         run(args, viewport)

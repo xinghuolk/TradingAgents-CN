@@ -42,9 +42,9 @@
           <el-checkbox
             v-for="option in contextOptions"
             :key="option.key"
-            v-model="form.scope_metadata[option.key]"
+            :model-value="contextValue(option.key)"
             :disabled="!!record && record.status !== 'draft'"
-            @change="contextChanged"
+            @update:model-value="setContextValue(option.key, $event)"
             >{{ option.label }}</el-checkbox
           >
         </div>
@@ -288,13 +288,26 @@ const associationsReady = computed(
 const decisions = ref<ResearchEntry[]>([])
 const decisionsFailed = ref(false)
 const selectedDecision = computed(() => decisions.value.find(item => item.id === form.decision_id))
+function contextValue(key: string): boolean {
+  const override = form.scope_metadata[key]
+  if (typeof override === 'boolean') return override
+  if (form.review_kind !== 'decision') return false
+  if (key === 'include_real_holdings') return true
+  if (key === 'include_paper_holdings')
+    return !!selectedDecision.value?.references.some(item => item.account_type === 'paper')
+  return false
+}
+function setContextValue(key: string, value: boolean) {
+  form.scope_metadata[key] = value
+  contextChanged()
+}
 const contextSecurityIds = computed(() =>
   form.scope === 'portfolio'
     ? securities.value
         .filter(
           item =>
-            (form.scope_metadata.include_real_holdings && item.has_real_holding) ||
-            (form.scope_metadata.include_paper_holdings && item.has_paper_holding)
+            (contextValue('include_real_holdings') && item.has_real_holding) ||
+            (contextValue('include_paper_holdings') && item.has_paper_holding)
         )
         .map(item => item.security_id)
     : []
