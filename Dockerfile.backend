@@ -68,18 +68,17 @@ COPY pyproject.toml README.md ./
 # 2. 优先使用预编译的二进制wheel包（--prefer-binary）
 # 3. 避免从源码编译，大幅提升ARM架构构建速度
 # 4. 调试构建默认跳过 GitHub pin 的 financial-report-llm-extractor，避免远端 tarball 卡住
-# 5. 跳过 extractor 时，从 pyproject 生成临时 requirements，并排除该依赖，避免 pip install . 再解析安装它
+# 5. 从 pyproject 生成共享 requirements 并排除 extractor，避免 pip install . 重复解析显式安装或挂载的源码
 # 6. 安装 PDF 导出工具: pdfkit
 RUN pip install --upgrade pip -i "${PYPI_INDEX_URL}" && \
+    python -c "import tomllib; from pathlib import Path; data=tomllib.loads(Path('pyproject.toml').read_text(encoding='utf-8')); deps=[d for d in data['project']['dependencies'] if not d.strip().lower().startswith('financial-report-llm-extractor')]; Path('/tmp/tradingagents-requirements.txt').write_text('\n'.join(deps) + '\n', encoding='utf-8')" && \
     if [ "${INSTALL_FINANCIAL_REPORT_EXTRACTOR}" = "true" ]; then \
-        pip install --prefer-binary "${GITHUB_PROXY}https://github.com/xinghuolk/financial-report-llm-extractor/archive/${FINANCIAL_REPORT_EXTRACTOR_REV}.tar.gz" -i "${PYPI_INDEX_URL}" && \
-        pip install --prefer-binary . -i "${PYPI_INDEX_URL}"; \
+        pip install --prefer-binary "${GITHUB_PROXY}https://github.com/xinghuolk/financial-report-llm-extractor/archive/${FINANCIAL_REPORT_EXTRACTOR_REV}.tar.gz" -i "${PYPI_INDEX_URL}"; \
     else \
-        echo "Skipping financial-report-llm-extractor GitHub install; using mounted checkout via PYTHONPATH at runtime" && \
-        python -c "import tomllib; from pathlib import Path; data=tomllib.loads(Path('pyproject.toml').read_text(encoding='utf-8')); deps=[d for d in data['project']['dependencies'] if not d.strip().lower().startswith('financial-report-llm-extractor')]; Path('/tmp/tradingagents-requirements.txt').write_text('\n'.join(deps) + '\n', encoding='utf-8')" && \
-        pip install --prefer-binary -r /tmp/tradingagents-requirements.txt -i "${PYPI_INDEX_URL}" && \
-        pip install --no-deps . -i "${PYPI_INDEX_URL}"; \
+        echo "Skipping financial-report-llm-extractor GitHub install; using mounted checkout via PYTHONPATH at runtime"; \
     fi && \
+    pip install --prefer-binary -r /tmp/tradingagents-requirements.txt -i "${PYPI_INDEX_URL}" && \
+    pip install --no-deps . -i "${PYPI_INDEX_URL}" && \
     pip install --prefer-binary pdfkit -i "${PYPI_INDEX_URL}"
 
 # 复制后端代码和必需模块

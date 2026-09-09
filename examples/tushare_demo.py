@@ -283,7 +283,7 @@ def main():
     
     logger.info(f"\n🎉 Tushare演示完成！")
     logger.info(f"\n📚 更多信息:")
-    logger.info(f"   - 文档: docs/data/tushare-integration.md")
+    logger.info(f"   - 文档: docs/current/configuration.md")
     logger.info(f"   - 测试: tests/test_tushare_integration.py")
     logger.info(f"   - 配置: config/tushare_config.example.env")
     

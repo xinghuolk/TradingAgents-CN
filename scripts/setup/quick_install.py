@@ -251,11 +251,11 @@ def main():
     # 安装结果
     if success:
         print_colored("\n🎉 安装完成!", Colors.GREEN)
-        print_colored("📖 详细文档: docs/INSTALLATION_GUIDE.md", Colors.BLUE)
+        print_colored("📖 详细文档: docs/current/getting-started.md", Colors.BLUE)
         print_colored("❓ 遇到问题: https://github.com/hsliuping/TradingAgents-CN/issues", Colors.BLUE)
     else:
         print_colored("\n❌ 安装失败", Colors.RED)
-        print_colored("📖 请查看详细安装指南: docs/INSTALLATION_GUIDE.md", Colors.YELLOW)
+        print_colored("📖 请查看详细安装指南: docs/current/getting-started.md", Colors.YELLOW)
 
 if __name__ == "__main__":
     main()

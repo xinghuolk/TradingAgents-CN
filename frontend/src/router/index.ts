@@ -115,6 +115,30 @@ const routes: RouteRecordRaw[] = [
     ]
   },
   {
+    path: '/research',
+    component: () => import('@/layouts/BasicLayout.vue'),
+    meta: {
+      title: '研究与复盘',
+      icon: 'Notebook',
+      requiresAuth: true,
+      transition: 'slide-up'
+    },
+    children: [
+      {
+        path: '',
+        name: 'ResearchDirectory',
+        component: () => import('@/views/Research/index.vue'),
+        meta: { title: '研究与复盘', requiresAuth: true }
+      },
+      {
+        path: ':code',
+        name: 'ResearchWorkspace',
+        component: () => import('@/views/Research/Workspace.vue'),
+        meta: { title: '个股研究', requiresAuth: true, hideInMenu: true }
+      }
+    ]
+  },
+  {
     path: '/learning',
     name: 'Learning',
     component: () => import('@/layouts/BasicLayout.vue'),

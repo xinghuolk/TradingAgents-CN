@@ -1,8 +1,8 @@
 # TradingAgents 中文增强版
 
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
-[![Python](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://www.python.org/)
-[![Version](https://img.shields.io/badge/Version-cn--0.1.15-green.svg)](./VERSION)
+[![Python](https://img.shields.io/badge/Python-3.11-blue.svg)](https://www.python.org/)
+[![Version](https://img.shields.io/badge/Version-1.0.0--preview-green.svg)](./pyproject.toml)
 [![Documentation](https://img.shields.io/badge/docs-中文文档-green.svg)](./docs/)
 [![Original](https://img.shields.io/badge/基于-TauricResearch/TradingAgents-orange.svg)](https://github.com/TauricResearch/TradingAgents)
 
@@ -80,6 +80,9 @@
 | 🐳 **Docker版** | 生产环境、跨平台 | ⭐⭐ 中等 | [Docker 部署指南](https://mp.weixin.qq.com/s/JkA0cOu8xJnoY_3LC5oXNw) |
 | 💻 **本地代码版** | 开发者、定制需求 | ⭐⭐⭐ 较难 | [本地安装指南](https://mp.weixin.qq.com/s/cqUGf-sAzcBV19gdI4sYfA) |
 
+当前代码版本请使用[快速开始](docs/current/getting-started.md)、[配置](docs/current/configuration.md)
+和[部署](docs/current/deployment.md)。
+
 ⚠️ **重要提醒**：在分析股票之前，请按相关文档要求，将股票数据同步完成，否则分析结果将会出现数据错误。
 
 
@@ -87,6 +90,12 @@
 #### 📚 使用指南
 
 在使用前，建议先阅读详细的使用指南：
+
+- [当前快速开始](docs/current/getting-started.md)
+- [当前配置](docs/current/configuration.md)
+- [当前部署](docs/current/deployment.md)
+- [当前文档目录](docs/README.md)
+
 - **[0、📘 TradingAgents-CN v1.0.0-preview 快速入门视频](https://www.bilibili.com/video/BV1i2CeBwEP7/?vd_source=5d790a5b8d2f46d2c10fd4e770be1594)**
 
 - **[1、📘 TradingAgents-CN v1.0.0-preview 使用指南](https://mp.weixin.qq.com/s/ppsYiBncynxlsfKFG8uEbw)**
@@ -169,9 +178,11 @@ TradingAgentsCN 已经获得 **13,000+ stars**，但一直由我一个人开发�
 - 📊 **多市场用户** - 测试 A 股、港股、美股数据源
 - 🤖 **多 LLM 用户** - 测试不同 LLM 提供商（OpenAI/Gemini/DeepSeek/通义千问等）
 
-**详细信息**: 查看完整招募公告 → [📢 测试志愿者招募](docs/community/CALL_FOR_TESTERS.md)
+贡献和测试协调通过 GitHub issues 和 discussions 进行。
 
 ## 🤝 贡献指南
+
+项目当前的环境、开发和验证命令见 [开发指南](docs/development.md)。
 
 我们欢迎各种形式的贡献：
 

@@ -24,7 +24,7 @@ assignees: ''
 请指明具体的文档文件和位置。
 ```
 例如: README.md 第123行
-例如: docs/DOCKER_GUIDE.md 安装部分
+例如: docs/current/deployment.md 安装部分
 ```
 
 **相关链接 / Related Links:**

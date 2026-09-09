@@ -118,10 +118,10 @@ def create_fundamentals_analyst(llm, toolkit):
         current_date = state["trade_date"]
         ticker = state["company_of_interest"]
 
-        # 🔧 基本面分析数据范围：固定获取10天数据（处理周末/节假日/数据延迟）
-        # 参考文档：docs/ANALYST_DATA_CONFIGURATION.md
+        # 🔧 基本面分析数据范围：固定传入10天范围（处理周末/节假日/数据延迟）
+        # 参考文档：docs/reference/agents/configuration.md
         # 基本面分析主要依赖财务数据（PE、PB、ROE等），只需要当前股价
-        # 获取10天数据是为了保证能拿到数据，但实际分析只使用最近2天
+        # 统一基本面工具接收完整范围；此处没有单独的两天筛选步骤。
         from datetime import datetime, timedelta
         try:
             end_date_dt = datetime.strptime(current_date, "%Y-%m-%d")

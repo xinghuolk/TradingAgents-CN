@@ -1093,7 +1093,7 @@ def render_sidebar():
         - [📖 使用文档](https://github.com/TauricResearch/TradingAgents)
         - [🐛 问题反馈](https://github.com/TauricResearch/TradingAgents/issues)
         - [💬 讨论社区](https://github.com/TauricResearch/TradingAgents/discussions)
-        - [🔧 API密钥配置](../docs/security/api_keys_security.md)
+        - [🔧 API密钥配置](../docs/reference/security/api-keys.md)
         """)
     
     # 确保返回session state中的值，而不是局部变量

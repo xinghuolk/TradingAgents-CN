@@ -1,0 +1,484 @@
+from __future__ import annotations
+
+from dataclasses import replace
+from datetime import datetime
+from typing import Callable, Literal
+from uuid import uuid4
+
+from app.services.stock_research.errors import ResearchError
+from app.services.stock_research.models import (
+    Entry,
+    EntryPatch,
+    EntryQuery,
+    NewEntry,
+    Reference,
+    ResearchPage,
+    ResearchSecurityId,
+    Revision,
+    ThesisPatch,
+    Workspace,
+    WorkspaceDirectoryFacts,
+    WorkspaceQuery,
+    ResearchWorkspaceSummary,
+    utc_now,
+)
+from app.services.stock_research.directory import (
+    EmptyWorkspaceDirectorySource,
+    WorkspaceDirectorySource,
+)
+from app.services.stock_research.storage import StockResearchRepository
+
+
+class StockResearchService:
+    def __init__(
+        self,
+        repository: StockResearchRepository,
+        *,
+        directory_source: WorkspaceDirectorySource | None = None,
+        clock: Callable[[], datetime] = utc_now,
+        id_factory: Callable[[], str] = lambda: uuid4().hex,
+    ) -> None:
+        self.repository = repository
+        self.directory_source = directory_source or EmptyWorkspaceDirectorySource()
+        self.clock = clock
+        self.id_factory = id_factory
+
+    async def get_workspace(self, user_id: str, security_id: str) -> Workspace:
+        workspace = await self.repository.get_workspace(user_id, security_id)
+        if workspace is None:
+            raise ResearchError("RESEARCH_NOT_FOUND", "research workspace not found")
+        return workspace
+
+    async def list_workspaces(
+        self, user_id: str, query: WorkspaceQuery
+    ) -> ResearchPage[ResearchWorkspaceSummary]:
+        workspaces = await self.repository.list_workspace_candidates(user_id, query)
+        facts_by_security = await self.directory_source.get_workspace_facts(
+            user_id, tuple(workspace.security_id for workspace in workspaces)
+        )
+        summaries = []
+        for workspace in workspaces:
+            facts = facts_by_security.get(
+                workspace.security_id, WorkspaceDirectoryFacts()
+            )
+            summary = ResearchWorkspaceSummary.from_workspace(
+                workspace,
+                latest_entry_type=facts.latest_entry_type,
+                latest_entry_at=facts.latest_entry_at,
+                has_real_holding=facts.has_real_holding,
+                has_paper_holding=facts.has_paper_holding,
+                watchlisted=facts.watchlisted,
+            )
+            if (
+                query.real_holding is not None
+                and summary.has_real_holding != query.real_holding
+            ):
+                continue
+            if (
+                query.paper_holding is not None
+                and summary.has_paper_holding != query.paper_holding
+            ):
+                continue
+            if (
+                query.watchlisted is not None
+                and summary.watchlisted != query.watchlisted
+            ):
+                continue
+            summaries.append(summary)
+        start = (query.page - 1) * query.page_size
+        return ResearchPage(
+            tuple(summaries[start : start + query.page_size]),
+            query.page,
+            query.page_size,
+            len(summaries),
+        )
+
+    async def get_or_create_workspace(
+        self, user_id: str, market: str, code: str, name: str
+    ) -> Workspace:
+        security = ResearchSecurityId.parse(market, code)
+        existing = await self.repository.get_workspace(user_id, str(security))
+        if existing is not None:
+            return existing
+        now = self.clock()
+        return await self.repository.upsert_workspace(
+            Workspace(
+                user_id=user_id,
+                security_id=str(security),
+                market=security.market,
+                code=security.code,
+                name=name,
+                created_at=now,
+                updated_at=now,
+            )
+        )
+
+    async def save_thesis_draft(
+        self, user_id: str, security_id: str, patch: ThesisPatch
+    ) -> Workspace:
+        workspace = await self.get_workspace(user_id, security_id)
+        return await self.repository.patch_workspace(
+            workspace, {**patch.changes(), "updated_at": self.clock()}
+        )
+
+    async def save_workspace_version(
+        self, user_id: str, security_id: str, label: str
+    ) -> Revision:
+        workspace = await self.get_workspace(user_id, security_id)
+        snapshot = workspace.to_document()
+        snapshot["label"] = label
+        revision = await self.repository.append_revision(
+            user_id, "workspace", workspace.security_id, snapshot, "manual"
+        )
+        await self.repository.advance_revision(user_id, "workspace", workspace.security_id, revision.revision)
+        return revision
+
+    async def get_entry(
+        self,
+        user_id: str,
+        entry_id: str,
+        *,
+        include_deleted: bool = False,
+    ) -> Entry:
+        return await self._get_entry(
+            user_id, entry_id, include_deleted=include_deleted
+        )
+
+    async def save_entry_version(self, user_id: str, entry_id: str, label: str = "") -> Revision:
+        entry = await self._get_entry(user_id, entry_id)
+        if entry.entry_type not in {"note", "research"} or entry.status == "archived":
+            raise ResearchError("INVALID_ENTRY", "manual versions require an editable note or research entry")
+        entry = await self.repository.patch_entry(entry, {})
+        snapshot = entry.to_document()
+        snapshot["label"] = label
+        revision = await self.repository.append_revision(user_id, "entry", entry.id, snapshot, "manual")
+        await self.repository.advance_revision(user_id, "entry", entry.id, revision.revision)
+        return revision
+
+    async def list_entries(
+        self, user_id: str, query: EntryQuery
+    ) -> ResearchPage[Entry]:
+        return await self.repository.list_entries(user_id, query)
+
+    async def create_entry(self, user_id: str, request: NewEntry) -> Entry:
+        now = self.clock()
+        entry = Entry(
+            id=self.id_factory(),
+            user_id=user_id,
+            entry_type=request.entry_type,
+            scope=request.scope,
+            security_id=request.security_id,
+            security_ids=request.security_ids,
+            title=request.title,
+            body=request.body,
+            tags=request.tags,
+            external_links=request.external_links,
+            references=request.references,
+            topic=request.topic,
+            conclusion=request.conclusion,
+            decision_action=request.decision_action,
+            decision_date=request.decision_date,
+            planned_price=request.planned_price,
+            target_allocation=request.target_allocation,
+            horizon=request.horizon,
+            review_kind=request.review_kind,
+            decision_id=request.decision_id,
+            scope_metadata=request.scope_metadata,
+            created_at=now,
+            updated_at=now,
+        )
+        return await self.repository.insert_entry(entry)
+
+    async def update_entry_draft(
+        self, user_id: str, entry_id: str, patch: EntryPatch
+    ) -> Entry:
+        entry = await self._get_entry(user_id, entry_id)
+        if entry.status == "archived":
+            raise ResearchError(
+                "INVALID_ENTRY", "archived entry cannot be autosaved"
+            )
+        if entry.entry_type == "decision" and entry.status == "confirmed":
+            raise ResearchError(
+                "INVALID_ENTRY", "formal entry cannot be autosaved"
+            )
+        changes = patch.changes()
+        if patch.security_ids is not None:
+            if entry.entry_type != "review" or entry.status != "draft":
+                raise ResearchError("INVALID_ENTRY", "only draft review associations can be changed")
+            security_ids = (
+                *((entry.security_id,) if entry.security_id else ()),
+                *patch.security_ids,
+            )
+            changes["security_ids"] = tuple(dict.fromkeys(
+                str(ResearchSecurityId.from_string(value)) for value in security_ids
+            ))
+        updated = replace(entry, **changes, updated_at=self.clock())
+        updated.validate()
+        updated = await self.repository.patch_entry(entry, {**changes, "updated_at": updated.updated_at})
+        if entry.entry_type == "review" and entry.status == "confirmed":
+            revision = await self.repository.append_revision(
+                user_id,
+                "entry",
+                entry.id,
+                updated.to_document(),
+                "review_confirmed",
+            )
+            updated = replace(updated, current_revision=revision.revision)
+            await self.repository.advance_revision(user_id, "entry", entry.id, revision.revision)
+        return updated
+
+    async def convert_entry(
+        self,
+        user_id: str,
+        entry_id: str,
+        target: Literal["note", "research"],
+        *,
+        topic: str | None = None,
+    ) -> Entry:
+        entry = await self._get_entry(user_id, entry_id)
+        if entry.status == "archived":
+            raise ResearchError("INVALID_ENTRY", "archived entry cannot be converted")
+        if entry.entry_type not in {"note", "research"} or target not in {
+            "note",
+            "research",
+        }:
+            raise ResearchError(
+                "INVALID_ENTRY", "only note and research entries can be converted"
+            )
+        changes: dict[str, object] = {
+            "entry_type": target,
+            "updated_at": self.clock(),
+        }
+        if target == "research" and topic is not None:
+            changes["topic"] = topic
+        return await self.repository.patch_entry(entry, changes)
+
+    async def confirm_entry(self, user_id: str, entry_id: str) -> Entry:
+        entry = await self._get_entry(user_id, entry_id)
+        if entry.status == "archived":
+            raise ResearchError("INVALID_ENTRY", "archived entry cannot be confirmed")
+        if entry.status == "confirmed":
+            raise ResearchError("INVALID_ENTRY", "formal entry is already confirmed")
+        if entry.entry_type not in {"decision", "review"}:
+            raise ResearchError(
+                "INVALID_ENTRY", "only decisions and reviews can be confirmed"
+            )
+        now = self.clock()
+        changes: dict[str, object] = {
+            "status": "confirmed",
+            "confirmed_at": now,
+            "updated_at": now,
+        }
+        reason = "review_confirmed"
+        workspaces = []
+        if entry.entry_type == "decision":
+            if entry.security_id is None:
+                raise ResearchError("INVALID_ENTRY", "decision security is required")
+            workspace = await self.get_workspace(user_id, entry.security_id)
+            changes["thesis_snapshot"] = workspace.to_document()
+            workspaces.append(workspace)
+            reason = "decision_confirmed"
+        else:
+            snapshots = {}
+            for security_id in dict.fromkeys((*entry.security_ids, *((entry.security_id,) if entry.security_id else ()))):
+                workspace = await self.repository.get_workspace(user_id, security_id)
+                if workspace is not None:
+                    snapshots[security_id] = workspace.to_document()
+                    workspaces.append(workspace)
+                else:
+                    snapshots[security_id] = {"security_id": security_id, "available": False, "reason": "workspace_unavailable"}
+            changes["thesis_snapshot"] = snapshots.get(entry.security_id) if entry.scope == "stock" else {"workspaces": snapshots}
+        confirmed = replace(entry, **changes)
+        confirmed.validate()
+        confirmed = await self.repository.patch_entry(entry, changes)
+        for workspace in workspaces:
+            thesis_revision = await self.repository.append_revision(user_id, "workspace", workspace.security_id, workspace.to_document(), reason)
+            await self.repository.advance_revision(user_id, "workspace", workspace.security_id, thesis_revision.revision)
+        revision = await self.repository.append_revision(
+            user_id, "entry", entry.id, confirmed.to_document(), reason
+        )
+        await self.repository.advance_revision(user_id, "entry", entry.id, revision.revision)
+        return replace(confirmed, current_revision=revision.revision)
+
+    async def restore_revision(self, user_id: str, revision_id: str) -> Revision:
+        source = await self.repository.get_revision(user_id, revision_id)
+        if source is None:
+            raise ResearchError("RESEARCH_NOT_FOUND", "research revision not found")
+        if source.target_type == "workspace":
+            current = await self.get_workspace(user_id, source.target_id)
+            restored = Workspace.from_document(source.snapshot)
+            restored = replace(
+                restored,
+                user_id=current.user_id,
+                security_id=current.security_id,
+                market=current.market,
+                code=current.code,
+                name=current.name,
+                created_at=current.created_at,
+                updated_at=self.clock(),
+            )
+            changes = {key: getattr(restored, key) for key in ThesisPatch.__dataclass_fields__}
+            restored = await self.repository.patch_workspace(current, {**changes, "updated_at": self.clock()})
+            snapshot = restored.to_document()
+            revision = await self.repository.append_revision(
+                user_id,
+                "workspace",
+                current.security_id,
+                snapshot,
+                "revision_restored",
+            )
+            await self.repository.advance_revision(user_id, "workspace", current.security_id, revision.revision)
+            return revision
+        if source.target_type == "entry":
+            current_entry = await self._get_entry(user_id, source.target_id)
+            if current_entry.status == "archived" or (
+                current_entry.entry_type == "decision" and current_entry.status == "confirmed"
+            ):
+                raise ResearchError("INVALID_ENTRY", "entry is read-only")
+            restored_entry = Entry.from_document(source.snapshot)
+            restored_entry = replace(
+                restored_entry,
+                id=current_entry.id,
+                user_id=current_entry.user_id,
+                created_at=current_entry.created_at,
+                deleted_at=current_entry.deleted_at,
+                status=current_entry.status,
+                confirmed_at=current_entry.confirmed_at,
+                archived_at=current_entry.archived_at,
+                updated_at=self.clock(),
+            )
+            restored_entry.validate()
+            changes = {key: getattr(restored_entry, key) for key in EntryPatch.__dataclass_fields__}
+            changes.update(entry_type=restored_entry.entry_type, updated_at=self.clock())
+            restored_entry = await self.repository.patch_entry(current_entry, changes)
+            revision = await self.repository.append_revision(
+                user_id,
+                "entry",
+                current_entry.id,
+                restored_entry.to_document(),
+                "revision_restored",
+            )
+            await self.repository.advance_revision(user_id, "entry", current_entry.id, revision.revision)
+            return revision
+        raise ResearchError("INVALID_REVISION", "revision target type is invalid")
+
+    async def get_revision(self, user_id: str, revision_id: str) -> Revision:
+        revision = await self.repository.get_revision(user_id, revision_id)
+        if revision is None:
+            raise ResearchError("RESEARCH_NOT_FOUND", "research revision not found")
+        return revision
+
+    async def list_revisions(
+        self, user_id: str, target_type: str, target_id: str
+    ) -> list[Revision]:
+        return await self.repository.list_revisions(user_id, target_type, target_id)
+
+    async def apply_review_to_thesis(
+        self, user_id: str, review_id: str, patch: ThesisPatch
+    ) -> Revision:
+        review = await self._get_entry(user_id, review_id)
+        if review.entry_type != "review" or review.status != "confirmed":
+            raise ResearchError("INVALID_ENTRY", "formal review is required")
+        if review.security_id is None:
+            raise ResearchError(
+                "INVALID_ENTRY", "stock review security is required"
+            )
+        workspace = await self.get_workspace(user_id, review.security_id)
+        updated = replace(workspace, **patch.changes(), updated_at=self.clock())
+        updated = await self.repository.patch_workspace(workspace, {**patch.changes(), "updated_at": updated.updated_at})
+        revision = await self.repository.append_revision(
+            user_id,
+            "workspace",
+            workspace.security_id,
+            updated.to_document(),
+            "review_applied_to_thesis",
+        )
+        await self.repository.advance_revision(user_id, "workspace", workspace.security_id, revision.revision)
+        return revision
+
+    async def archive_entry(self, user_id: str, entry_id: str) -> Entry:
+        entry = await self._get_entry(user_id, entry_id)
+        now = self.clock()
+        return await self.repository.patch_entry(entry, {"status": "archived", "archived_at": now, "updated_at": now})
+
+    async def delete_entry(self, user_id: str, entry_id: str) -> None:
+        entry = await self._get_entry(user_id, entry_id)
+        now = self.clock()
+        await self.repository.patch_entry(entry, {"deleted_at": now, "updated_at": now})
+
+    async def restore_entry(self, user_id: str, entry_id: str) -> Entry:
+        entry = await self._get_entry(user_id, entry_id, include_deleted=True)
+        if entry.deleted_at is None:
+            raise ResearchError("RESEARCH_NOT_FOUND", "research entry not found")
+        return await self.repository.patch_entry(entry, {"deleted_at": None, "updated_at": self.clock()})
+
+    async def list_trash(
+        self, user_id: str, page: int, page_size: int
+    ) -> ResearchPage[Entry]:
+        return await self.repository.list_trash(user_id, page, page_size)
+
+    async def permanently_delete_entry(self, user_id: str, entry_id: str) -> None:
+        await self._get_entry(user_id, entry_id, include_deleted=True)
+        await self.repository.permanently_delete_entry(user_id, entry_id)
+
+    async def set_decision_trade_links(
+        self, user_id: str, decision_id: str, references: list[Reference]
+    ) -> Entry:
+        decision = await self._get_entry(user_id, decision_id)
+        if decision.entry_type != "decision":
+            raise ResearchError("INVALID_ENTRY", "trade links require a decision")
+        confirmed: list[Reference] = []
+        seen: set[str] = set()
+        for reference in references:
+            key = self._trade_link_key(reference)
+            if key in seen:
+                continue
+            seen.add(key)
+            confirmed.append(reference)
+        return await self.repository.replace_decision_trade_links(
+            user_id,
+            decision_id,
+            tuple(confirmed),
+            self.clock(),
+        )
+
+    async def get_decision_trade_links(
+        self, user_id: str, decision_id: str
+    ) -> list[Reference]:
+        decision = await self._get_entry(user_id, decision_id)
+        if decision.entry_type != "decision":
+            raise ResearchError("INVALID_ENTRY", "trade links require a decision")
+        return [
+            reference
+            for reference in decision.references
+            if reference.kind in {"real_trade", "paper_trade"}
+        ]
+
+    async def delete_decision_trade_link(
+        self, user_id: str, decision_id: str, reference: Reference
+    ) -> Entry:
+        decision = await self._get_entry(user_id, decision_id)
+        if decision.entry_type != "decision":
+            raise ResearchError("INVALID_ENTRY", "trade links require a decision")
+        reference.trade_link_key()
+        return await self.repository.remove_decision_trade_link(
+            user_id, decision_id, reference, self.clock()
+        )
+
+    @staticmethod
+    def _trade_link_key(reference: Reference) -> str:
+        return reference.trade_link_key()
+
+    async def _get_entry(
+        self,
+        user_id: str,
+        entry_id: str,
+        *,
+        include_deleted: bool = False,
+    ) -> Entry:
+        entry = await self.repository.get_entry(
+            user_id, entry_id, include_deleted=include_deleted
+        )
+        if entry is None:
+            raise ResearchError("RESEARCH_NOT_FOUND", "research entry not found")
+        return entry

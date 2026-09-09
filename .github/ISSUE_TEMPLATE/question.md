@@ -115,10 +115,10 @@ If helpful, please add screenshots.
 ## 💡 快速帮助 / Quick Help
 
 **常见问题 / FAQ:**
-- 📖 [项目文档](../docs/)
-- 🐳 [Docker部署指南](../docs/DOCKER_GUIDE.md)
-- 🚀 [快速开始指南](../README.md#🚀-启动应用)
-- ⚙️ [配置说明](../README.md#配置api密钥)
+- 📖 [项目文档](../../docs/README.md)
+- 🐳 [Docker部署指南](../../docs/current/deployment.md)
+- 🚀 [快速开始指南](../../docs/current/getting-started.md)
+- ⚙️ [配置说明](../../docs/current/configuration.md)
 
 **社区支持 / Community Support:**
 - 💬 [GitHub Discussions](https://github.com/hsliuping/TradingAgents-CN/discussions)

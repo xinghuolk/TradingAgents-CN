@@ -8,6 +8,7 @@ import logging
 import logging.handlers
 import os
 import sys
+from copy import deepcopy
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, Any, Optional, Union
@@ -100,9 +101,24 @@ class TradingAgentsLogger:
     """TradingAgents统一日志管理器"""
     
     def __init__(self, config: Optional[Dict[str, Any]] = None):
-        self.config = config or self._load_default_config()
+        loaded_config = config if config is not None else self._load_default_config()
+        self.config = self._apply_environment_overrides(loaded_config)
         self.loggers: Dict[str, logging.Logger] = {}
         self._setup_logging()
+
+    @staticmethod
+    def _apply_environment_overrides(config: Dict[str, Any]) -> Dict[str, Any]:
+        """Apply explicit runtime paths after any file-based configuration."""
+        resolved_config = deepcopy(config)
+        log_dir = os.getenv("TRADINGAGENTS_LOG_DIR")
+        if not log_dir:
+            return resolved_config
+
+        handlers = resolved_config.get("handlers", {})
+        for name in ("file", "error", "structured"):
+            if name in handlers:
+                handlers[name]["directory"] = log_dir
+        return resolved_config
     
     def _load_default_config(self) -> Dict[str, Any]:
         """加载默认日志配置"""

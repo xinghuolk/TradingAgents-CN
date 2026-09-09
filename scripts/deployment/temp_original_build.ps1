@@ -80,8 +80,8 @@ if (Test-Path $frontendDir) {
         }
 
         Write-Host "  Building frontend (skipping type check, this may take a few minutes)..." -ForegroundColor Gray
-        # Use 'yarn vite build' to skip TypeScript type checking (same as Dockerfile)
-        $buildProcess = Start-Process -FilePath "cmd.exe" -ArgumentList "/c", "cd /d `"$frontendDir`" && yarn vite build" -Wait -PassThru -NoNewWindow
+        # Use the same deployment bundle script as Docker
+        $buildProcess = Start-Process -FilePath "cmd.exe" -ArgumentList "/c", "cd /d `"$frontendDir`" && yarn bundle" -Wait -PassThru -NoNewWindow
 
         if ($buildProcess.ExitCode -ne 0) {
             Write-Host "  WARNING: Frontend build failed with exit code $($buildProcess.ExitCode)" -ForegroundColor Yellow
@@ -319,4 +319,3 @@ Write-Host ""
 
 Write-Host "Note: First-time startup will automatically import configuration and create default user (admin/admin123)" -ForegroundColor Yellow
 Write-Host ""
-

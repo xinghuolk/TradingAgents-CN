@@ -147,6 +147,7 @@ def create_llm_by_provider(provider: str, model: str, backend_url: str, temperat
         llm = ChatAnthropic(
             model=model,
             base_url=backend_url,
+            api_key=api_key,
             temperature=temperature,
             max_tokens=max_tokens,
             timeout=timeout

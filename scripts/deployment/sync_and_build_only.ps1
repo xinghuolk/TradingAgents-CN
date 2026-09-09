@@ -80,8 +80,8 @@ if (-not $SkipFrontend) {
             }
 
             Write-Host "  Building frontend (skipping type check, this may take a few minutes)..." -ForegroundColor Gray
-            # Use 'yarn vite build' to skip TypeScript type checking
-            $buildProcess = Start-Process -FilePath "cmd.exe" -ArgumentList "/c", "cd /d `"$frontendDir`" && yarn vite build" -Wait -PassThru -NoNewWindow
+            # Use the deployment bundle script to skip existing TypeScript debt
+            $buildProcess = Start-Process -FilePath "cmd.exe" -ArgumentList "/c", "cd /d `"$frontendDir`" && yarn bundle" -Wait -PassThru -NoNewWindow
 
             if ($buildProcess.ExitCode -ne 0) {
                 Write-Host "  WARNING: Frontend build failed with exit code $($buildProcess.ExitCode)" -ForegroundColor Yellow
@@ -135,4 +135,3 @@ Write-Host ""
 Write-Host "   2. Create package (if needed):" -ForegroundColor Gray
 Write-Host "      powershell -ExecutionPolicy Bypass -File scripts\deployment\build_portable_package.ps1 -SkipSync" -ForegroundColor Gray
 Write-Host ""
-
