@@ -184,12 +184,15 @@ def run(args, viewport):
                 entry_type="decision", scope="stock", security_id="A:600519",
                 security_ids=("A:600519",), title="Linked draft decision",
                 body="Immutable decision", decision_action="buy", decision_date=date(2026, 9, 8),
-                references=(Reference.real_trade("real-u1", "Existing real"), Reference.paper_trade("paper-one", "Existing paper")),
             )))
             page.reload()
             page.wait_for_load_state("networkidle")
             page.get_by_role("navigation", name="研究章节").get_by_role("button", name="决策", exact=True).click()
             page.locator(".entry-row").filter(has_text="Linked draft decision").click()
+            call(service.set_decision_trade_links("u1", decision.id, [
+                Reference.real_trade("real-u1", "Existing real"),
+                Reference.paper_trade("paper-one", "Existing paper"),
+            ]))
             button("确认决策").click()
             dialog("确认决策").get_by_role("button", name="确认并记录", exact=True).click()
             expect(page.locator(".decision-editor .markdown-editor textarea")).to_have_count(0)

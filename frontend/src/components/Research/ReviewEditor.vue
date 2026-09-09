@@ -283,7 +283,7 @@ const associationsReady = computed(
   () =>
     form.scope === 'stock' ||
     securitiesState.value === 'ready' ||
-    (!form.scope_metadata.include_real_holdings && !form.scope_metadata.include_paper_holdings)
+    (!contextValue('include_real_holdings') && !contextValue('include_paper_holdings'))
 )
 const decisions = ref<ResearchEntry[]>([])
 const decisionsFailed = ref(false)

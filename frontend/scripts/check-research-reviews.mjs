@@ -557,6 +557,35 @@ function setup(name, props = {}, overrides = {}) {
   )
 }
 {
+  let resolveSources
+  const { app, calls, mount } = setup(
+    'ReviewEditor',
+    { reviewKind: 'decision' },
+    {
+      listWorkspaces: () =>
+        new Promise(resolve => {
+          resolveSources = resolve
+        })
+    }
+  )
+  const loading = mount()
+  const confirming = app.confirmReview()
+  await new Promise(setImmediate)
+  assert.equal(
+    calls.length,
+    0,
+    'effective decision holdings must delay creation and confirmation until sources resolve'
+  )
+  resolveSources({
+    data: { items: [{ security_id: 'A:600519', has_real_holding: true, has_paper_holding: false }] }
+  })
+  await loading
+  await confirming
+  const creation = calls.find(call => call[0] === 'create')[1]
+  assert.deepEqual(Array.from(creation.security_ids), ['A:600519'])
+  assert.equal(calls.find(call => call[0] === 'confirm')[1], 'new-1')
+}
+{
   const { app, calls } = setup('DecisionEditor', { securityId: 'A:600519' })
   app.form.decision_action = 'buy'
   app.form.decision_date = '2026-09-08'
