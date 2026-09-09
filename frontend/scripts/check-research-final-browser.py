@@ -189,6 +189,7 @@ def run(args, viewport):
             page.wait_for_load_state("networkidle")
             page.get_by_role("navigation", name="研究章节").get_by_role("button", name="决策", exact=True).click()
             page.locator(".entry-row").filter(has_text="Linked draft decision").click()
+            expect(page.locator(".decision-editor .markdown-editor textarea")).to_be_visible()
             call(service.set_decision_trade_links("u1", decision.id, [
                 Reference.real_trade("real-u1", "Existing real"),
                 Reference.paper_trade("paper-one", "Existing paper"),
