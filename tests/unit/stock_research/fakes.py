@@ -328,6 +328,14 @@ class FakeCollection:
             self.documents.remove(original)
         return SimpleNamespace(deleted_count=int(original is not None))
 
+    async def delete_many(self, query: Mapping[str, object]) -> SimpleNamespace:
+        originals = [
+            document for document in self.documents if matches(document, query)
+        ]
+        for original in originals:
+            self.documents.remove(original)
+        return SimpleNamespace(deleted_count=len(originals))
+
     async def count_documents(self, query: Mapping[str, object]) -> int:
         return sum(matches(document, query) for document in self.documents)
 

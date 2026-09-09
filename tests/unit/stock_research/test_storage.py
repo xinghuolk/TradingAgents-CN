@@ -157,13 +157,174 @@ async def test_restore_then_permanent_delete_obeys_trash_boundary(fake_db):
 
     restored = await repo.restore_entry("u1", "e1")
     assert restored.deleted_at is None
+    await fake_db["stock_research_revisions"].insert_one(
+        {
+            "id": "active-revision",
+            "user_id": "u1",
+            "target_type": "entry",
+            "target_id": "e1",
+        }
+    )
 
     await repo.permanently_delete_entry("u1", "e1")
     assert await repo.get_entry("u1", "e1") == restored
+    assert await fake_db["stock_research_revisions"].find_one(
+        {"id": "active-revision"}
+    )
 
     await repo.soft_delete_entry("u1", "e1", now=NOW)
     await repo.permanently_delete_entry("u1", "e1")
     assert await repo.get_entry("u1", "e1", include_deleted=True) is None
+
+
+@pytest.mark.asyncio
+async def test_permanent_delete_purges_only_entry_owned_revisions_and_generation_tasks(
+    fake_db,
+):
+    repo = StockResearchRepository(fake_db)
+    await repo.insert_entry(make_note(user_id="u1", entry_id="e1"))
+    await repo.soft_delete_entry("u1", "e1", now=NOW)
+    await fake_db["stock_research_revisions"].insert_one(
+        {
+            "id": "owned-revision",
+            "user_id": "u1",
+            "target_type": "entry",
+            "target_id": "e1",
+        }
+    )
+    await fake_db["stock_research_revisions"].insert_one(
+        {
+            "id": "workspace-revision",
+            "user_id": "u1",
+            "target_type": "workspace",
+            "target_id": "e1",
+        }
+    )
+    await fake_db["stock_research_revisions"].insert_one(
+        {
+            "id": "other-user-revision",
+            "user_id": "u2",
+            "target_type": "entry",
+            "target_id": "e1",
+        }
+    )
+    await fake_db["stock_research_generation_tasks"].insert_one(
+        {"id": "owned-task", "user_id": "u1", "target_entry_id": "e1"}
+    )
+    await fake_db["stock_research_generation_tasks"].insert_one(
+        {"id": "other-entry-task", "user_id": "u1", "target_entry_id": "e2"}
+    )
+    await fake_db["stock_research_generation_tasks"].insert_one(
+        {"id": "other-user-task", "user_id": "u2", "target_entry_id": "e1"}
+    )
+
+    await repo.permanently_delete_entry("u1", "e1")
+
+    assert (
+        await fake_db["stock_research_revisions"].find_one(
+            {"id": "owned-revision"}
+        )
+        is None
+    )
+    assert (
+        await fake_db["stock_research_generation_tasks"].find_one(
+            {"id": "owned-task"}
+        )
+        is None
+    )
+    for revision_id in ("workspace-revision", "other-user-revision"):
+        assert await fake_db["stock_research_revisions"].find_one(
+            {"id": revision_id}
+        )
+    for task_id in ("other-entry-task", "other-user-task"):
+        assert await fake_db["stock_research_generation_tasks"].find_one(
+            {"id": task_id}
+        )
+
+
+@pytest.mark.asyncio
+async def test_permanent_delete_does_not_purge_children_when_restore_wins_race(
+    fake_db, monkeypatch
+):
+    repo = StockResearchRepository(fake_db)
+    await repo.insert_entry(make_note(user_id="u1", entry_id="e1"))
+    await repo.soft_delete_entry("u1", "e1", now=NOW)
+    await fake_db["stock_research_revisions"].insert_one(
+        {
+            "id": "restored-revision",
+            "user_id": "u1",
+            "target_type": "entry",
+            "target_id": "e1",
+        }
+    )
+    entries = fake_db["stock_research_entries"]
+    find_one_and_update = entries.find_one_and_update
+
+    async def restore_before_claim(query, update, **kwargs):
+        if update.get("$set", {}).get("deletion_claim"):
+            await repo.restore_entry("u1", "e1")
+        return await find_one_and_update(query, update, **kwargs)
+
+    monkeypatch.setattr(entries, "find_one_and_update", restore_before_claim)
+
+    await repo.permanently_delete_entry("u1", "e1")
+
+    assert await repo.get_entry("u1", "e1") is not None
+    assert await fake_db["stock_research_revisions"].find_one(
+        {"id": "restored-revision"}
+    )
+
+
+@pytest.mark.asyncio
+async def test_restore_rejects_entry_claimed_for_permanent_deletion(fake_db):
+    repo = StockResearchRepository(fake_db)
+    await repo.insert_entry(make_note(user_id="u1", entry_id="e1"))
+    await repo.soft_delete_entry("u1", "e1", now=NOW)
+    await fake_db["stock_research_entries"].update_one(
+        {"user_id": "u1", "id": "e1"},
+        {"$set": {"deletion_claim": "permanent-delete:e1"}},
+    )
+
+    with pytest.raises(ResearchError, match="research entry not found"):
+        await repo.restore_entry("u1", "e1")
+
+
+@pytest.mark.asyncio
+async def test_permanent_delete_retries_child_cleanup_before_removing_claimed_entry(
+    fake_db, monkeypatch
+):
+    repo = StockResearchRepository(fake_db)
+    await repo.insert_entry(make_note(user_id="u1", entry_id="e1"))
+    await repo.soft_delete_entry("u1", "e1", now=NOW)
+    await fake_db["stock_research_revisions"].insert_one(
+        {
+            "id": "retry-revision",
+            "user_id": "u1",
+            "target_type": "entry",
+            "target_id": "e1",
+        }
+    )
+    revisions = fake_db["stock_research_revisions"]
+    delete_many = revisions.delete_many
+    attempts = 0
+
+    async def fail_once(query):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise RuntimeError("temporary cleanup failure")
+        return await delete_many(query)
+
+    monkeypatch.setattr(revisions, "delete_many", fail_once)
+
+    with pytest.raises(RuntimeError, match="temporary cleanup failure"):
+        await repo.permanently_delete_entry("u1", "e1")
+    assert await repo.get_entry("u1", "e1", include_deleted=True) is not None
+
+    await repo.permanently_delete_entry("u1", "e1")
+
+    assert await repo.get_entry("u1", "e1", include_deleted=True) is None
+    assert await revisions.find_one({"id": "retry-revision"}) is None
 
 
 @pytest.mark.asyncio

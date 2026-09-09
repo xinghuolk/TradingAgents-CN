@@ -393,6 +393,27 @@ async def test_configured_generator_uses_exact_config_and_only_public_text():
 
 
 @pytest.mark.asyncio
+async def test_configured_ollama_generator_accepts_local_endpoint_without_api_key():
+    generator, db, _, calls = await configured_generator("ollama")
+    config = db["system_configs"].documents[0]["llm_configs"][0]
+    config["api_key"] = None
+
+    content = await generator.generate(
+        user_id="u1",
+        provider="ollama",
+        model_name="chosen",
+        reasoning_effort=None,
+        system_prompt="system",
+        user_prompt="input",
+    )
+
+    assert content == "public draft"
+    assert calls[0]["provider"] == "ollama"
+    assert calls[0]["backend_url"] == "https://configured.example/v1"
+    assert calls[0]["api_key"] == "ollama"
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("provider,model", [("wrong", "chosen"), ("openai", "missing")])
 async def test_configured_generator_never_falls_back(provider, model):
     generator, _, _, calls = await configured_generator()

@@ -254,6 +254,7 @@ class StockResearchRepository:
                     "user_id": expected.user_id, "id": expected.id,
                     "status": expected.status, "deleted_at": expected.to_document()["deleted_at"],
                     "entry_type": expected.entry_type,
+                    "deletion_claim": {"$exists": False},
                     "write_version": {"$in": [None, 0]} if expected.write_version == 0 else expected.write_version,
                 },
                 {"$set": fields, "$inc": {"write_version": 1}},
@@ -559,7 +560,12 @@ class StockResearchRepository:
 
     async def restore_entry(self, user_id: str, entry_id: str) -> Entry:
         document = await self._collection("entries").find_one_and_update(
-            {"user_id": user_id, "id": entry_id, "deleted_at": {"$ne": None}},
+            {
+                "user_id": user_id,
+                "id": entry_id,
+                "deleted_at": {"$ne": None},
+                "deletion_claim": {"$exists": False},
+            },
             {"$set": {"deleted_at": None, "updated_at": datetime.now(UTC).isoformat()}, "$inc": {"write_version": 1}},
             return_document=ReturnDocument.AFTER,
         )
@@ -568,6 +574,39 @@ class StockResearchRepository:
         return Entry.from_document(document)
 
     async def permanently_delete_entry(self, user_id: str, entry_id: str) -> None:
-        await self._collection("entries").delete_one(
-            {"user_id": user_id, "id": entry_id, "deleted_at": {"$ne": None}}
+        entries = self._collection("entries")
+        claim = f"permanent-delete:{entry_id}"
+        claimed = await entries.find_one_and_update(
+            {
+                "user_id": user_id,
+                "id": entry_id,
+                "deleted_at": {"$ne": None},
+                "deletion_claim": {"$exists": False},
+            },
+            {"$set": {"deletion_claim": claim}},
+            return_document=ReturnDocument.AFTER,
+        )
+        if claimed is None:
+            claimed = await entries.find_one(
+                {
+                    "user_id": user_id,
+                    "id": entry_id,
+                    "deleted_at": {"$ne": None},
+                    "deletion_claim": claim,
+                }
+            )
+            if claimed is None:
+                return
+        await self._collection("revisions").delete_many(
+            {
+                "user_id": user_id,
+                "target_type": "entry",
+                "target_id": entry_id,
+            }
+        )
+        await self._collection("generation_tasks").delete_many(
+            {"user_id": user_id, "target_entry_id": entry_id}
+        )
+        await entries.delete_one(
+            {"user_id": user_id, "id": entry_id, "deletion_claim": claim}
         )

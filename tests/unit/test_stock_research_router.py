@@ -899,7 +899,7 @@ async def test_created_portfolio_review_preserves_canonical_unique_securities() 
     assert created.json()["data"]["security_ids"] == [
         "A:600519",
         "US:AAPL",
-        "HK:0700",
+        "HK:00700",
     ]
     assert [item["id"] for item in listed.json()["data"]["items"]] == [
         "entry-portfolio"

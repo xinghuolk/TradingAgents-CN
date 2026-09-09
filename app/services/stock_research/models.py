@@ -79,6 +79,10 @@ class ResearchSecurityId:
             raise ResearchError("INVALID_SECURITY", "market and code are invalid")
         canonical_market = "A" if market.upper() in {"A", "CN"} else market.upper()
         canonical_code = code.strip().upper()
+        if canonical_market == "HK":
+            base_code = canonical_code.removesuffix(".HK")
+            if base_code.isdigit() and len(base_code) in {4, 5}:
+                canonical_code = base_code.zfill(5)
         if canonical_market not in {"A", "HK", "US"} or not canonical_code:
             raise ResearchError("INVALID_SECURITY", "market and code are invalid")
         return cls(canonical_market, canonical_code)

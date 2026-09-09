@@ -27,6 +27,11 @@ def test_security_id_canonicalizes_cn_and_supports_us():
     assert ResearchSecurityId.parse("US", "aapl").code == "AAPL"
 
 
+@pytest.mark.parametrize("code", ["0700", "00700", "0700.HK"])
+def test_security_id_canonicalizes_supported_hong_kong_codes(code):
+    assert str(ResearchSecurityId.parse("HK", code)) == "HK:00700"
+
+
 @pytest.mark.parametrize("action", ["buy", "add", "reduce", "sell", "observe"])
 def test_decision_minimum_is_action_and_date(action):
     entry = Entry.new_decision(

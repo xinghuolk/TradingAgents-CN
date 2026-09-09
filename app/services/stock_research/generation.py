@@ -120,9 +120,11 @@ class ConfiguredResearchTextGenerator:
                 or helper._get_env_api_key(provider)
             )
             api_base = config.api_base or provider_config.get("default_base_url")
-            if not api_base or not helper._is_valid_api_key(api_key):
+            if not api_base or (
+                provider != "ollama" and not helper._is_valid_api_key(api_key)
+            ):
                 raise ValueError("missing credential or endpoint")
-            return api_key, api_base
+            return api_key or "ollama", api_base
         except Exception:
             raise _error("GENERATION_CREDENTIALS_UNAVAILABLE") from None
 
