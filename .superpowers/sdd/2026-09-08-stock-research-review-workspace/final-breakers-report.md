@@ -86,3 +86,22 @@ Implementation commit: `f355a565` (`fix(research): wait for effective review hol
 ### Concerns
 
 No behavioral concerns remain. The bundle retains existing Sass deprecation, Rollup annotation, and large-chunk warnings.
+
+## Fix Round 3: Decision Link Injection Mount Gate
+
+Implementation commit: `d65f8c57` (`test(research): gate decision links on editor mount`)
+
+### Evidence
+
+- The initially unlinked decision fixture now asserts `.decision-editor .markdown-editor textarea` is visible immediately after its list row is selected and before `service.set_decision_trade_links(...)` injects real/paper links. This makes the confirmation-response synchronization path load-bearing.
+- `/home/like/mycode/finanice/TradingAgents-CN/.venv/bin/python -m py_compile frontend/scripts/check-research-final-browser.py`: passed.
+- `git diff --check`: passed; no repository Python formatter is configured for this script.
+- Fixture-backed browser matrix: passed independently at `1440x900` and `390x844`, each with 74 API requests and no page or console errors. Both runs covered `confirmed decision links`, including unchanged post-confirm link save.
+
+### Files Changed
+
+- `frontend/scripts/check-research-final-browser.py`
+
+### Concerns
+
+No behavioral concerns remain.
