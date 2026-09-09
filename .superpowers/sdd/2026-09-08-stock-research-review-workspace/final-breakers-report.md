@@ -58,3 +58,31 @@ Implementation commit: `5de9d935` (`fix(research): show effective decision revie
 ### Concerns
 
 No behavioral concerns remain. The optional Python `ruff` command is unavailable in the project environment; direct Python compilation passed. Existing Vite warnings remain unchanged.
+
+## Fix Round 2: Effective Decision Holdings Readiness
+
+Implementation commit: `f355a565` (`fix(research): wait for effective review holdings`)
+
+### RED Evidence
+
+`node frontend/scripts/check-research-reviews.mjs` failed before the production change with `effective decision holdings must delay creation and confirmation until sources resolve`; it made 3 API calls before the deferred holdings source resolved, expected 0.
+
+### GREEN Evidence
+
+- `node frontend/scripts/check-research-reviews.mjs`: passed after `associationsReady` began using the existing effective-context accessor.
+- Fixture-backed browser matrix: passed independently at `1440x900` and `390x844`, each with 74 API requests and no page or console errors. It covers decision links introduced after editor mount and retained by an unchanged association save, plus effective decision-review defaults.
+- `frontend/node_modules/.bin/eslint frontend/src/components/Research/ReviewEditor.vue frontend/scripts/check-research-reviews.mjs`: passed.
+- `frontend/node_modules/.bin/prettier --check frontend/src/components/Research/ReviewEditor.vue frontend/scripts/check-research-reviews.mjs`: passed.
+- `/home/like/mycode/finanice/TradingAgents-CN/.venv/bin/python -m py_compile frontend/scripts/check-research-final-browser.py`: passed.
+- `npm --prefix frontend run bundle`: passed.
+- `git diff --check`: passed.
+
+### Files Changed
+
+- `frontend/src/components/Research/ReviewEditor.vue`
+- `frontend/scripts/check-research-reviews.mjs`
+- `frontend/scripts/check-research-final-browser.py`
+
+### Concerns
+
+No behavioral concerns remain. The bundle retains existing Sass deprecation, Rollup annotation, and large-chunk warnings.
