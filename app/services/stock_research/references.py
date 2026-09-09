@@ -77,6 +77,17 @@ def _report_market(document: Mapping[str, object], code: str) -> str:
     return "A" if code.isdigit() else "US"
 
 
+def _report_symbol_aliases(security: ResearchSecurityId) -> tuple[str, ...]:
+    if security.market != "HK":
+        return (security.code,)
+    base_codes = {security.code}
+    if len(security.code) == 5 and security.code.startswith("0"):
+        base_codes.add(security.code[1:])
+    return tuple(
+        sorted(base_codes | {f"{code}.HK" for code in base_codes})
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class ReferenceCandidate:
     user_id: str
@@ -172,7 +183,7 @@ class AnalysisReportAdapter:
         tasks = await self.tasks.find({"user_id": user_id}).to_list(length=None)
         task_ids = [task["task_id"] for task in tasks if task.get("task_id")]
         documents = await self.collection.find({
-            "stock_symbol": security.code,
+            "stock_symbol": {"$in": list(_report_symbol_aliases(security))},
             "$or": [
                 {"user_id": user_id},
                 {"user_id": None, "task_id": {"$in": task_ids}},
@@ -182,7 +193,8 @@ class AnalysisReportAdapter:
             document
             for document in documents
             if ResearchSecurityId.parse(
-                _report_market(document, security.code), security.code
+                _report_market(document, str(document.get("stock_symbol") or "")),
+                str(document.get("stock_symbol") or ""),
             )
             == security
             and _in_range(

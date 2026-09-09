@@ -367,7 +367,12 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { TrendCharts, Star, Refresh, Link, Document, Clock, Reading, CreditCard, Delete, Wallet } from '@element-plus/icons-vue'
 import { marked } from 'marked'
 import { stocksApi } from '@/api/stocks'
-import { stockResearchApi, type ResearchMarket, type ResearchWorkspaceSummary } from '@/api/stockResearch'
+import {
+  normalizeResearchCode,
+  stockResearchApi,
+  type ResearchMarket,
+  type ResearchWorkspaceSummary
+} from '@/api/stockResearch'
 import { analysisApi } from '@/api/analysis'
 import { ApiClient } from '@/api/request'
 import { stockSyncApi } from '@/api/stockSync'
@@ -447,11 +452,13 @@ async function loadResearchSummary() {
   if (!researchMarket.value) { researchSummaryState.value = 'ready'; return }
   researchSummaryState.value = 'loading'
   const currentMarket = researchMarket.value
-  const currentCode = code.value
+  const currentCode = normalizeResearchCode(currentMarket, code.value)
   try {
     const response = await stockResearchApi.listWorkspaces({ market: currentMarket, query: currentCode, page_size: 100 })
     if (request !== researchSummaryRequest) return
-    researchSummary.value = response.data.items.find(item => item.market === currentMarket && item.code === currentCode) || null
+    researchSummary.value = response.data.items.find(
+      item => item.market === currentMarket && item.code === currentCode
+    ) || null
     researchSummaryState.value = 'ready'
   } catch {
     if (request === researchSummaryRequest) researchSummaryState.value = 'failed'
@@ -459,7 +466,12 @@ async function loadResearchSummary() {
 }
 function openResearch() {
   if (!researchMarket.value) return
-  void router.push({ name: 'ResearchWorkspace', params: { code: code.value }, query: { market: researchMarket.value, name: stockName.value || code.value } })
+  const currentCode = normalizeResearchCode(researchMarket.value, code.value)
+  void router.push({
+    name: 'ResearchWorkspace',
+    params: { code: currentCode },
+    query: { market: researchMarket.value, name: stockName.value || currentCode }
+  })
 }
 watch(() => [code.value, researchMarket.value], loadResearchSummary, { immediate: true })
 onUnmounted(() => { ++researchSummaryRequest })

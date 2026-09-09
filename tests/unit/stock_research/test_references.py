@@ -14,7 +14,13 @@ from app.services.real_portfolio.models import (
     TradeItem,
 )
 from app.services.stock_research.errors import ResearchError
-from app.services.stock_research.models import Entry, EntryPatch, NewEntry, Reference
+from app.services.stock_research.models import (
+    Entry,
+    EntryPatch,
+    NewEntry,
+    Reference,
+    ResearchSecurityId,
+)
 from app.services.stock_research.references import (
     AnalysisReportAdapter,
     PaperTradeAdapter,
@@ -225,6 +231,36 @@ async def test_candidates_are_owned_and_keep_real_and_paper_separate(
         item.kind == "holding_date" and item.source_date == date(2026, 9, 8)
         for item in items
     )
+
+
+@pytest.mark.asyncio
+async def test_hong_kong_reports_match_all_accepted_symbol_aliases() -> None:
+    db = FakeDatabase()
+    for symbol in ("0700", "00700", "0700.HK", "00700.HK"):
+        await db["analysis_reports"].insert_one(
+            {
+                "_id": f"report-{symbol}",
+                "user_id": "u1",
+                "analysis_id": f"analysis-{symbol}",
+                "stock_symbol": symbol,
+                "market_type": "港股",
+                "analysis_date": "2026-09-01",
+            }
+        )
+
+    reports = await AnalysisReportAdapter(db).list_reports(
+        "u1",
+        ResearchSecurityId.parse("HK", "00700"),
+        date(2026, 8, 1),
+        date(2026, 9, 8),
+    )
+
+    assert {report["stock_symbol"] for report in reports} == {
+        "0700",
+        "00700",
+        "0700.HK",
+        "00700.HK",
+    }
 
 
 @pytest.mark.asyncio

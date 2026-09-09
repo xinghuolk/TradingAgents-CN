@@ -244,6 +244,11 @@ def build_checks(root: Path, temp_dir: Path) -> list[Check]:
             env=isolated_env,
         ),
         Check(
+            name="Stock research code normalization",
+            command=("node", "frontend/scripts/check-stock-research-code.mjs"),
+            cwd=root,
+        ),
+        Check(
             name="Frontend production bundle",
             command=("npm", "--prefix", "frontend", "run", "bundle"),
             cwd=root,

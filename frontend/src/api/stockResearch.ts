@@ -13,6 +13,13 @@ export type ReferenceKind =
   | 'decision'
   | 'holding_date'
 
+export function normalizeResearchCode(market: ResearchMarket, code: string): string {
+  const canonical = code.trim().toUpperCase()
+  if (market !== 'HK') return canonical
+  const base = canonical.endsWith('.HK') ? canonical.slice(0, -3) : canonical
+  return /^\d{4,5}$/.test(base) ? base.padStart(5, '0') : base
+}
+
 export interface ResearchPage<T> {
   items: T[]
   page: number
